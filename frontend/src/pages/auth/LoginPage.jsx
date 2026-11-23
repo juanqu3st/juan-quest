@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { Compass, GraduationCap, KeyRound, UserCheck } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Compass, Gamepad2, GraduationCap, Play } from 'lucide-react';
 import { authApi } from '../../api/authApi';
 import { useAuth } from '../../context/AuthContext';
 
@@ -32,7 +32,7 @@ export default function LoginPage() {
                 err.response?.data?.errors?.join_code?.[0] ||
                 err.response?.data?.errors?.full_name?.[0] ||
                 err.response?.data?.message ||
-                'Hindi makapasok. Suriin ang iyong Join Code at Pangalan.';
+                'Hindi makapasok. Suriin ang Code ng Klase at iyong pangalan.';
             setError(msg);
         } finally {
             setBusy(false);
@@ -55,55 +55,51 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-dvh bg-[#FAF8F5] flex items-center justify-center px-4 py-6 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-            <div className="w-full max-w-4xl grid md:grid-cols-5 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm overflow-hidden">
-                {/* Left Folklore Information Panel (Compact header banner on mobile so form is immediately visible!) */}
-                <div className="md:col-span-2 bg-[#1E293B] text-[#FAF8F5] px-5 py-4 md:p-7 flex flex-col justify-between">
+        <div className="relative min-h-dvh bg-[#FAF8F5] flex items-center justify-center px-4 py-8 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] overflow-hidden">
+            {/* Subtle warm storybook backdrop glow */}
+            <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[540px] h-[260px] rounded-full opacity-45 blur-3xl"
+                style={{
+                    background:
+                        'radial-gradient(circle, rgba(251, 191, 36, 0.32) 0%, rgba(194, 65, 12, 0.14) 55%, rgba(250, 248, 245, 0) 100%)',
+                }}
+            />
+
+            <div className="relative w-full max-w-[410px] space-y-6">
+                {/* Compact Game Crest */}
+                <div className="text-center space-y-2">
+                    <div className="mx-auto w-12 h-12 rounded-2xl bg-[#C2410C] text-white shadow-sm flex items-center justify-center">
+                        <Compass className="w-6 h-6" />
+                    </div>
                     <div>
-                        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-[11px] font-bold uppercase tracking-wider text-orange-300 mb-2.5 md:mb-5">
-                            <Compass className="w-3.5 h-3.5" />
-                            Grade 7 Filipino E-SIM
-                        </div>
-                        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
+                        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-stone-900">
                             JUANQUEST
                         </h1>
-                        <p className="mt-0.5 md:mt-1 text-orange-300 font-semibold text-xs md:text-sm">
-                            Kuwentong-Bayang Si Juan Osong
+                        <p className="text-xs sm:text-sm font-medium text-stone-500 mt-0.5">
+                            Si Juan Osong · Grade 7 Filipino
                         </p>
-                        <p className="hidden md:block mt-5 text-sm text-slate-300 leading-relaxed">
-                            Lakbayin ang 3D na mundo ng kuwentong-bayan, lutasin ang limang antas, ingatan ang tatlong puso, at makipagtulungan sa iyong pangkat.
-                        </p>
-                    </div>
-
-                    <div className="hidden md:block mt-8 space-y-2.5 text-xs text-slate-300 border-t border-slate-700 pt-4">
-                        <div className="flex items-center gap-2">
-                            <UserCheck className="w-4 h-4 text-[#22C55E] shrink-0" />
-                            <span>5 Interaktibong Mapa (50 Kabuuang Puntos)</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <KeyRound className="w-4 h-4 text-orange-300 shrink-0" />
-                            <span>Mabilisang Pagsali gamit ang PIN Code</span>
-                        </div>
                     </div>
                 </div>
 
-                {/* Right Form Panel */}
-                <div className="md:col-span-3 p-5 sm:p-7 md:p-9 bg-white">
-                    <div className="flex rounded-xl bg-[#FAF8F5] border border-[#E5E7EB] p-1 mb-6">
+                {/* Clean Single-Card Login Box */}
+                <div className="bg-white rounded-2xl border border-stone-200/90 shadow-sm p-5 sm:p-6">
+                    {/* Role Switcher */}
+                    <div className="grid grid-cols-2 rounded-xl bg-[#FAF8F5] border border-stone-200/80 p-1 mb-5">
                         <button
                             type="button"
                             onClick={() => {
                                 setTab('student');
                                 setError('');
                             }}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
                                 tab === 'student'
-                                    ? 'bg-white text-[#C2410C] border border-[#E5E7EB]'
-                                    : 'text-slate-600 hover:text-[#1E293B]'
+                                    ? 'bg-white text-[#C2410C] shadow-2xs border border-stone-200/70'
+                                    : 'text-stone-500 hover:text-stone-800'
                             }`}
                         >
-                            <KeyRound className="w-4 h-4" />
-                            Mag-aaral (PIN + Pangalan)
+                            <Gamepad2 className="w-4 h-4" />
+                            Manlalaro
                         </button>
                         <button
                             type="button"
@@ -111,19 +107,19 @@ export default function LoginPage() {
                                 setTab('teacher');
                                 setError('');
                             }}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
                                 tab === 'teacher'
-                                    ? 'bg-white text-[#1E293B] border border-[#E5E7EB]'
-                                    : 'text-slate-600 hover:text-[#1E293B]'
+                                    ? 'bg-white text-stone-900 shadow-2xs border border-stone-200/70'
+                                    : 'text-stone-500 hover:text-stone-800'
                             }`}
                         >
                             <GraduationCap className="w-4 h-4" />
-                            Guro / Email Login
+                            Guro
                         </button>
                     </div>
 
                     {error && (
-                        <div className="mb-4 px-3.5 py-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
+                        <div className="mb-4 px-3.5 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
                             {error}
                         </div>
                     )}
@@ -131,36 +127,31 @@ export default function LoginPage() {
                     {tab === 'student' ? (
                         <form onSubmit={handleStudentJoin} className="space-y-4">
                             <div>
-                                <h2 className="text-xl font-extrabold text-[#1E293B]">Sumali sa Klase</h2>
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                    Ilagay ang Join Code mula sa iyong guro at ang iyong pangalan (o pangalan ng kinatawan ng pangkat).
-                                </p>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                                    PIN / Join Code
+                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                    Code ng Klase
                                 </label>
                                 <input
                                     type="text"
                                     value={joinCode}
                                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                                    placeholder="JUAN7A"
-                                    className="w-full rounded-xl border border-[#E5E7EB] px-4 py-3 text-base font-bold tracking-widest uppercase text-[#1E293B] focus:border-[#C2410C] outline-none"
+                                    placeholder="Ilagay ang code"
+                                    autoComplete="off"
+                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-base font-bold tracking-widest uppercase text-stone-900 placeholder:font-normal placeholder:tracking-normal placeholder:normal-case placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
                                     required
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                                    Buong Pangalan / Kinatawan ng Pangkat
+                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                    Pangalan
                                 </label>
                                 <input
                                     type="text"
                                     value={fullName}
                                     onChange={(e) => setFullName(e.target.value)}
-                                    placeholder="Hal. Juan Dela Cruz"
-                                    className="w-full rounded-xl border border-[#E5E7EB] px-4 py-3 text-sm text-[#1E293B] focus:border-[#C2410C] outline-none"
+                                    placeholder="Ilagay ang iyong pangalan"
+                                    autoComplete="name"
+                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
                                     required
                                 />
                             </div>
@@ -168,53 +159,40 @@ export default function LoginPage() {
                             <button
                                 type="submit"
                                 disabled={busy}
-                                className="w-full py-3.5 px-4 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-60 text-white font-bold text-sm transition cursor-pointer"
+                                className="w-full min-h-[46px] py-3 px-4 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-60 text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                             >
-                                {busy ? 'Kumokonekta...' : 'Pumasok sa 3D Mundo'}
+                                <Play className="w-4 h-4 fill-current" />
+                                <span>{busy ? 'Pumapasok...' : 'Simulan ang Laro'}</span>
                             </button>
-
-                            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-                                <span>
-                                    Sample Code: <strong className="font-mono text-[#1E293B]">JUAN7A</strong>
-                                </span>
-                                <Link to="/register" className="font-semibold text-[#C2410C] hover:underline">
-                                    Gumawa ng Email Account
-                                </Link>
-                            </div>
                         </form>
                     ) : (
                         <form onSubmit={handleEmailLogin} className="space-y-4">
                             <div>
-                                <h2 className="text-xl font-extrabold text-[#1E293B]">Portal ng Guro</h2>
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                    Pamahalaan ang mga sesyon, grupo, live monitor, at aralin.
-                                </p>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                                    Email Address
+                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                    Email
                                 </label>
                                 <input
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="teacher@juanquest.ph"
-                                    className="w-full rounded-xl border border-[#E5E7EB] px-4 py-3 text-sm text-[#1E293B] focus:border-[#1E293B] outline-none"
+                                    placeholder="Ilagay ang email"
+                                    autoComplete="email"
+                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 outline-none transition"
                                     required
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
                                     Password
                                 </label>
                                 <input
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="Password"
-                                    className="w-full rounded-xl border border-[#E5E7EB] px-4 py-3 text-sm text-[#1E293B] focus:border-[#1E293B] outline-none"
+                                    placeholder="Ilagay ang password"
+                                    autoComplete="current-password"
+                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 outline-none transition"
                                     required
                                 />
                             </div>
@@ -222,9 +200,9 @@ export default function LoginPage() {
                             <button
                                 type="submit"
                                 disabled={busy}
-                                className="w-full py-3.5 px-4 rounded-xl bg-[#1E293B] hover:bg-slate-800 disabled:opacity-60 text-white font-bold text-sm transition cursor-pointer"
+                                className="w-full min-h-[46px] py-3 px-4 rounded-xl bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white font-bold text-sm transition cursor-pointer"
                             >
-                                {busy ? 'Nagla-log in...' : 'Mag-log in'}
+                                {busy ? 'Pumapasok...' : 'Buksan ang Portal'}
                             </button>
                         </form>
                     )}
