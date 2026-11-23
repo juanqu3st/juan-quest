@@ -1,0 +1,136 @@
+@import 'tailwindcss';
+
+@layer base {
+    html,
+    body {
+        overscroll-behavior-y: none;
+        overflow-x: clip;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+        font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+        color: #1E293B;
+        background-color: #FAF8F5;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+        font-family: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    }
+
+    button,
+    a,
+    [role='button'] {
+        touch-action: manipulation;
+    }
+
+    /* Prevent iOS Safari automatic zoom when tapping inputs smaller than 16px */
+    @media (max-width: 767px) {
+        input:not([type='checkbox']):not([type='radio']):not([type='range']),
+        select,
+        textarea {
+            font-size: 16px !important;
+        }
+    }
+}
+
+.pt-safe {
+    padding-top: env(safe-area-inset-top);
+}
+
+.pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+.px-safe {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Cinematic Gold Padlock Unlock Overlay Animations (100% upright & GPU-accelerated) */
+@keyframes jq-rays-cw {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes jq-rays-ccw {
+    0% { transform: rotate(360deg); }
+    100% { transform: rotate(0deg); }
+}
+
+@keyframes jq-lock-charge {
+    0%   { transform: scale(1, 1); }
+    35%  { transform: scale(1.09, 0.91); }
+    70%  { transform: scale(0.95, 1.07); }
+    100% { transform: scale(1.12, 0.88); }
+}
+
+@keyframes jq-lock-pop {
+    0%   { transform: translateY(0px) scale(1.12, 0.88); }
+    36%  { transform: translateY(-13px) scale(1.07, 1.09); }
+    68%  { transform: translateY(2px) scale(0.99, 1.01); }
+    100% { transform: translateY(0px) scale(1.03, 1.03); }
+}
+
+@keyframes jq-shackle-pop {
+    0%   { transform: translateY(0px); }
+    38%  { transform: translateY(-20px); }
+    72%  { transform: translateY(-15px); }
+    100% { transform: translateY(-17px); }
+}
+
+@keyframes jq-shimmer-sweep {
+    0%   { transform: translateX(-95px) skewX(-22deg); opacity: 0; }
+    25%  { opacity: 1; }
+    100% { transform: translateX(120px) skewX(-22deg); opacity: 0; }
+}
+
+@keyframes jq-flare-burst {
+    0%   { transform: scaleX(0.05) scaleY(0.35); opacity: 0; }
+    22%  { transform: scaleX(1.15) scaleY(1.18); opacity: 1; }
+    65%  { transform: scaleX(1.52) scaleY(0.7); opacity: 0.65; }
+    100% { transform: scaleX(1.98) scaleY(0.12); opacity: 0; }
+}
+
+@keyframes jq-ring-expand {
+    0%   { transform: scale(0.22); opacity: 0.96; }
+    100% { transform: scale(3.15); opacity: 0; }
+}
+
+@keyframes jq-core-flash {
+    0%   { transform: scale(0.18); opacity: 0; }
+    28%  { transform: scale(1.75); opacity: 1; }
+    100% { transform: scale(2.85); opacity: 0; }
+}
+
+@keyframes jq-lock-dissolve {
+    0%   { transform: scale(1.03); opacity: 1; }
+    45%  { transform: scale(1.14); opacity: 0.92; }
+    100% { transform: scale(1.32); opacity: 0; }
+}
+
+.jq-rays-cw { animation: jq-rays-cw 9s linear infinite; will-change: transform; }
+.jq-rays-ccw { animation: jq-rays-ccw 14s linear infinite; will-change: transform; }
+.jq-lock-charge { animation: jq-lock-charge 320ms ease-in-out forwards; will-change: transform; }
+.jq-lock-pop { animation: jq-lock-pop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards; will-change: transform; }
+.jq-shackle-open { animation: jq-shackle-pop 410ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards; will-change: transform; }
+.jq-shimmer-1 { animation: jq-shimmer-sweep 480ms ease-out forwards; will-change: transform, opacity; }
+.jq-shimmer-2 { animation: jq-shimmer-sweep 520ms ease-out 120ms forwards; will-change: transform, opacity; }
+.jq-flare-burst { animation: jq-flare-burst 640ms cubic-bezier(0.16, 1, 0.3, 1) forwards; will-change: transform, opacity; }
+.jq-ring-1 { animation: jq-ring-expand 720ms cubic-bezier(0.16, 1, 0.3, 1) forwards; will-change: transform, opacity; }
+.jq-ring-2 { animation: jq-ring-expand 900ms cubic-bezier(0.16, 1, 0.3, 1) 85ms forwards; will-change: transform, opacity; }
+.jq-ring-3 { animation: jq-ring-expand 1060ms cubic-bezier(0.16, 1, 0.3, 1) 170ms forwards; will-change: transform, opacity; }
+.jq-core-flash { animation: jq-core-flash 580ms ease-out forwards; will-change: transform, opacity; }
+.jq-lock-dissolve { animation: jq-lock-dissolve 360ms ease-in forwards; will-change: transform, opacity; }

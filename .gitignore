@@ -1,0 +1,19 @@
+# Dependencies & Build Outputs
+node_modules/
+frontend/dist/
+backend/vendor/
+
+# Local Backups, Scratch Scripts & Raw 3D Authoring Tools
+.backups/
+.scratch/
+art3d/
+
+# Local Environment Files (NEVER commit API keys or DB passwords!)
+.env
+.env.*
+!.env.example
+
+# OS & Logs
+.DS_Store
+Thumbs.db
+*.log
