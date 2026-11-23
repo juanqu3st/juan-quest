@@ -29,7 +29,7 @@ class RankingMonitorService
                 'sessionGroup',
             ])->where('game_session_id', $session->id)->get();
 
-            $rows = $participants->map(function ($p) use ($maps, $playMode, $maxTotalHearts) {
+            $rows = $participants->map(function ($p) use ($session, $maps, $playMode, $maxTotalHearts) {
                 $user = $p->user;
                 $progressByNumber = $user->studentProgress->keyBy(fn ($sp) => $sp->map?->map_number);
 
@@ -58,11 +58,28 @@ class RankingMonitorService
                 $isOfflineQr = $user->studentProgress->contains(
                     fn ($sp) => (($sp->answers_log['source'] ?? null) === 'offline_qr')
                 );
+                $offlineAttempt = (int) ($user->studentProgress->max(
+                    fn ($sp) => (int) ($sp->answers_log['offline_attempt'] ?? 1)
+                ) ?: 1);
+
+                $isDone = $user->activity_status === 'completed' || $completedCount >= 5;
+                $secondsSinceSeen = $user->last_seen_at ? (int) $user->last_seen_at->diffInSeconds(now()) : null;
+                $isDisconnected = ! $isOfflineQr
+                    && ! $isDone
+                    && $session->status === 'active'
+                    && ($secondsSinceSeen === null || $secondsSinceSeen >= 45);
+
+                $connectionStatus = $isOfflineQr
+                    ? 'offline_qr'
+                    : ($isDisconnected ? 'disconnected' : 'online');
 
                 return [
                     'user_id' => $user->id,
                     'name' => $user->name,
                     'source' => $isOfflineQr ? 'offline_qr' : 'online',
+                    'connection_status' => $connectionStatus,
+                    'last_seen_seconds_ago' => $secondsSinceSeen,
+                    'offline_attempt' => $offlineAttempt,
                     'group_id' => $playMode === 'group' ? $p->session_group_id : null,
                     'group_number' => $playMode === 'group' ? $p->sessionGroup?->group_number : null,
                     'group_name' => $playMode === 'group'
@@ -100,6 +117,9 @@ class RankingMonitorService
                     'leader_user_id' => $row['user_id'],
                     'member_names' => $row['member_names'],
                     'source' => $row['source'],
+                    'connection_status' => $row['connection_status'],
+                    'last_seen_seconds_ago' => $row['last_seen_seconds_ago'],
+                    'offline_attempt' => $row['offline_attempt'],
                     'rank' => $row['rank'],
                     'current_map_number' => $row['current_map_number'],
                     'current_map_title' => $row['current_map_title'],
@@ -126,6 +146,7 @@ class RankingMonitorService
                     'total_groups' => $perGroup->count(),
                     'offline_qr_key' => $offlineQr->sessionQrKey($session),
                     'offline_join_qr' => $offlineQr->buildJoinQrPayload($session),
+                    'offline_unblock_code' => $offlineQr->teacherUnblockCode($session),
                 ],
                 'max_total_score' => $maxTotalScore,
                 'max_total_hearts' => $maxTotalHearts,

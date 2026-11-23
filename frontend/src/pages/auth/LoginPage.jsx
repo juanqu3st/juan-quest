@@ -2,20 +2,34 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft,
+    Check,
     CheckCircle2,
+    Copy,
     Download,
     Gamepad2,
     GraduationCap,
+    History,
+    KeyRound,
     Keyboard,
+    Lock,
     Play,
     QrCode,
+    ShieldCheck,
     WifiOff,
+    X,
 } from 'lucide-react';
 import { authApi } from '../../api/authApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
 import { hasOfflinePack } from '../../utils/offlinePack';
-import { startOfflineSession } from '../../utils/offlineEngine';
+import {
+    getCompletedPinLock,
+    loadSavedQrHistory,
+    startOfflineSession,
+    unlockPinWithTeacherCode,
+} from '../../utils/offlineEngine';
+import { downloadResultQrImage } from '../../utils/qrExport';
+import QrCodeImage from '../../components/qr/QrCodeImage';
 import QrScannerBox from '../../components/qr/QrScannerBox';
 
 export default function LoginPage() {
@@ -40,6 +54,17 @@ export default function LoginPage() {
     const [offlineGroupName, setOfflineGroupName] = useState('');
     const [offlineLeaderName, setOfflineLeaderName] = useState('');
     const [offlineMemberNames, setOfflineMemberNames] = useState('');
+    const [savedQrModalOpen, setSavedQrModalOpen] = useState(false);
+    const [selectedSavedQrIdx, setSelectedSavedQrIdx] = useState(0);
+    const [copiedSavedQr, setCopiedSavedQr] = useState(false);
+    const [downloadedSavedQr, setDownloadedSavedQr] = useState(false);
+    const [blockedPinInfo, setBlockedPinInfo] = useState(null);
+    const [showUnblockForm, setShowUnblockForm] = useState(false);
+    const [unblockCodeInput, setUnblockCodeInput] = useState('');
+    const [unblockError, setUnblockError] = useState('');
+
+    const savedQrHistory = !isOnline ? loadSavedQrHistory() : [];
+    const activeSavedQr = savedQrHistory[selectedSavedQrIdx] || savedQrHistory[0] || null;
 
     if (!loading && user) {
         return <Navigate to={user.role === 'teacher' ? '/teacher/monitor' : '/student/world'} replace />;
@@ -88,13 +113,23 @@ export default function LoginPage() {
                 setError('Hindi valid na JuanQuest Session QR ang na-scan. I-scan ang QR sa screen ng guro.');
                 return;
             }
-            setScannedSession({
+            const nextScanned = {
                 joinCode: String(parsed.c).toUpperCase(),
                 className: String(parsed.n || parsed.c),
                 playMode: parsed.m === 'individual' ? 'individual' : 'group',
                 qrKey: String(parsed.k || ''),
                 manualEntry: false,
-            });
+            };
+            const lock = getCompletedPinLock(nextScanned.joinCode);
+            if (lock) {
+                setBlockedPinInfo({ ...lock, pendingSession: nextScanned });
+                setShowUnblockForm(false);
+                setUnblockCodeInput('');
+                setUnblockError('');
+                return;
+            }
+            setBlockedPinInfo(null);
+            setScannedSession(nextScanned);
         } catch {
             setError('Hindi mabasa ang QR code. Siguraduhing Session Join QR ng JuanQuest ito.');
         }
@@ -113,6 +148,14 @@ export default function LoginPage() {
 
         if (!target.joinCode || target.joinCode.length < 3) {
             setError('Ilagay muna ang Code ng Klase.');
+            return;
+        }
+        const existingLock = getCompletedPinLock(target.joinCode);
+        if (existingLock) {
+            setBlockedPinInfo({ ...existingLock, pendingSession: target });
+            setShowUnblockForm(false);
+            setUnblockCodeInput('');
+            setUnblockError('');
             return;
         }
         if (target.playMode === 'group' && offlineGroupName.trim().length < 2) {
@@ -212,6 +255,129 @@ export default function LoginPage() {
                                     Kumonekta muna sandali sa Wi-Fi o mobile data at pindutin ang{' '}
                                     <strong>I-install ang JuanQuest App</strong> bago maglaro nang offline.
                                 </p>
+                            </div>
+                        ) : blockedPinInfo ? (
+                            <div className="space-y-4 text-center">
+                                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3.5 space-y-1 text-left">
+                                    <p className="text-xs font-extrabold text-amber-900 inline-flex items-center gap-1.5">
+                                        <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                        <span>Natapos na ang Sesyong Ito ({blockedPinInfo.join_code})</span>
+                                    </p>
+                                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                                        Nakumpleto na ng device na ito ang lahat ng 5 mapa para sa klase na ito. Ipakita ang
+                                        inyong Result QR sa guro.
+                                    </p>
+                                </div>
+
+                                {blockedPinInfo.savedQr?.payload && (
+                                    <div className="space-y-3">
+                                        <div className="inline-block bg-white p-2.5 rounded-2xl border-2 border-stone-900 shadow-xs">
+                                            <QrCodeImage
+                                                value={blockedPinInfo.savedQr.payload}
+                                                size={208}
+                                                errorCorrectionLevel="L"
+                                                alt="Completed Result QR"
+                                                className="w-[196px] h-[196px] sm:w-[208px] sm:h-[208px]"
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                await downloadResultQrImage(blockedPinInfo.savedQr.payload, {
+                                                    userName: blockedPinInfo.savedQr.leader_name,
+                                                    groupName: blockedPinInfo.savedQr.group_name,
+                                                    className: blockedPinInfo.savedQr.class_name,
+                                                }).catch(() => {});
+                                                setDownloadedSavedQr(true);
+                                                setTimeout(() => setDownloadedSavedQr(false), 2000);
+                                            }}
+                                            className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                                        >
+                                            {downloadedSavedQr ? (
+                                                <Check className="w-4 h-4" />
+                                            ) : (
+                                                <Download className="w-4 h-4" />
+                                            )}
+                                            <span>
+                                                {downloadedSavedQr ? 'Na-download na!' : 'I-download ang QR Image'}
+                                            </span>
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Teacher-Only Unblock Control (Works 100% Offline!) */}
+                                <div className="pt-2 border-t border-stone-100 space-y-2.5 text-left">
+                                    {!showUnblockForm ? (
+                                        <div className="flex items-center justify-between gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setBlockedPinInfo(null)}
+                                                className="text-xs font-semibold text-stone-500 hover:text-stone-800 cursor-pointer"
+                                            >
+                                                Bumalik
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setShowUnblockForm(true);
+                                                    setUnblockError('');
+                                                }}
+                                                className="inline-flex items-center gap-1 text-xs font-bold text-[#C2410C] hover:text-[#9A3412] cursor-pointer"
+                                            >
+                                                <KeyRound className="w-3.5 h-3.5" />
+                                                <span>I-unblock ng Guro</span>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2 rounded-xl bg-stone-50 border border-stone-200 p-3">
+                                            <p className="text-[11px] font-bold text-stone-700">
+                                                Teacher Unblock Code (Para sa Guro)
+                                            </p>
+                                            {unblockError && (
+                                                <p className="text-[11px] font-semibold text-rose-600">
+                                                    {unblockError}
+                                                </p>
+                                            )}
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    maxLength={12}
+                                                    value={unblockCodeInput}
+                                                    onChange={(e) => {
+                                                        setUnblockCodeInput(e.target.value.toUpperCase());
+                                                        setUnblockError('');
+                                                    }}
+                                                    placeholder="6-char code"
+                                                    className="flex-1 min-w-0 h-9 rounded-lg border border-stone-200 bg-white px-3 text-xs font-mono font-bold tracking-widest uppercase text-stone-900 focus:border-[#C2410C] outline-none"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                        const res = await unlockPinWithTeacherCode(
+                                                            blockedPinInfo.join_code,
+                                                            unblockCodeInput,
+                                                            blockedPinInfo.pendingSession?.qrKey || ''
+                                                        );
+                                                        if (!res.ok) {
+                                                            setUnblockError(res.message);
+                                                            return;
+                                                        }
+                                                        const nextSess = blockedPinInfo.pendingSession;
+                                                        setBlockedPinInfo(null);
+                                                        setShowUnblockForm(false);
+                                                        setUnblockCodeInput('');
+                                                        if (nextSess && !nextSess.manualEntry) {
+                                                            setScannedSession(nextSess);
+                                                        }
+                                                    }}
+                                                    className="h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold cursor-pointer shrink-0"
+                                                >
+                                                    I-unblock
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         ) : !scannedSession && offlineJoinMode === 'scan' ? (
                             <div className="space-y-3.5">
@@ -349,6 +515,22 @@ export default function LoginPage() {
                                     <span>Simulan ang Laro (Offline)</span>
                                 </button>
                             </form>
+                        )}
+
+                        {savedQrHistory.length > 0 && (
+                            <div className="pt-3 border-t border-stone-100">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedSavedQrIdx(0);
+                                        setSavedQrModalOpen(true);
+                                    }}
+                                    className="w-full py-2.5 px-3 rounded-xl bg-amber-50/75 hover:bg-amber-100/80 border border-amber-200/80 text-amber-900 text-xs font-bold inline-flex items-center justify-center gap-2 transition cursor-pointer"
+                                >
+                                    <History className="w-3.5 h-3.5 text-[#C2410C]" />
+                                    <span>Mga Nakaraang Result QR (Backup · {savedQrHistory.length})</span>
+                                </button>
+                            </div>
                         )}
                     </div>
                 ) : (
@@ -499,6 +681,113 @@ export default function LoginPage() {
                     v{appVersion}
                 </p>
             </div>
+
+            {/* Recoverable Offline Result QR Backup Modal (Zero score spoilers!) */}
+            {savedQrModalOpen && activeSavedQr && (
+                <div
+                    className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-[2px] flex items-center justify-center p-4"
+                    onClick={() => setSavedQrModalOpen(false)}
+                >
+                    <div
+                        className="w-full max-w-sm max-h-[92dvh] overflow-y-auto rounded-2xl bg-white border border-stone-200 shadow-2xl p-5 space-y-4 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between gap-2 pb-2 border-b border-stone-100 text-left">
+                            <div className="min-w-0">
+                                <h3 className="text-sm font-extrabold text-stone-900">
+                                    Backup na Result QR
+                                </h3>
+                                <p className="text-[11px] text-stone-500 truncate">
+                                    {activeSavedQr.group_name
+                                        ? `${activeSavedQr.group_name} (${activeSavedQr.leader_name})`
+                                        : activeSavedQr.leader_name}{' '}
+                                    · <span className="font-mono font-bold">{activeSavedQr.join_code}</span>
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setSavedQrModalOpen(false)}
+                                className="p-1.5 rounded-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700 cursor-pointer shrink-0"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {savedQrHistory.length > 1 && (
+                            <div className="flex gap-1.5 overflow-x-auto pb-0.5 justify-center">
+                                {savedQrHistory.map((item, i) => (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => setSelectedSavedQrIdx(i)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border shrink-0 cursor-pointer transition ${
+                                            i === selectedSavedQrIdx
+                                                ? 'bg-stone-900 text-white border-stone-900'
+                                                : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                                        }`}
+                                    >
+                                        {item.join_code} · {item.group_name || item.leader_name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="inline-block bg-white p-3 rounded-2xl border-2 border-stone-900 shadow-xs">
+                            <QrCodeImage
+                                value={activeSavedQr.payload}
+                                size={224}
+                                errorCorrectionLevel="L"
+                                alt="Backup Result QR"
+                                className="w-[210px] h-[210px] sm:w-[224px] sm:h-[224px]"
+                            />
+                        </div>
+
+                        <div>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#15803D]">
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                                {activeSavedQr.payload?.sig === 'manual'
+                                    ? 'Offline Result QR (Manual)'
+                                    : 'Verified Offline Result QR'}
+                            </span>
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    await downloadResultQrImage(activeSavedQr.payload, {
+                                        userName: activeSavedQr.leader_name,
+                                        groupName: activeSavedQr.group_name,
+                                        className: activeSavedQr.class_name,
+                                    }).catch(() => {});
+                                    setDownloadedSavedQr(true);
+                                    setTimeout(() => setDownloadedSavedQr(false), 2000);
+                                }}
+                                className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                            >
+                                {downloadedSavedQr ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                                <span>{downloadedSavedQr ? 'Na-download na!' : 'I-download ang QR Image'}</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    navigator.clipboard?.writeText(JSON.stringify(activeSavedQr.payload)).catch(() => {});
+                                    setCopiedSavedQr(true);
+                                    setTimeout(() => setCopiedSavedQr(false), 1800);
+                                }}
+                                className="w-full min-h-[40px] px-4 py-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                            >
+                                {copiedSavedQr ? (
+                                    <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                                ) : (
+                                    <Copy className="w-3.5 h-3.5 text-stone-500" />
+                                )}
+                                <span>{copiedSavedQr ? 'Nakopya ang Result Code' : 'Kopyahin ang Result Code'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -61,6 +61,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::get('/sessions', [SessionGroupingController::class, 'index']);
             Route::post('/sessions', [SessionGroupingController::class, 'store']);
             Route::get('/sessions/{session}', [SessionGroupingController::class, 'show']);
+            Route::delete('/sessions/{session}', [SessionGroupingController::class, 'destroy']);
             Route::post('/sessions/{session}/lock', [SessionGroupingController::class, 'toggleLock']);
             Route::post('/sessions/{session}/status', [SessionGroupingController::class, 'updateStatus']);
             Route::patch('/groups/{group}', [SessionGroupingController::class, 'renameGroup']);

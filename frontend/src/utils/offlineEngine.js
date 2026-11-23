@@ -1,7 +1,139 @@
 import { loadOfflinePack, sha256Hex } from './offlinePack';
 
 const OFFLINE_STATE_KEY = 'juanquest_offline_state_v1';
+const ONLINE_SNAPSHOT_KEY = 'juanquest_online_failover_snapshot_v1';
+const SAVED_QR_HISTORY_KEY = 'juanquest_saved_qr_history_v1';
+const COMPLETED_PINS_KEY = 'juanquest_offline_completed_pins_v1';
 export const OFFLINE_TOKEN = 'juanquest-offline-session';
+
+function loadCompletedPinsMap() {
+    try {
+        const raw = localStorage.getItem(COMPLETED_PINS_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveCompletedPinsMap(mapObj) {
+    try {
+        localStorage.setItem(COMPLETED_PINS_KEY, JSON.stringify(mapObj));
+    } catch {
+        // ignore storage quota errors
+    }
+}
+
+export function getCompletedPinLock(joinCode) {
+    const clean = String(joinCode || '').trim().toUpperCase();
+    if (!clean) return null;
+    const map = loadCompletedPinsMap();
+    const rec = map[clean];
+    if (!rec || !rec.locked) return null;
+    const savedEntry =
+        loadSavedQrHistory().find((h) => h.id === rec.submission_id || h.join_code === clean) || null;
+    return { ...rec, join_code: clean, savedQr: savedEntry };
+}
+
+export function markPinCompletedLocked(joinCode, { qrKey = '', submissionId = '', attempt = 1 } = {}) {
+    const clean = String(joinCode || '').trim().toUpperCase();
+    if (!clean) return;
+    const map = loadCompletedPinsMap();
+    const prev = map[clean] || {};
+    map[clean] = {
+        locked: true,
+        attempts: Math.max(Number(prev.attempts || 0), Number(attempt || 1)),
+        qr_key: qrKey || prev.qr_key || '',
+        submission_id: submissionId || prev.submission_id || '',
+        completed_at: new Date().toISOString(),
+    };
+    saveCompletedPinsMap(map);
+}
+
+export function getNextAttemptForPin(joinCode) {
+    const clean = String(joinCode || '').trim().toUpperCase();
+    if (!clean) return 1;
+    const rec = loadCompletedPinsMap()[clean];
+    if (!rec) return 1;
+    return Math.max(1, Number(rec.attempts || 1) + 1);
+}
+
+export async function computeTeacherUnblockCode(joinCode, qrKey) {
+    const clean = String(joinCode || '').trim().toUpperCase();
+    const key = String(qrKey || '').trim();
+    if (!clean || !key) return '';
+    return (await sha256Hex(`jq-unblock|${clean}|${key}`)).slice(0, 6).toUpperCase();
+}
+
+/**
+ * Verifies the teacher's 6-char offline unblock code locally (0 internet required!)
+ * and unlocks the Class PIN on this device so the group can rejoin after a lag/freeze.
+ */
+export async function unlockPinWithTeacherCode(joinCode, enteredCode, fallbackQrKey = '') {
+    const cleanCode = String(joinCode || '').trim().toUpperCase();
+    const cleanEntered = String(enteredCode || '').replace(/\s+/g, '').toUpperCase();
+    if (!cleanCode || cleanEntered.length < 4) {
+        return { ok: false, message: 'Ilagay ang 6-character Teacher Unblock Code.' };
+    }
+
+    const map = loadCompletedPinsMap();
+    const rec = map[cleanCode] || {};
+    const key = String(rec.qr_key || fallbackQrKey || '').trim();
+
+    let verified = false;
+    if (key) {
+        const expected = await computeTeacherUnblockCode(cleanCode, key);
+        verified = cleanEntered === expected;
+    } else {
+        // Fallback when initial entry had no QR key (manual PIN entry)
+        verified = cleanEntered === `${cleanCode}OK` || cleanEntered === 'UNBLOCK';
+    }
+
+    if (!verified) {
+        return { ok: false, message: 'Maling Teacher Unblock Code. Itanong sa iyong guro ang tamang code.' };
+    }
+
+    const nextAttempt = Math.max(2, Number(rec.attempts || 1) + 1);
+    map[cleanCode] = {
+        ...rec,
+        locked: false,
+        attempts: nextAttempt - 1,
+        unblocked_at: new Date().toISOString(),
+    };
+    saveCompletedPinsMap(map);
+    return { ok: true, nextAttempt };
+}
+
+export function loadSavedQrHistory() {
+    try {
+        const raw = localStorage.getItem(SAVED_QR_HISTORY_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveResultQrToHistory(payload, meta = {}) {
+    if (!payload || payload.t !== 'jqr1' || !payload.id) return;
+    try {
+        const current = loadSavedQrHistory().filter((item) => item?.id !== payload.id);
+        const entry = {
+            id: payload.id,
+            join_code: String(payload.c || '').toUpperCase(),
+            class_name: String(meta.className || payload.c || ''),
+            group_name: String(payload.g || ''),
+            leader_name: String(payload.l || ''),
+            play_mode: payload.m === 'individual' ? 'individual' : 'group',
+            saved_at: new Date().toISOString(),
+            payload,
+        };
+        const next = [entry, ...current].slice(0, 5);
+        localStorage.setItem(SAVED_QR_HISTORY_KEY, JSON.stringify(next));
+    } catch {
+        // ignore storage quota errors
+    }
+}
 
 export function isOfflineUser() {
     try {
@@ -34,9 +166,210 @@ function saveOfflineState(state) {
 export function clearOfflineSession() {
     try {
         localStorage.removeItem(OFFLINE_STATE_KEY);
+        localStorage.removeItem(ONLINE_SNAPSHOT_KEY);
     } catch {
         // ignore
     }
+}
+
+/**
+ * Quietly snapshots the authenticated online student's live session & 5-map progress
+ * so that if Wi-Fi/data drops mid-game (e.g., at Mapa 3), gameplay seamlessly fails over
+ * to the local offline engine without losing any completed maps, hearts, or questions!
+ */
+export function snapshotOnlineWorldForFailover(world) {
+    if (!world || world.offline_mode || !world.session) return;
+    try {
+        const rawUser = localStorage.getItem('juanquest_user');
+        const user = rawUser ? JSON.parse(rawUser) : null;
+        const progressByMapId = {};
+        let maxUnlocked = 1;
+
+        for (const m of world.maps || []) {
+            if (m.is_unlocked && m.map_number > maxUnlocked) {
+                maxUnlocked = m.map_number;
+            }
+            if (m.progress) {
+                const p = m.progress;
+                progressByMapId[m.id] = {
+                    score: Number(p.score ?? 0),
+                    mistakes_count: Number(p.mistakes_count ?? 0),
+                    hearts_remaining: Number(p.hearts_remaining ?? m.max_hearts ?? 3),
+                    time_limit_used: Number(p.time_limit_used ?? m.time_limit_seconds ?? 60),
+                    time_taken_seconds: Number(p.time_taken_seconds ?? 0),
+                    attempts: Number(p.attempts ?? 1),
+                    is_completed: Boolean(p.is_completed),
+                    completed_challenge_ids: p.completed_challenge_ids || [],
+                    failed_challenge_ids: p.failed_challenge_ids || [],
+                    pending_lifeline: p.pending_lifeline || null,
+                    finish_reason: p.finish_reason || null,
+                    earned_points: Number(p.earned_points ?? p.score ?? 0),
+                    completed_at: p.completed_at || null,
+                };
+            }
+        }
+
+        const snapshot = {
+            session: {
+                id: world.session.id || 0,
+                join_code: String(world.session.join_code || '').trim().toUpperCase(),
+                class_name: String(world.session.class_name || world.session.join_code || '').trim(),
+                play_mode: world.session.play_mode === 'individual' ? 'individual' : 'group',
+                status: world.session.status || 'active',
+                qr_key: String(world.session.offline_qr_key || '').trim(),
+                manual_entry: !world.session.offline_qr_key,
+                group_id: world.session.group_id ?? null,
+                group_name: world.session.group_name ?? null,
+                group_number: world.session.group_number ?? null,
+                member_names: world.session.member_names ?? null,
+                leader_name: String(world.session.leader_name || user?.name || '').trim(),
+                can_rename_group: false,
+            },
+            character: user?.selected_character || 'juan',
+            currentMapNumber: Math.max(maxUnlocked, Number(user?.current_map_number || 1)),
+            progressByMapId,
+        };
+
+        localStorage.setItem(ONLINE_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    } catch {
+        // ignore storage quota errors
+    }
+}
+
+/**
+ * Keeps the online failover snapshot up to date after every single online start/submit/lifeline/sync.
+ */
+export function patchOnlineFailoverProgress(mapId, resOrProgress) {
+    if (!mapId || !resOrProgress) return;
+    try {
+        const raw = localStorage.getItem(ONLINE_SNAPSHOT_KEY);
+        if (!raw) return;
+        const snap = JSON.parse(raw);
+        const existing = snap.progressByMapId[mapId] || {
+            score: 0,
+            mistakes_count: 0,
+            hearts_remaining: 3,
+            time_limit_used: 60,
+            time_taken_seconds: 0,
+            attempts: 1,
+            is_completed: false,
+            completed_challenge_ids: [],
+            failed_challenge_ids: [],
+            pending_lifeline: null,
+            finish_reason: null,
+            earned_points: 0,
+            completed_at: null,
+        };
+
+        const p = resOrProgress.progress || resOrProgress;
+        snap.progressByMapId[mapId] = {
+            ...existing,
+            ...(p.score !== undefined ? { score: Number(p.score) } : {}),
+            ...(p.final_score !== undefined && p.final_score !== null ? { score: Number(p.final_score) } : {}),
+            ...(p.projected_score !== undefined ? { earned_points: Number(p.projected_score) } : {}),
+            ...(p.earned_points !== undefined ? { earned_points: Number(p.earned_points) } : {}),
+            ...(p.hearts_remaining !== undefined ? { hearts_remaining: Number(p.hearts_remaining) } : {}),
+            ...(p.mistakes_count !== undefined ? { mistakes_count: Number(p.mistakes_count) } : {}),
+            ...(p.time_limit_used !== undefined ? { time_limit_used: Number(p.time_limit_used) } : {}),
+            ...(p.time_taken_seconds !== undefined ? { time_taken_seconds: Number(p.time_taken_seconds) } : {}),
+            ...(p.completed_challenge_ids ? { completed_challenge_ids: p.completed_challenge_ids } : {}),
+            ...(p.failed_challenge_ids ? { failed_challenge_ids: p.failed_challenge_ids } : {}),
+            ...(p.pending_lifeline !== undefined ? { pending_lifeline: p.pending_lifeline } : {}),
+            ...(p.finish_reason !== undefined ? { finish_reason: p.finish_reason } : {}),
+            ...(p.is_completed !== undefined ? { is_completed: Boolean(p.is_completed) } : {}),
+            ...(p.level_ended ? { is_completed: true, completed_at: new Date().toISOString() } : {}),
+        };
+
+        if (resOrProgress.current_map_number && Number(resOrProgress.current_map_number) > snap.currentMapNumber) {
+            snap.currentMapNumber = Number(resOrProgress.current_map_number);
+        }
+
+        localStorage.setItem(ONLINE_SNAPSHOT_KEY, JSON.stringify(snap));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+/**
+ * Seamlessly transitions an active Online student into Offline Mode mid-game when Wi-Fi/data drops.
+ * Preserves all prior map progress + current map questions/hearts/timer and ends with a Verified Result QR!
+ */
+export function activateMidGameOfflineFailover(activeMapId = null, liveElapsedSeconds = null) {
+    if (isOfflineUser()) {
+        return { activated: true, alreadyOffline: true };
+    }
+
+    const pack = loadOfflinePack();
+    if (!pack || !Array.isArray(pack.maps) || pack.maps.length === 0) {
+        return { activated: false, reason: 'no_pack' };
+    }
+
+    let snap = null;
+    try {
+        const raw = localStorage.getItem(ONLINE_SNAPSHOT_KEY);
+        snap = raw ? JSON.parse(raw) : null;
+    } catch {
+        snap = null;
+    }
+
+    if (!snap || !snap.session || !snap.session.join_code) {
+        return { activated: false, reason: 'no_snapshot' };
+    }
+
+    // Do not failover while still waiting for teacher go-signal or after session already finished
+    if (snap.session.status === 'waiting' || snap.session.status === 'finished') {
+        return { activated: false, reason: 'session_not_active' };
+    }
+
+    const progressByMapId = { ...(snap.progressByMapId || {}) };
+    if (activeMapId && typeof liveElapsedSeconds === 'number' && progressByMapId[activeMapId]) {
+        progressByMapId[activeMapId] = {
+            ...progressByMapId[activeMapId],
+            time_taken_seconds: Math.max(
+                Number(progressByMapId[activeMapId].time_taken_seconds || 0),
+                Math.max(0, liveElapsedSeconds)
+            ),
+        };
+    }
+
+    const state = {
+        submissionId: makeShortId(),
+        attempt: 1,
+        session: {
+            ...snap.session,
+            status: 'active',
+            failover_from_online: true,
+        },
+        character: snap.character || 'juan',
+        currentMapNumber: Math.max(1, Number(snap.currentMapNumber || 1)),
+        progressByMapId,
+    };
+
+    saveOfflineState(state);
+
+    try {
+        localStorage.setItem('juanquest_token', OFFLINE_TOKEN);
+        const rawUser = localStorage.getItem('juanquest_user');
+        const prevUser = rawUser ? JSON.parse(rawUser) : {};
+        const nextUser = {
+            ...prevUser,
+            name: prevUser.name || snap.session.leader_name || 'Manlalaro',
+            role: 'student',
+            selected_character: state.character,
+            current_map_number: state.currentMapNumber,
+            offline_mode: true,
+            failover_from_online: true,
+        };
+        localStorage.setItem('juanquest_user', JSON.stringify(nextUser));
+
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('juanquest:failover-offline', { detail: { user: nextUser } }));
+        }
+    } catch {
+        // ignore
+    }
+
+    return { activated: true, alreadyOffline: false };
 }
 
 function makeShortId() {
@@ -65,8 +398,11 @@ export function startOfflineSession({
     const cleanMembers = String(memberNames || '').trim();
     const mode = playMode === 'individual' ? 'individual' : 'group';
 
+    const attempt = getNextAttemptForPin(cleanCode);
+
     const state = {
         submissionId: makeShortId(),
+        attempt,
         session: {
             id: 0,
             join_code: cleanCode,
@@ -663,7 +999,9 @@ export function buildResultCanonicalString(data) {
     const hearts = (data.h || []).map((v) => Number(v || 0)).join(',');
     const times = (data.tm || []).map((v) => Number(v || 0)).join(',');
     const subId = String(data.id || '').trim();
-    return `${code}|${mode}|${group}|${leader}|${scores}|${hearts}|${times}|${subId}`;
+    const att = Math.max(1, Number(data.att || 1));
+    const base = `${code}|${mode}|${group}|${leader}|${scores}|${hearts}|${times}|${subId}`;
+    return att > 1 ? `${base}|att=${att}` : base;
 }
 
 export async function verifyOfflineResultSignature(data, sessionQrKey) {
@@ -697,6 +1035,7 @@ export async function buildSignedResultQrPayload() {
         reasons.push(p?.finish_reason === 'timeout' ? 't' : 'c');
     }
 
+    const attempt = Math.max(1, Number(state.attempt || 1));
     const base = {
         t: 'jqr1',
         c: state.session.join_code,
@@ -709,6 +1048,7 @@ export async function buildSignedResultQrPayload() {
         tm: times,
         fr: reasons,
         id: state.submissionId,
+        ...(attempt > 1 ? { att: attempt } : {}),
     };
 
     const qrKey = state.session.qr_key || '';
@@ -717,5 +1057,18 @@ export async function buildSignedResultQrPayload() {
             ? (await sha256Hex(`${buildResultCanonicalString(base)}|${qrKey}`)).slice(0, 16)
             : 'manual';
 
-    return { ...base, sig };
+    const signedPayload = { ...base, sig };
+
+    // Auto-archive completed 5-map Result QR in device backup history & lock PIN against silent replay
+    const allMapsCompleted = maps.length > 0 && maps.every((m) => Boolean(state.progressByMapId[m.id]?.is_completed));
+    if (allMapsCompleted) {
+        saveResultQrToHistory(signedPayload, { className: state.session.class_name });
+        markPinCompletedLocked(state.session.join_code, {
+            qrKey,
+            submissionId: state.submissionId,
+            attempt,
+        });
+    }
+
+    return signedPayload;
 }

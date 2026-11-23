@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Award, CheckCircle2, FastForward, LogOut, Pencil, QrCode, Star, Trophy, User, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
+import { usePwa } from '../../context/PwaContext';
 import { useToast } from '../../context/ToastContext';
 import { clearStageResume, loadStageResume } from '../../utils/stageResume';
+import { activateMidGameOfflineFailover } from '../../utils/offlineEngine';
 import { unlockAudio } from '../../utils/gameAudio';
 import WorldMapCanvas from '../../components/three/WorldMapCanvas';
 import StageModal from '../../components/game/StageModal';
@@ -43,7 +45,14 @@ function getInitials(name = '') {
 
 export default function StudentWorldPage() {
     const { user, updateUser, logout } = useAuth();
+    const { setGameplayActive } = usePwa();
     const { showToast } = useToast();
+
+    // Suppress PWA Force Update overlay while the student is actively inside the 3D world / game timer
+    useEffect(() => {
+        setGameplayActive?.(true);
+        return () => setGameplayActive?.(false);
+    }, [setGameplayActive]);
     const [world, setWorld] = useState(null);
     const [loadingWorld, setLoadingWorld] = useState(true);
     const [charMapNumber, setCharMapNumber] = useState(user?.current_map_number || 1);
@@ -56,6 +65,7 @@ export default function StudentWorldPage() {
     const [resumePayload, setResumePayload] = useState(null);
     const [completionOpen, setCompletionOpen] = useState(false);
     const [groupModalOpen, setGroupModalOpen] = useState(false);
+    const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     const openOnArrivalRef = useRef(false);
     const lockScreenProjectorRef = useRef(new Map());
     const firstLoadRef = useRef(true);
@@ -163,6 +173,50 @@ export default function StudentWorldPage() {
         }, 3000);
         return () => clearInterval(timer);
     }, [world?.session?.status, activeStageMapId, completionOpen, loadWorld]);
+
+    // Lightweight 20s heartbeat while online so Teacher Live Monitor immediately detects disconnected devices (>45s)
+    useEffect(() => {
+        if (!world || world.offline_mode || world.session?.status === 'finished') return undefined;
+        const heartbeat = setInterval(() => {
+            if (document.visibilityState !== 'visible' || navigator.onLine === false) return;
+            const status = activeStageMapId ? 'in_game' : 'exploring_world';
+            studentApi.updateStatus(status).catch(() => {});
+        }, 20000);
+        return () => clearInterval(heartbeat);
+    }, [world?.offline_mode, world?.session?.status, activeStageMapId]);
+
+    // Seamless Online -> Offline mid-game failover listener (continues playing without reset -> Result QR at end!)
+    useEffect(() => {
+        const handleFailoverTriggered = () => {
+            setWorld((prev) => (prev ? { ...prev, offline_mode: true } : prev));
+            setLeaderboardOpen(false);
+            setGroupModalOpen(false);
+            showToast(
+                'warning',
+                'Nawala ang internet — tuloy lang ang laro! Ipakita ang Result QR sa guro pagkatapos ng Mapa 5.',
+                'Offline Mode.'
+            );
+        };
+
+        const handleBrowserOffline = () => {
+            if (!world || world.offline_mode || world.session?.status !== 'active') return;
+            const res = activateMidGameOfflineFailover(activeStageMapId);
+            if (!res.activated) {
+                showToast(
+                    'warning',
+                    'Naputol ang koneksyon. Huwag isara ang app habang naghihintay ng signal.',
+                    'Walang Signal.'
+                );
+            }
+        };
+
+        window.addEventListener('juanquest:failover-offline', handleFailoverTriggered);
+        window.addEventListener('offline', handleBrowserOffline);
+        return () => {
+            window.removeEventListener('juanquest:failover-offline', handleFailoverTriggered);
+            window.removeEventListener('offline', handleBrowserOffline);
+        };
+    }, [world?.offline_mode, world?.session?.status, activeStageMapId, showToast]);
 
     const finishTour = () => {
         setTourActive(false);
@@ -510,10 +564,7 @@ export default function StudentWorldPage() {
 
                     <button
                         type="button"
-                        onClick={() => {
-                            clearStageResume(user?.id);
-                            logout();
-                        }}
+                        onClick={() => setLogoutConfirmOpen(true)}
                         aria-label="Lumabas"
                         title="Lumabas"
                         className="min-w-[38px] min-h-[38px] sm:min-h-[34px] px-2 sm:px-2.5 py-1.5 rounded-xl hover:bg-rose-50 text-stone-500 hover:text-rose-700 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
@@ -638,6 +689,71 @@ export default function StudentWorldPage() {
                     }}
                     onComplete={() => setUnlockingStage(null)}
                 />
+            )}
+
+            {/* Logout Confirmation Modal (Prevents accidental loss of offline progress or unsent Result QR) */}
+            {logoutConfirmOpen && (
+                <div
+                    className="fixed inset-0 z-[70] bg-stone-900/55 backdrop-blur-[2px] flex items-center justify-center p-4"
+                    onClick={() => setLogoutConfirmOpen(false)}
+                >
+                    <div
+                        className="w-full max-w-sm rounded-2xl bg-white border border-stone-200 shadow-2xl p-6 space-y-4 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 mx-auto flex items-center justify-center">
+                            <LogOut className="w-5 h-5" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <h3 className="text-base font-extrabold text-stone-900">
+                                Sigurado ka bang lalabas?
+                            </h3>
+                            <p className="text-xs text-stone-500 leading-relaxed">
+                                {isOfflineMode
+                                    ? allMapsCompleted
+                                        ? 'Tiyaking na-download o na-scan na ng iyong guro ang Result QR. May backup din ito sa Offline Login screen sakaling kailanganin muli.'
+                                        : 'Nasa Offline Mode ka ngayon. Kapag lumabas ka bago matapos ang Mapa 5, mabubura ang kasalukuyang progreso sa device na ito.'
+                                    : 'Maaari kang pumasok muli gamit ang parehong Class PIN at iyong pangalan.'}
+                            </p>
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                            {isOfflineMode && allMapsCompleted && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setLogoutConfirmOpen(false);
+                                        setCompletionOpen(true);
+                                    }}
+                                    className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-[#15803D] text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                                >
+                                    <QrCode className="w-3.5 h-3.5" />
+                                    <span>Tingnan muna ang Result QR</span>
+                                </button>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setLogoutConfirmOpen(false)}
+                                    className="min-h-[42px] px-4 py-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold cursor-pointer transition"
+                                >
+                                    Kanselahin
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setLogoutConfirmOpen(false);
+                                        clearStageResume(user?.id);
+                                        logout();
+                                    }}
+                                    className="min-h-[42px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer transition"
+                                >
+                                    Lumabas
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

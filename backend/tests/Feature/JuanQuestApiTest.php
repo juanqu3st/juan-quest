@@ -666,5 +666,171 @@ class JuanQuestApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('imported.already_imported', true)
             ->assertJsonCount(2, 'monitor.per_group');
+
+        // 6) Teacher Unblock Code matches deterministic 6-char formula & att=2 retry updates existing group cleanly
+        $expectedUnblock = strtoupper(substr(hash('sha256', "jq-unblock|HYB7C|{$qrKey}"), 0, 6));
+        $this->assertEquals($expectedUnblock, $lobby->json('session.offline_unblock_code'));
+
+        $retryPayload = array_merge($basePayload, [
+            's' => [10, 10, 10, 10, 10],
+            'h' => [3, 3, 3, 3, 3],
+            'id' => 'jq_test_sub_002',
+            'att' => 2,
+        ]);
+        $retryCanonical = 'HYB7C|group|Offline Ninjas|Carlo Reyes|10,10,10,10,10|3,3,3,3,3|45,50,40,55,30|jq_test_sub_002|att=2';
+        $retryPayload['sig'] = substr(hash('sha256', "{$retryCanonical}|{$qrKey}"), 0, 16);
+
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => $retryPayload,
+            ])
+            ->assertOk()
+            ->assertJsonPath('imported.already_imported', false)
+            ->assertJsonPath('imported.total_score', 50)
+            ->assertJsonCount(2, 'monitor.per_group')
+            ->assertJsonPath('monitor.per_group.0.total_score', 50)
+            ->assertJsonPath('monitor.per_group.0.offline_attempt', 2);
+    }
+
+    public function test_teacher_can_delete_session_and_cleans_up_guest_students_and_caches(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $lessonId = \App\Models\Lesson::value('id');
+        $created = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'class_name' => 'Grade 7 - Temp Test',
+                'lesson_id' => $lessonId,
+                'play_mode' => 'group',
+                'join_code' => 'TMP99',
+            ])
+            ->assertCreated();
+
+        $sessionId = $created->json('session.id');
+
+        $join = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'TMP99',
+            'full_name' => 'Temp Guest Leader',
+        ])->assertOk();
+
+        $guestId = $join->json('user.id');
+        $this->assertDatabaseHas('users', ['id' => $guestId, 'name' => 'Temp Guest Leader']);
+
+        $asToken($teacherToken)
+            ->deleteJson("/api/v1/teacher/sessions/{$sessionId}")
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('deleted_id', $sessionId);
+
+        $this->assertDatabaseMissing('game_sessions', ['id' => $sessionId]);
+        $this->assertDatabaseMissing('session_groups', ['game_session_id' => $sessionId]);
+        $this->assertDatabaseMissing('session_participants', ['game_session_id' => $sessionId]);
+        $this->assertDatabaseMissing('users', ['id' => $guestId]);
+
+        // PIN cache invalidated -> joining deleted PIN fails cleanly with 422
+        $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'TMP99',
+            'full_name' => 'Late Student',
+        ])->assertStatus(422);
+    }
+
+    public function test_online_disconnect_shows_disconnected_in_monitor_and_failover_qr_merges_without_duplicate(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $lessonId = \App\Models\Lesson::value('id');
+        $created = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'class_name' => 'Grade 7 - Failover Test',
+                'lesson_id' => $lessonId,
+                'play_mode' => 'group',
+                'join_code' => 'FLV7D',
+            ])
+            ->assertCreated();
+
+        $sessionId = $created->json('session.id');
+
+        // Start session -> student joins online & receives offline_qr_key in world payload
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/status", ['status' => 'active'])
+            ->assertOk();
+
+        $join = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'FLV7D',
+            'full_name' => 'Rico Dalisay',
+        ])->assertOk();
+
+        $studentToken = $join->json('token');
+        $studentId = $join->json('user.id');
+
+        $world = $asToken($studentToken)
+            ->getJson('/api/v1/student/world')
+            ->assertOk();
+        $qrKey = $world->json('session.offline_qr_key');
+        $this->assertNotEmpty($qrKey);
+
+        // Simulate student losing Wi-Fi mid-game (last_seen_at > 60s ago, 0 maps completed yet)
+        User::where('id', $studentId)->update([
+            'activity_status' => 'in_game',
+            'current_map_number' => 3,
+            'last_seen_at' => now()->subSeconds(75),
+        ]);
+        Cache::forget("juanquest:session:{$sessionId}:monitor");
+
+        // Teacher Live Monitor immediately flags Rico Dalisay's group as 'disconnected'
+        $asToken($teacherToken)
+            ->getJson("/api/v1/teacher/sessions/{$sessionId}/monitor")
+            ->assertOk()
+            ->assertJsonCount(1, 'monitor.per_group')
+            ->assertJsonPath('monitor.per_group.0.connection_status', 'disconnected');
+
+        // Student finishes Maps 3-5 offline and Teacher scans their signed failover Result QR
+        $failoverPayload = [
+            't' => 'jqr1',
+            'c' => 'FLV7D',
+            'm' => 'group',
+            'g' => 'Pangkat 1',
+            'l' => 'Rico Dalisay',
+            'mb' => '',
+            's' => [10, 8, 8, 10, 10],
+            'h' => [3, 2, 2, 3, 3],
+            'tm' => [30, 40, 50, 45, 35],
+            'fr' => ['c', 'c', 'c', 'c', 'c'],
+            'id' => 'jq_failover_001',
+        ];
+        $canonical = 'FLV7D|group|Pangkat 1|Rico Dalisay|10,8,8,10,10|3,2,2,3,3|30,40,50,45,35|jq_failover_001';
+        $failoverPayload['sig'] = substr(hash('sha256', "{$canonical}|{$qrKey}"), 0, 16);
+
+        // Imports cleanly by MERGING into Rico's existing online group (still 1 group total, zero duplicate!)
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => $failoverPayload,
+            ])
+            ->assertOk()
+            ->assertJsonPath('imported.already_imported', false)
+            ->assertJsonPath('imported.total_score', 46)
+            ->assertJsonCount(1, 'monitor.per_group')
+            ->assertJsonPath('monitor.per_group.0.total_score', 46)
+            ->assertJsonPath('monitor.per_group.0.activity_status', 'completed')
+            ->assertJsonPath('monitor.per_group.0.source', 'offline_qr')
+            ->assertJsonPath('monitor.per_group.0.connection_status', 'offline_qr');
     }
 }

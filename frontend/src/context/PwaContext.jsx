@@ -76,6 +76,7 @@ export function PwaProvider({ children }) {
         typeof navigator === 'undefined' ? true : navigator.onLine !== false
     );
     const [isInstalled, setIsInstalled] = useState(() => detectStandalone());
+    const [gameplayActive, setGameplayActive] = useState(false);
     const [deferredPrompt, setDeferredPrompt] = useState(null);
 
     // Install modal state (Clean native feel — zero verbose/technical descriptions!)
@@ -207,7 +208,10 @@ export function PwaProvider({ children }) {
 
     const canShowInstallButton = isOnline && !isInstalled && (Boolean(deferredPrompt) || isIos);
     const showForceUpdateModal =
-        isInstalled && isOnline && (swNeedsRefresh || buildNeedsUpdate || contentNeedsUpdate);
+        isInstalled &&
+        isOnline &&
+        !gameplayActive &&
+        (swNeedsRefresh || buildNeedsUpdate || contentNeedsUpdate);
 
     const triggerNativePrompt = useCallback(async () => {
         const promptEvent = promptRef.current;
@@ -358,6 +362,7 @@ export function PwaProvider({ children }) {
                 appVersion: CURRENT_APP_VERSION,
                 canShowInstallButton,
                 startAppInstall,
+                setGameplayActive,
             }}
         >
             {children}

@@ -10,6 +10,7 @@ import {
     RefreshCw,
     ShieldAlert,
     ShieldCheck,
+    Trophy,
     User,
     Users,
     WifiOff,
@@ -22,6 +23,7 @@ import { verifyOfflineResultSignature } from '../../utils/offlineEngine';
 import { decodeQrFromImageFile } from '../../utils/qrImageDecode';
 import { playFeedbackAudio } from '../../utils/gameAudio';
 import QrScannerBox from '../../components/qr/QrScannerBox';
+import ProjectorPodiumModal from '../../components/teacher/ProjectorPodiumModal';
 import TeacherLayout from './TeacherLayout';
 
 const STATUS_BADGE = {
@@ -189,7 +191,8 @@ export default function TeacherMonitorPage() {
     const [pendingQueue, setPendingQueue] = useState([]);
     const [syncingQueue, setSyncingQueue] = useState(false);
 
-    // Result QR Scanner Modal state
+    // Result QR Scanner & Podium Modal state
+    const [podiumOpen, setPodiumOpen] = useState(false);
     const [scannerOpen, setScannerOpen] = useState(false);
     const [scannerBusy, setScannerBusy] = useState(false);
     const [decodingImage, setDecodingImage] = useState(false);
@@ -604,6 +607,17 @@ export default function TeacherMonitorPage() {
                         </button>
                     )}
 
+                    {monitor && rows.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setPodiumOpen(true)}
+                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition cursor-pointer shrink-0"
+                        >
+                            <Trophy className="w-3.5 h-3.5 text-[#C2410C]" />
+                            <span>Top 3 Podium</span>
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={handleExport}
@@ -748,7 +762,13 @@ export default function TeacherMonitorPage() {
                             {/* Mobile Ranked Cards (< md) — Zero Horizontal Scroll! */}
                             <div className="md:hidden space-y-3">
                                 {rows.map((row) => {
-                                    const st = STATUS_BADGE[row.activity_status] || STATUS_BADGE.idle;
+                                    const isDisconnected = row.connection_status === 'disconnected';
+                                    const st = isDisconnected
+                                        ? {
+                                              label: 'Offline / Disconnected',
+                                              cls: 'bg-rose-50 text-rose-700 border border-rose-200',
+                                          }
+                                        : STATUS_BADGE[row.activity_status] || STATUS_BADGE.idle;
                                     const isTop1 = row.rank === 1 && row.total_score > 0;
                                     const isOfflineQr = row.source === 'offline_qr';
                                     const rowKey = isGroupMode
@@ -785,7 +805,11 @@ export default function TeacherMonitorPage() {
                                                             {isOfflineQr && (
                                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold">
                                                                     <QrCode className="w-2.5 h-2.5" />
-                                                                    {row.pending_sync ? 'Offline (Pending)' : 'Offline QR'}
+                                                                    {row.pending_sync
+                                                                        ? 'Offline (Pending)'
+                                                                        : row.offline_attempt > 1
+                                                                          ? `Offline QR · Try #${row.offline_attempt}`
+                                                                          : 'Offline QR'}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -812,9 +836,10 @@ export default function TeacherMonitorPage() {
                                                         </span>
                                                     </p>
                                                     <span
-                                                        className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold ${st.cls}`}
+                                                        className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold ${st.cls}`}
                                                     >
-                                                        {st.label}
+                                                        {isDisconnected && <WifiOff className="w-2.5 h-2.5 shrink-0" />}
+                                                        <span>{st.label}</span>
                                                     </span>
                                                 </div>
                                             </div>
@@ -871,7 +896,13 @@ export default function TeacherMonitorPage() {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 tabular-nums">
                                         {rows.map((row) => {
-                                            const st = STATUS_BADGE[row.activity_status] || STATUS_BADGE.idle;
+                                            const isDisconnected = row.connection_status === 'disconnected';
+                                            const st = isDisconnected
+                                                ? {
+                                                      label: 'Offline / Disconnected',
+                                                      cls: 'bg-rose-50 text-rose-700 border border-rose-200',
+                                                  }
+                                                : STATUS_BADGE[row.activity_status] || STATUS_BADGE.idle;
                                             const isTop1 = row.rank === 1 && row.total_score > 0;
                                             const isOfflineQr = row.source === 'offline_qr';
                                             const rowKey = isGroupMode
@@ -950,8 +981,16 @@ export default function TeacherMonitorPage() {
                                                         Mapa {row.current_map_number}
                                                     </td>
                                                     <td className="px-4 py-3 whitespace-nowrap">
-                                                        <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>
-                                                            {st.label}
+                                                        <span
+                                                            title={
+                                                                isDisconnected
+                                                                    ? 'Naputol ang koneksyon — maaari nilang ituloy offline at i-scan ang Result QR pagkatapos.'
+                                                                    : undefined
+                                                            }
+                                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}
+                                                        >
+                                                            {isDisconnected && <WifiOff className="w-3 h-3 shrink-0" />}
+                                                            <span>{st.label}</span>
                                                         </span>
                                                     </td>
                                                     {[1, 2, 3, 4, 5].map((m) => (
@@ -1173,6 +1212,16 @@ export default function TeacherMonitorPage() {
                     </div>
                 </div>
             )}
+            {/* Projector Fullscreen Top 3 Podium Modal */}
+            <ProjectorPodiumModal
+                open={podiumOpen}
+                onClose={() => setPodiumOpen(false)}
+                session={monitor?.session}
+                rows={rows}
+                isGroupMode={isGroupMode}
+                maxTotalScore={maxTotalScore}
+                maxTotalHearts={maxTotalHearts}
+            />
         </TeacherLayout>
     );
 }

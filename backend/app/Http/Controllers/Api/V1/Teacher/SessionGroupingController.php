@@ -9,9 +9,14 @@ use App\Http\Resources\V1\GameSessionResource;
 use App\Models\GameSession;
 use App\Models\Lesson;
 use App\Models\SessionGroup;
+use App\Models\SessionParticipant;
+use App\Models\StudentProgress;
+use App\Models\User;
 use App\Services\GroupingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SessionGroupingController extends Controller
 {
@@ -39,6 +44,48 @@ class SessionGroupingController extends Controller
     {
         return response()->json([
             'session' => $grouping->getCachedLobbyPayload($session),
+        ]);
+    }
+
+    public function destroy(GameSession $session, GroupingService $grouping): JsonResponse
+    {
+        $sessionId = $session->id;
+        $joinCode = strtoupper(trim((string) $session->join_code));
+
+        DB::transaction(function () use ($session, $sessionId) {
+            $participantUserIds = SessionParticipant::where('game_session_id', $sessionId)
+                ->pluck('user_id')
+                ->unique()
+                ->values();
+
+            StudentProgress::where('game_session_id', $sessionId)->delete();
+            SessionParticipant::where('game_session_id', $sessionId)->delete();
+            SessionGroup::where('game_session_id', $sessionId)->delete();
+            $session->delete();
+
+            if ($participantUserIds->isNotEmpty()) {
+                $stillReferencedIds = SessionParticipant::whereIn('user_id', $participantUserIds)
+                    ->pluck('user_id')
+                    ->unique();
+                $orphanGuestIds = $participantUserIds->diff($stillReferencedIds);
+
+                if ($orphanGuestIds->isNotEmpty()) {
+                    User::whereIn('id', $orphanGuestIds)
+                        ->where('role', 'student')
+                        ->whereNull('email')
+                        ->delete();
+                }
+            }
+        });
+
+        $grouping->forgetSessionCaches($session);
+        if ($joinCode !== '') {
+            Cache::forget("juanquest:session:code:{$joinCode}");
+        }
+
+        return response()->json([
+            'ok' => true,
+            'deleted_id' => $sessionId,
         ]);
     }
 

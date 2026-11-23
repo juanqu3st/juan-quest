@@ -160,6 +160,7 @@ class GroupingService
                 'groups_locked' => $fresh->groups_locked,
                 'status' => $fresh->status,
                 'offline_join_qr' => $offlineQr->buildJoinQrPayload($fresh),
+                'offline_unblock_code' => $offlineQr->teacherUnblockCode($fresh),
                 'total_students' => $fresh->participants->count(),
                 'groups' => $playMode === 'group'
                     ? $fresh->groups->map(function ($g) {

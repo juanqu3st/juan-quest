@@ -8,6 +8,7 @@ use App\Http\Resources\V1\MapResource;
 use App\Models\Lesson;
 use App\Models\SessionParticipant;
 use App\Models\StudentProgress;
+use App\Services\OfflineQrService;
 use App\Services\RankingMonitorService;
 use App\Services\ScoringService;
 use Illuminate\Http\JsonResponse;
@@ -83,6 +84,7 @@ class WorldMapController extends Controller
                 'group_number' => $isGroupMode ? $participation->sessionGroup?->group_number : null,
                 'member_names' => $isGroupMode ? $participation->sessionGroup?->member_names : null,
                 'leader_name' => $student->name,
+                'offline_qr_key' => app(OfflineQrService::class)->sessionQrKey($gameSession),
                 'can_rename_group' => $isGroupMode
                     && $gameSession->status === 'waiting'
                     && $participation->sessionGroup !== null,

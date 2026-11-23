@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
     Check,
     Copy,
+    KeyRound,
     Lock,
     Pencil,
     Play,
@@ -9,6 +10,7 @@ import {
     QrCode,
     RotateCcw,
     Square,
+    Trash2,
     Unlock,
     User,
     Users,
@@ -73,6 +75,8 @@ export default function TeacherSessionsPage() {
     const [busy, setBusy] = useState(false);
     const [copied, setCopied] = useState(false);
     const [showJoinQr, setShowJoinQr] = useState(false);
+    const [showUnblockCode, setShowUnblockCode] = useState(false);
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [showCreate, setShowCreate] = useState(false);
     const [editingGroupId, setEditingGroupId] = useState(null);
     const [editingGroupName, setEditingGroupName] = useState('');
@@ -263,6 +267,42 @@ export default function TeacherSessionsPage() {
         }
     };
 
+    const handleDeleteSession = async () => {
+        if (!lobby?.id) return;
+        const deletingId = lobby.id;
+        const deletingName = lobby.class_name;
+        const deletingCode = lobby.join_code;
+        setBusy(true);
+        try {
+            await teacherApi.deleteSession(deletingId);
+            setDeleteConfirmOpen(false);
+            try {
+                localStorage.removeItem(`juanquest_teacher_lobby_${deletingId}`);
+                localStorage.removeItem(`juanquest_teacher_monitor_cache_${deletingId}`);
+                localStorage.removeItem(`juanquest_teacher_offline_queue_${deletingId}`);
+            } catch {
+                // ignore storage cleanup errors
+            }
+            const remaining = sessions.filter((s) => s.id !== deletingId);
+            setSessions(remaining);
+            if (remaining.length > 0) {
+                setSelectedId(remaining[0].id);
+            } else {
+                setSelectedId(null);
+                setLobby(null);
+            }
+            showToast(
+                'success',
+                `Nabura na nang tuluyan ang sesyong "${deletingName}" (${deletingCode}).`,
+                'Nabura na.'
+            );
+        } catch {
+            showToast('error', 'Hindi nabura ang sesyon. Pakisubukan muli.', 'May Error.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleCopy = () => {
         if (!lobby?.join_code) return;
         navigator.clipboard.writeText(lobby.join_code);
@@ -292,6 +332,18 @@ export default function TeacherSessionsPage() {
                             </option>
                         ))}
                     </select>
+                    {lobby && (
+                        <button
+                            type="button"
+                            onClick={() => setDeleteConfirmOpen(true)}
+                            title="Burahin ang sesyong ito"
+                            aria-label="Burahin ang sesyon"
+                            className="h-10 sm:h-9 px-2.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span className="hidden md:inline">Burahin</span>
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => setShowCreate(!showCreate)}
@@ -946,12 +998,96 @@ export default function TeacherSessionsPage() {
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setShowJoinQr(false)}
+                                    onClick={() => {
+                                        setShowJoinQr(false);
+                                        setShowUnblockCode(false);
+                                    }}
                                     className="h-9 px-5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition"
                                 >
                                     Isara
                                 </button>
                             </div>
+
+                            {/* Hidden-by-default Teacher Unblock Code (safe when projecting QR!) */}
+                            {lobby.offline_unblock_code && (
+                                <div className="pt-3 border-t border-slate-100">
+                                    {!showUnblockCode ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowUnblockCode(true)}
+                                            className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-slate-700 cursor-pointer transition"
+                                        >
+                                            <KeyRound className="w-3.5 h-3.5" />
+                                            <span>Ipakita ang Teacher Unblock Code</span>
+                                        </button>
+                                    ) : (
+                                        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-1">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                                    Teacher Unblock Code
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowUnblockCode(false)}
+                                                    className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 cursor-pointer"
+                                                >
+                                                    Itago
+                                                </button>
+                                            </div>
+                                            <p className="text-lg font-extrabold font-mono tracking-widest text-slate-900">
+                                                {lobby.offline_unblock_code}
+                                            </p>
+                                            <p className="text-[11px] text-slate-500">
+                                                Gamitin lang kung nag-hang ang phone ng grupo at kailangang payagang makasali ulit.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Delete Session Confirmation Modal */}
+            {deleteConfirmOpen && lobby && (
+                <div
+                    className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-center justify-center p-4"
+                    onClick={() => !busy && setDeleteConfirmOpen(false)}
+                >
+                    <div
+                        className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl p-6 text-center space-y-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 mx-auto flex items-center justify-center">
+                            <Trash2 className="w-5 h-5" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <h3 className="text-base font-extrabold text-slate-900">
+                                Burahin ang Sesyong Ito?
+                            </h3>
+                            <p className="text-xs text-slate-600 leading-relaxed">
+                                Permanenteng mabubura ang <strong>{lobby.class_name}</strong> (
+                                <span className="font-mono font-bold text-[#C2410C]">{lobby.join_code}</span>) pati na ang
+                                lahat ng nakapasok na pangkat at puntos sa sesyong ito.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => setDeleteConfirmOpen(false)}
+                                className="min-h-[42px] px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer transition"
+                            >
+                                Kanselahin
+                            </button>
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={handleDeleteSession}
+                                className="min-h-[42px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold disabled:opacity-60 cursor-pointer transition"
+                            >
+                                {busy ? 'Binubura...' : 'Burahin'}
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -45,6 +45,20 @@ export function AuthProvider({ children }) {
             .finally(() => setLoading(false));
     }, []);
 
+    // Seamlessly reflect mid-game Online -> Offline failover into React auth state
+    useEffect(() => {
+        const onFailover = (e) => {
+            const nextUser = e?.detail?.user;
+            if (nextUser) {
+                setUser(nextUser);
+            } else {
+                setUser((prev) => (prev ? { ...prev, offline_mode: true } : prev));
+            }
+        };
+        window.addEventListener('juanquest:failover-offline', onFailover);
+        return () => window.removeEventListener('juanquest:failover-offline', onFailover);
+    }, []);
+
     const saveAuth = (token, nextUser) => {
         localStorage.setItem('juanquest_token', token);
         localStorage.setItem('juanquest_user', JSON.stringify(nextUser));

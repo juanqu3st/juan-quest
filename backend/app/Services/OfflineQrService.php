@@ -28,6 +28,18 @@ class OfflineQrService
     }
 
     /**
+     * 6-char deterministic offline unblock code visible ONLY to the teacher.
+     * Offline student devices verify this locally without internet if the teacher allows a retry.
+     */
+    public function teacherUnblockCode(GameSession $session): string
+    {
+        $code = strtoupper(trim((string) $session->join_code));
+        $key = $this->sessionQrKey($session);
+
+        return strtoupper(substr(hash('sha256', "jq-unblock|{$code}|{$key}"), 0, 6));
+    }
+
+    /**
      * Compact JSON payload encoded into the Teacher's Offline Join QR code.
      *
      * @return array<string, string>
@@ -58,8 +70,11 @@ class OfflineQrService
         $hearts = implode(',', array_map('intval', (array) ($data['h'] ?? [])));
         $times = implode(',', array_map('intval', (array) ($data['tm'] ?? [])));
         $subId = trim((string) ($data['id'] ?? ''));
+        $att = max(1, (int) ($data['att'] ?? 1));
 
-        return "{$code}|{$mode}|{$group}|{$leader}|{$scores}|{$hearts}|{$times}|{$subId}";
+        $base = "{$code}|{$mode}|{$group}|{$leader}|{$scores}|{$hearts}|{$times}|{$subId}";
+
+        return $att > 1 ? "{$base}|att={$att}" : $base;
     }
 
     /**
@@ -162,6 +177,7 @@ class OfflineQrService
         $groupName = (string) preg_replace('/\s+/', ' ', trim((string) ($data['g'] ?? '')));
         $memberNames = trim((string) ($data['mb'] ?? ''));
         $submissionId = trim((string) ($data['id'] ?? ''));
+        $attempt = max(1, min(20, (int) ($data['att'] ?? 1)));
 
         if (mb_strlen($leaderName) < 2) {
             throw ValidationException::withMessages([
@@ -183,6 +199,7 @@ class OfflineQrService
             $groupName,
             $memberNames,
             $submissionId,
+            $attempt,
             $isManual
         ) {
             $lockedSession = GameSession::where('id', $session->id)->lockForUpdate()->firstOrFail();
@@ -209,9 +226,56 @@ class OfflineQrService
                 $existingCompletedCount = StudentProgress::where('user_id', $existingParticipant->user->id)
                     ->where('is_completed', true)
                     ->count();
-                if ($existingCompletedCount >= $maps->count()) {
+                if ($existingCompletedCount >= $maps->count() && $attempt <= 1) {
                     return true;
                 }
+
+                // Merge cleanly into existing participant when:
+                // (a) Online participant lost signal mid-game (< 5 maps completed online) and finished via Offline QR, OR
+                // (b) Teacher-unblocked retry (att > 1). Prevents duplicate rows!
+                $student = $existingParticipant->user;
+                $isFailoverMerge = $existingCompletedCount < $maps->count();
+
+                $student->update([
+                    'current_map_number' => (int) ($maps->max('map_number') ?: 5),
+                    'activity_status' => 'completed',
+                    'last_seen_at' => now(),
+                ]);
+                if ($playMode === 'group' && $existingParticipant->sessionGroup) {
+                    $existingParticipant->sessionGroup->update([
+                        'group_name' => mb_strlen($groupName) >= 2 ? mb_substr($groupName, 0, 40) : $existingParticipant->sessionGroup->group_name,
+                        'member_names' => $memberNames !== '' ? mb_substr($memberNames, 0, 500) : $existingParticipant->sessionGroup->member_names,
+                    ]);
+                }
+                foreach ($maps as $idx => $map) {
+                    $frCode = (string) ($reasons[$idx] ?? 'c');
+                    $finishReason = $frCode === 't' ? 'timeout' : 'completed';
+                    StudentProgress::updateOrCreate(
+                        ['user_id' => $student->id, 'map_id' => $map->id],
+                        [
+                            'game_session_id' => $lockedSession->id,
+                            'score' => $scores[$idx],
+                            'mistakes_count' => max(0, (int) $map->max_hearts - $hearts[$idx]),
+                            'hearts_remaining' => $hearts[$idx],
+                            'time_limit_used' => (int) $map->time_limit_seconds,
+                            'time_taken_seconds' => $times[$idx],
+                            'attempts' => $attempt,
+                            'is_completed' => true,
+                            'completed_at' => now(),
+                            'answers_log' => [
+                                'source' => 'offline_qr',
+                                'failover_from_online' => $isFailoverMerge,
+                                'offline_verified' => ! $isManual,
+                                'offline_submission_id' => $submissionId !== '' ? $submissionId : null,
+                                'offline_attempt' => $attempt,
+                                'finish_reason' => $finishReason,
+                                'earned_points' => $scores[$idx],
+                            ],
+                        ]
+                    );
+                }
+
+                return false;
             }
 
             $student = User::create([
@@ -259,13 +323,14 @@ class OfflineQrService
                     'hearts_remaining' => $hearts[$idx],
                     'time_limit_used' => (int) $map->time_limit_seconds,
                     'time_taken_seconds' => $times[$idx],
-                    'attempts' => 1,
+                    'attempts' => $attempt,
                     'is_completed' => true,
                     'completed_at' => now(),
                     'answers_log' => [
                         'source' => 'offline_qr',
                         'offline_verified' => ! $isManual,
                         'offline_submission_id' => $submissionId !== '' ? $submissionId : null,
+                        'offline_attempt' => $attempt,
                         'finish_reason' => $finishReason,
                         'earned_points' => $scores[$idx],
                     ],

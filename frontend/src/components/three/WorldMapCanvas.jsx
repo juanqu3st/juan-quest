@@ -30,21 +30,35 @@ export default function WorldMapCanvas({
     onTourCardChange,
     onTourFinish,
 }) {
-    const [quality, setQuality] = useState('balanced');
+    const isMobileDevice = useMemo(() => {
+        if (typeof window === 'undefined') return false;
+        return Boolean(
+            window.matchMedia?.('(pointer: coarse)')?.matches ||
+                /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
+        );
+    }, []);
+    const isLowCorePhone = useMemo(() => {
+        if (typeof navigator === 'undefined') return false;
+        return isMobileDevice && (navigator.hardwareConcurrency || 8) <= 4;
+    }, [isMobileDevice]);
+
+    const [quality, setQuality] = useState(() => (isLowCorePhone ? 'low' : 'balanced'));
     const controlsRef = useRef();
     const playerPosRef = useRef(new THREE.Vector3());
     const curve = useMemo(() => createWorldCurve(), []);
     const lowQuality = quality === 'low';
     const S = WORLD_SCALE;
+    const shadowSize = isMobileDevice ? 512 : 1024;
+    const dprRange = lowQuality ? [0.75, 1] : isMobileDevice ? [1, 1.25] : [1, 1.5];
 
     return (
         <Canvas
             frameloop={paused ? 'never' : 'always'}
             shadows={!lowQuality}
-            dpr={lowQuality ? [0.75, 1] : [1, 1.5]}
+            dpr={dprRange}
             gl={{
-                antialias: true,
-                powerPreference: 'high-performance',
+                antialias: !isLowCorePhone,
+                powerPreference: isMobileDevice ? 'default' : 'high-performance',
                 toneMapping: THREE.ACESFilmicToneMapping,
                 toneMappingExposure: 1.15,
             }}
@@ -80,8 +94,8 @@ export default function WorldMapCanvas({
                 intensity={1.65}
                 color="#FFF7E6"
                 castShadow={!lowQuality}
-                shadow-mapSize-width={1024}
-                shadow-mapSize-height={1024}
+                shadow-mapSize-width={shadowSize}
+                shadow-mapSize-height={shadowSize}
                 shadow-camera-left={-48 * S}
                 shadow-camera-right={48 * S}
                 shadow-camera-top={40 * S}

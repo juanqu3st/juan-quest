@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import QRCode from 'qrcode';
 import { Award, Check, CheckCircle2, Clock, Copy, Download, Heart, ShieldCheck, Trophy } from 'lucide-react';
 import { buildSignedResultQrPayload } from '../../utils/offlineEngine';
+import { downloadResultQrImage } from '../../utils/qrExport';
 import QrCodeImage from '../qr/QrCodeImage';
 
 function getPerformanceLabel(score, maxScore) {
@@ -19,78 +19,6 @@ function formatSeconds(sec) {
     const m = Math.floor(s / 60);
     const r = s % 60;
     return m > 0 ? `${m}m ${r}s` : `${r}s`;
-}
-
-/**
- * Generates a high-contrast, ultra-scannable 720x900 PNG Result QR card (zero score spoilers!)
- * so offline students can save a backup copy to their Gallery or send via Messenger.
- */
-async function buildDownloadableQrPng(payload, { userName, groupName, className }) {
-    const width = 720;
-    const height = 900;
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-
-    // Clean warm white card background
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, width, height);
-
-    // Subtle top accent bar
-    ctx.fillStyle = '#C2410C';
-    ctx.fillRect(0, 0, width, 16);
-
-    // Brand header
-    ctx.fillStyle = '#1C1917';
-    ctx.font = '800 32px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('JUANQUEST · RESULT QR', width / 2, 76);
-
-    const displayTitle = groupName ? `${groupName} (${userName})` : userName;
-    ctx.fillStyle = '#C2410C';
-    ctx.font = '700 24px system-ui, -apple-system, sans-serif';
-    ctx.fillText(String(displayTitle || '').slice(0, 42), width / 2, 118);
-
-    ctx.fillStyle = '#57534E';
-    ctx.font = '600 18px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`Klase: ${className || payload.c}  ·  PIN: ${payload.c}`, width / 2, 152);
-
-    // Render razor-sharp QR code onto offscreen canvas with wide white quiet-zone
-    const qrCanvas = document.createElement('canvas');
-    await QRCode.toCanvas(qrCanvas, JSON.stringify(payload), {
-        errorCorrectionLevel: 'L',
-        margin: 4,
-        width: 560,
-        color: {
-            dark: '#000000',
-            light: '#FFFFFF',
-        },
-    });
-
-    const qrX = Math.round((width - qrCanvas.width) / 2);
-    const qrY = 188;
-
-    // Clean crisp border frame
-    ctx.strokeStyle = '#1C1917';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(qrX - 10, qrY - 10, qrCanvas.width + 20, qrCanvas.height + 20);
-    ctx.drawImage(qrCanvas, qrX, qrY);
-
-    // Footer guidance (no score leaked!)
-    ctx.fillStyle = '#15803D';
-    ctx.font = '700 20px system-ui, -apple-system, sans-serif';
-    ctx.fillText(
-        payload.sig === 'manual' ? 'Offline Result QR (Manual)' : 'Verified Offline Result QR',
-        width / 2,
-        804
-    );
-
-    ctx.fillStyle = '#57534E';
-    ctx.font = '500 17px system-ui, -apple-system, sans-serif';
-    ctx.fillText('Ipakita o i-send sa iyong guro upang i-scan sa Live Monitor', width / 2, 842);
-
-    return canvas.toDataURL('image/png');
 }
 
 /**
@@ -148,21 +76,11 @@ export default function GameCompletionModal({
     const handleDownloadQrImage = async () => {
         if (!resultQrPayload) return;
         try {
-            const pngUrl = await buildDownloadableQrPng(resultQrPayload, {
+            await downloadResultQrImage(resultQrPayload, {
                 userName: user?.name || '',
                 groupName: world?.session?.group_name || '',
                 className: world?.session?.class_name || resultQrPayload.c,
             });
-            const rawSlug = (world?.session?.group_name || user?.name || 'player')
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/^-|-$/g, '');
-            const a = document.createElement('a');
-            a.href = pngUrl;
-            a.download = `JuanQuest-QR-${rawSlug || 'result'}-${resultQrPayload.c}.png`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
             setDownloadedQr(true);
             setTimeout(() => setDownloadedQr(false), 2600);
         } catch {
