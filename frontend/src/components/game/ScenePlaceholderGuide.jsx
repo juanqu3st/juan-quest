@@ -73,6 +73,7 @@ export default function ScenePlaceholderGuide({
 
     const [cachedVideoSrc, setCachedVideoSrc] = useState(rawMapVideoUrl);
     const [videoCachedHit, setVideoCachedHit] = useState(false);
+    const [videoUnavailableOffline, setVideoUnavailableOffline] = useState(false);
     const [showCaptions, setShowCaptions] = useState(true);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -132,6 +133,7 @@ export default function ScenePlaceholderGuide({
         }
 
         setCachedVideoSrc(rawMapVideoUrl);
+        setVideoUnavailableOffline(false);
         resolveCachedVideoUrl(rawMapVideoUrl).then(({ url, isObjectUrl, fromCache }) => {
             if (cancelled) {
                 if (isObjectUrl) URL.revokeObjectURL(url);
@@ -140,6 +142,9 @@ export default function ScenePlaceholderGuide({
             if (isObjectUrl) objUrlToRevoke = url;
             setCachedVideoSrc(url);
             setVideoCachedHit(fromCache);
+            if (!fromCache && typeof navigator !== 'undefined' && navigator.onLine === false) {
+                setVideoUnavailableOffline(true);
+            }
         });
 
         return () => {
@@ -148,9 +153,10 @@ export default function ScenePlaceholderGuide({
         };
     }, [rawMapVideoUrl]);
 
-    const hasMapVideo = Boolean(rawMapVideoUrl);
-    const hasYoutube = !hasMapVideo && sourceType === 'youtube' && lesson?.youtube_video_id;
-    const hasLessonUpload = !hasMapVideo && sourceType === 'upload' && uploadedLessonVideoUrl;
+    const hasMapVideo = Boolean(rawMapVideoUrl) && !videoUnavailableOffline;
+    const isOnlineNow = typeof navigator === 'undefined' || navigator.onLine !== false;
+    const hasYoutube = !hasMapVideo && isOnlineNow && sourceType === 'youtube' && lesson?.youtube_video_id;
+    const hasLessonUpload = !hasMapVideo && isOnlineNow && sourceType === 'upload' && uploadedLessonVideoUrl;
 
     const useWholeVoiceover = hasMapVideo && voiceoverMode === 'whole' && Boolean(wholeVoiceoverUrl);
     const hasAnySceneVoiceover = useMemo(

@@ -6,6 +6,7 @@ import {
     Pencil,
     Play,
     Plus,
+    QrCode,
     RotateCcw,
     Square,
     Unlock,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { teacherApi } from '../../api/teacherApi';
 import { useToast } from '../../context/ToastContext';
+import QrCodeImage from '../../components/qr/QrCodeImage';
 import TeacherLayout from './TeacherLayout';
 
 const STATUS_META = {
@@ -70,6 +72,7 @@ export default function TeacherSessionsPage() {
     const [lobby, setLobby] = useState(null);
     const [busy, setBusy] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [showJoinQr, setShowJoinQr] = useState(false);
     const [showCreate, setShowCreate] = useState(false);
     const [editingGroupId, setEditingGroupId] = useState(null);
     const [editingGroupName, setEditingGroupName] = useState('');
@@ -97,8 +100,22 @@ export default function TeacherSessionsPage() {
 
     const loadLobby = async (id) => {
         if (!id) return;
-        const res = await teacherApi.getSessionLobby(id);
-        setLobby(res.session);
+        try {
+            const res = await teacherApi.getSessionLobby(id);
+            setLobby(res.session);
+            try {
+                localStorage.setItem(`juanquest_teacher_lobby_${id}`, JSON.stringify(res.session));
+            } catch {
+                // ignore storage quota
+            }
+        } catch {
+            try {
+                const cached = localStorage.getItem(`juanquest_teacher_lobby_${id}`);
+                if (cached) setLobby(JSON.parse(cached));
+            } catch {
+                // ignore
+            }
+        }
     };
 
     useEffect(() => {
@@ -472,7 +489,7 @@ export default function TeacherSessionsPage() {
                                         </span>
                                     </div>
 
-                                    <div className="flex items-center gap-2.5 mt-1.5">
+                                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
                                         <span className="text-3xl font-extrabold tracking-widest font-mono text-[#C2410C] leading-none">
                                             {lobby.join_code}
                                         </span>
@@ -488,6 +505,16 @@ export default function TeacherSessionsPage() {
                                             )}
                                             <span>{copied ? 'Nakopya' : 'Kopyahin'}</span>
                                         </button>
+                                        {lobby.offline_join_qr && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowJoinQr(true)}
+                                                className="h-7 px-2.5 rounded-lg border border-orange-200 bg-orange-50/80 hover:bg-orange-100 text-[11px] font-semibold text-[#C2410C] inline-flex items-center gap-1.5 transition cursor-pointer"
+                                            >
+                                                <QrCode className="w-3.5 h-3.5" />
+                                                <span>Offline QR</span>
+                                            </button>
+                                        )}
                                     </div>
                                     <p className="text-xs text-slate-500 mt-2">
                                         {lobby.class_name}
@@ -848,6 +875,84 @@ export default function TeacherSessionsPage() {
                             </div>
                         )
                     )}
+                </div>
+            )}
+
+            {/* Projector-Friendly Offline Join QR Modal */}
+            {showJoinQr && lobby?.offline_join_qr && (
+                <div
+                    className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-center justify-center p-4"
+                    onClick={() => setShowJoinQr(false)}
+                >
+                    <div
+                        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <QrCode className="w-4 h-4 text-[#C2410C] shrink-0" />
+                                    <h3 className="text-sm font-extrabold text-slate-900 truncate">
+                                        Offline Join QR
+                                    </h3>
+                                </div>
+                                <p className="text-xs text-slate-500 truncate mt-0.5">
+                                    {lobby.class_name} · {isGroupMode ? 'Per Grupo (1 Device)' : 'Indibidwal (Solo)'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowJoinQr(false)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer shrink-0"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 text-center space-y-4">
+                            <div className="inline-block bg-white p-3.5 rounded-2xl border-2 border-slate-900 shadow-xs">
+                                <QrCodeImage
+                                    value={lobby.offline_join_qr}
+                                    size={248}
+                                    alt="JuanQuest Offline Join QR"
+                                    className="w-[228px] h-[228px] sm:w-[248px] sm:h-[248px]"
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-center gap-2.5">
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                                    Class PIN:
+                                </span>
+                                <span className="text-2xl font-extrabold tracking-widest font-mono text-[#C2410C]">
+                                    {lobby.join_code}
+                                </span>
+                            </div>
+
+                            <p className="text-xs text-slate-600 leading-relaxed max-w-sm mx-auto">
+                                Para sa mga device na <strong>walang Wi-Fi o data</strong>: buksan ang naka-install na{' '}
+                                <strong>JuanQuest App</strong> at i-scan ang QR na ito upang makasali at makapaglaro nang offline.
+                                Pagkatapos ng Mapa 5, i-scan ang kanilang <strong>Result QR</strong> sa Live Monitor.
+                            </p>
+
+                            <div className="pt-1 flex items-center justify-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleCopy}
+                                    className="h-9 px-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5 cursor-pointer transition"
+                                >
+                                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                    <span>{copied ? 'Nakopya ang PIN' : 'Kopyahin ang PIN'}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowJoinQr(false)}
+                                    className="h-9 px-5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition"
+                                >
+                                    Isara
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </TeacherLayout>

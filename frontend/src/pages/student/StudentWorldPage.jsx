@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, FastForward, LogOut, Pencil, Star, Trophy, User, Users } from 'lucide-react';
+import { Award, FastForward, LogOut, Pencil, QrCode, Star, Trophy, User, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -329,10 +329,11 @@ export default function StudentWorldPage() {
     const maps = world.maps || [];
     const activeStageMap = activeStageMapId ? maps.find((m) => m.id === activeStageMapId) || null : null;
     const allMapsCompleted = maps.length > 0 && (world.completed_count || 0) >= maps.length;
+    const isOfflineMode = Boolean(world.offline_mode);
     const sessionStatus = world.session?.status || null;
     const isGroupMode = world.session?.play_mode === 'group';
-    const isWaitingSession = sessionStatus === 'waiting';
-    const isFinishedSession = sessionStatus === 'finished';
+    const isWaitingSession = !isOfflineMode && sessionStatus === 'waiting';
+    const isFinishedSession = !isOfflineMode && sessionStatus === 'finished';
 
     return (
         <div className="relative w-full h-dvh overflow-hidden bg-[#8CCCF5] select-none touch-none">
@@ -368,6 +369,15 @@ export default function StudentWorldPage() {
                             <p className="text-[11px] sm:text-xs font-bold text-stone-900 leading-tight truncate max-w-[105px] sm:max-w-[180px]">
                                 {user.name}
                             </p>
+                            {isOfflineMode && (
+                                <span
+                                    title="Offline Mode"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0"
+                                >
+                                    <WifiOff className="w-2.5 h-2.5" />
+                                    <span className="hidden sm:inline">Offline</span>
+                                </span>
+                            )}
                             {isWaitingSession && (
                                 <span
                                     title="Waiting"
@@ -385,26 +395,35 @@ export default function StudentWorldPage() {
                         </div>
 
                         {isGroupMode ? (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    loadWorld().catch(() => {});
-                                    setGroupModalOpen(true);
-                                }}
-                                className={`mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold transition cursor-pointer max-w-full ${
-                                    world.session.can_rename_group
-                                        ? 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
-                                        : 'bg-stone-100 hover:bg-stone-200/80 text-stone-700'
-                                }`}
-                            >
-                                <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
-                                <span className="max-w-[90px] sm:max-w-[135px] truncate">
-                                    {world.session.group_name || 'Aking Pangkat'}
+                            isOfflineMode ? (
+                                <span className="mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold bg-stone-100 text-stone-700 max-w-full">
+                                    <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
+                                    <span className="max-w-[90px] sm:max-w-[135px] truncate">
+                                        {world.session.group_name || 'Aking Pangkat'}
+                                    </span>
                                 </span>
-                                {world.session.can_rename_group && (
-                                    <Pencil className="w-2.5 h-2.5 text-amber-700 ml-0.5 shrink-0" />
-                                )}
-                            </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        loadWorld().catch(() => {});
+                                        setGroupModalOpen(true);
+                                    }}
+                                    className={`mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold transition cursor-pointer max-w-full ${
+                                        world.session.can_rename_group
+                                            ? 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
+                                            : 'bg-stone-100 hover:bg-stone-200/80 text-stone-700'
+                                    }`}
+                                >
+                                    <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
+                                    <span className="max-w-[90px] sm:max-w-[135px] truncate">
+                                        {world.session.group_name || 'Aking Pangkat'}
+                                    </span>
+                                    {world.session.can_rename_group && (
+                                        <Pencil className="w-2.5 h-2.5 text-amber-700 ml-0.5 shrink-0" />
+                                    )}
+                                </button>
+                            )
                         ) : world.session ? (
                             <p className="text-[10px] sm:text-[11px] font-medium text-stone-500 mt-0.5 truncate max-w-[115px] sm:max-w-[160px]">
                                 {world.session.class_name}
@@ -447,25 +466,33 @@ export default function StudentWorldPage() {
                         <button
                             type="button"
                             onClick={() => setCompletionOpen(true)}
-                            aria-label="Score Review"
-                            title="Score Review"
+                            aria-label={isOfflineMode ? 'Result QR' : 'Score Review'}
+                            title={isOfflineMode ? 'Result QR' : 'Score Review'}
                             className="min-w-[38px] min-h-[38px] sm:min-h-[34px] px-2 sm:px-3 py-1.5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
                         >
-                            <Award className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-                            <span className="hidden sm:inline">Score Review</span>
+                            {isOfflineMode ? (
+                                <QrCode className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                            ) : (
+                                <Award className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                            )}
+                            <span className="hidden sm:inline">
+                                {isOfflineMode ? 'Result QR' : 'Score Review'}
+                            </span>
                         </button>
                     )}
 
-                    <button
-                        type="button"
-                        onClick={handleToggleLeaderboard}
-                        aria-label="Rankings"
-                        title="Rankings"
-                        className="min-w-[38px] min-h-[38px] sm:min-h-[34px] px-2 sm:px-3 py-1.5 rounded-xl hover:bg-stone-100 text-stone-700 hover:text-stone-900 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
-                    >
-                        <Trophy className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#C2410C]" />
-                        <span className="hidden sm:inline">Rankings</span>
-                    </button>
+                    {!isOfflineMode && (
+                        <button
+                            type="button"
+                            onClick={handleToggleLeaderboard}
+                            aria-label="Rankings"
+                            title="Rankings"
+                            className="min-w-[38px] min-h-[38px] sm:min-h-[34px] px-2 sm:px-3 py-1.5 rounded-xl hover:bg-stone-100 text-stone-700 hover:text-stone-900 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                        >
+                            <Trophy className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#C2410C]" />
+                            <span className="hidden sm:inline">Rankings</span>
+                        </button>
+                    )}
 
                     <div className="hidden sm:block h-5 w-px bg-stone-200/90 mx-0.5" />
 
@@ -509,7 +536,9 @@ export default function StudentWorldPage() {
                                         : isFinishedSession
                                             ? 'Tapos na ang sesyon · Tingnan ang Rankings'
                                             : allMapsCompleted
-                                                ? 'Natapos mo na lahat ng mapa'
+                                                ? isOfflineMode
+                                                    ? 'Tapos na! Pindutin ang Result QR sa itaas'
+                                                    : 'Natapos mo na lahat ng mapa'
                                                 : 'Pindutin ang mapa upang magsimula'}
                                 </span>
                             </span>
@@ -536,7 +565,7 @@ export default function StudentWorldPage() {
                 )}
             </div>
 
-            {isGroupMode && (
+            {!isOfflineMode && isGroupMode && (
                 <MyGroupModal
                     open={groupModalOpen}
                     onClose={() => setGroupModalOpen(false)}

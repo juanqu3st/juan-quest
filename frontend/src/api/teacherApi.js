@@ -13,6 +13,10 @@ export const teacherApi = {
     },
 
     getMonitor: (sessionId) => axiosClient.get(`/teacher/sessions/${sessionId}/monitor`).then((r) => r.data),
+    importOfflineResult: (sessionId, qr_payload, allow_manual = false) =>
+        axiosClient
+            .post(`/teacher/sessions/${sessionId}/offline-import`, { qr_payload, allow_manual })
+            .then((r) => r.data),
     exportCsv: (sessionId) =>
         axiosClient
             .get(`/teacher/sessions/${sessionId}/export`, { responseType: 'blob' })

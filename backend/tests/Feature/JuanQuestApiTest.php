@@ -537,4 +537,134 @@ class JuanQuestApiTest extends TestCase
         Http::assertSent(fn ($req) => ($req['public_id'] ?? null) === 'juanquest/challenges/pic_a');
         Http::assertSent(fn ($req) => ($req['public_id'] ?? null) === 'juanquest/challenges/pic_b');
     }
+
+    public function test_offline_pack_hashes_answers_and_hybrid_qr_result_import_ranks_with_online_groups(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        // 1) Public Offline Pack returns 5 maps + media_manifest + salted answer_hash, NEVER plain correct_answer
+        $packRes = $this->getJson('/api/v1/offline/pack')
+            ->assertOk()
+            ->assertJsonCount(5, 'maps')
+            ->assertJsonPath('max_total_score', 50);
+
+        $rawPackJson = $packRes->getContent();
+        $this->assertStringNotContainsString('"correct_answer"', $rawPackJson);
+        $this->assertNotEmpty($packRes->json('pack_salt'));
+        $this->assertArrayHasKey('videos', $packRes->json('media_manifest'));
+        $this->assertArrayHasKey('images', $packRes->json('media_manifest'));
+        $this->assertEquals('choice', $packRes->json('maps.0.challenges.0.answer_hash.mode'));
+        $this->assertEquals('sequence', $packRes->json('maps.1.challenges.0.answer_hash.mode'));
+        $this->assertEquals('matching', $packRes->json('maps.2.challenges.0.answer_hash.mode'));
+        $this->assertEquals('word', $packRes->json('maps.3.challenges.0.answer_hash.mode'));
+        $this->assertEquals('choice', $packRes->json('maps.4.challenges.0.answer_hash.mode'));
+
+        // 2) Create a classroom group session and join 1 online device (Pangkat 1)
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $lessonId = \App\Models\Lesson::value('id');
+        $created = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'class_name' => 'Grade 7 - Hybrid',
+                'lesson_id' => $lessonId,
+                'play_mode' => 'group',
+                'join_code' => 'HYB7C',
+            ])
+            ->assertCreated();
+
+        $sessionId = $created->json('session.id');
+
+        $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'HYB7C',
+            'full_name' => 'Online Leader',
+        ])->assertOk();
+
+        // Lobby & Monitor both expose the Offline Join QR payload + deterministic session key
+        $lobby = $asToken($teacherToken)
+            ->getJson("/api/v1/teacher/sessions/{$sessionId}")
+            ->assertOk()
+            ->assertJsonPath('session.offline_join_qr.t', 'jqj1')
+            ->assertJsonPath('session.offline_join_qr.c', 'HYB7C');
+
+        $qrKey = $lobby->json('session.offline_join_qr.k');
+        $this->assertNotEmpty($qrKey);
+
+        $basePayload = [
+            't' => 'jqr1',
+            'c' => 'HYB7C',
+            'm' => 'group',
+            'g' => 'Offline Ninjas',
+            'l' => 'Carlo Reyes',
+            'mb' => 'Carlo, Mia, Leo',
+            's' => [10, 8, 10, 8, 10],
+            'h' => [3, 2, 3, 2, 3],
+            'tm' => [45, 50, 40, 55, 30],
+            'fr' => ['c', 'c', 'c', 'c', 'c'],
+            'id' => 'jq_test_sub_001',
+        ];
+        $canonical = 'HYB7C|group|Offline Ninjas|Carlo Reyes|10,8,10,8,10|3,2,3,2,3|45,50,40,55,30|jq_test_sub_001';
+        $validSig = substr(hash('sha256', "{$canonical}|{$qrKey}"), 0, 16);
+
+        // 3) Reject tampered signature, wrong session PIN, out-of-bounds score, and unconfirmed manual result
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => array_merge($basePayload, ['sig' => 'deadbeef00000000']),
+            ])
+            ->assertStatus(422);
+
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => array_merge($basePayload, ['c' => 'WRONG1', 'sig' => $validSig]),
+            ])
+            ->assertStatus(422);
+
+        $tamperedScoresPayload = array_merge($basePayload, ['s' => [12, 8, 10, 8, 10]]);
+        $tamperedCanonical = 'HYB7C|group|Offline Ninjas|Carlo Reyes|12,8,10,8,10|3,2,3,2,3|45,50,40,55,30|jq_test_sub_001';
+        $tamperedScoresPayload['sig'] = substr(hash('sha256', "{$tamperedCanonical}|{$qrKey}"), 0, 16);
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => $tamperedScoresPayload,
+            ])
+            ->assertStatus(422);
+
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => array_merge($basePayload, ['sig' => 'manual']),
+                'allow_manual' => false,
+            ])
+            ->assertStatus(422);
+
+        // 4) Accept valid signed QR -> imports alongside online group, ranks #1 (46/50), marks source='offline_qr'
+        $importRes = $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => array_merge($basePayload, ['sig' => $validSig]),
+            ])
+            ->assertOk()
+            ->assertJsonPath('imported.already_imported', false)
+            ->assertJsonPath('imported.verified_qr', true)
+            ->assertJsonPath('imported.entry_name', 'Offline Ninjas')
+            ->assertJsonPath('imported.total_score', 46)
+            ->assertJsonPath('imported.hearts_remaining', 13)
+            ->assertJsonCount(2, 'monitor.per_group')
+            ->assertJsonPath('monitor.per_group.0.group_name', 'Offline Ninjas')
+            ->assertJsonPath('monitor.per_group.0.source', 'offline_qr')
+            ->assertJsonPath('monitor.per_group.0.rank', 1)
+            ->assertJsonPath('monitor.per_group.1.source', 'online');
+
+        // 5) Re-scanning the same Result QR deduplicates cleanly without creating a 3rd group
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/offline-import", [
+                'qr_payload' => array_merge($basePayload, ['sig' => $validSig]),
+            ])
+            ->assertOk()
+            ->assertJsonPath('imported.already_imported', true)
+            ->assertJsonCount(2, 'monitor.per_group');
+    }
 }

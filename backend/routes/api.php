@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\MediaStreamController;
+use App\Http\Controllers\Api\V1\OfflinePackController;
 use App\Http\Controllers\Api\V1\Student\GameplayController;
 use App\Http\Controllers\Api\V1\Student\SessionJoinController;
 use App\Http\Controllers\Api\V1\Student\WorldMapController;
@@ -24,6 +25,9 @@ Route::prefix('v1')->group(function () {
 
     // CORS-safe public media streaming (outside API throttle to prevent school Wi-Fi NAT 429s)
     Route::get('/media/{path}', [MediaStreamController::class, 'show'])->where('path', '.*');
+
+    // Public cacheable PWA Offline Pack (hashed answers only — zero plain-text correct_answer)
+    Route::get('/offline/pack', [OfflinePackController::class, 'show']);
 });
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
@@ -62,6 +66,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
             Route::patch('/groups/{group}', [SessionGroupingController::class, 'renameGroup']);
 
             Route::get('/sessions/{session}/monitor', [MonitorRankingController::class, 'show']);
+            Route::post('/sessions/{session}/offline-import', [MonitorRankingController::class, 'importOfflineResult']);
             Route::get('/sessions/{session}/export', [MonitorRankingController::class, 'export']);
 
             Route::get('/cms', [CmsLessonController::class, 'index']);

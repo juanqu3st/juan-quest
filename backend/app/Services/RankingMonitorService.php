@@ -55,9 +55,14 @@ class RankingMonitorService
                     }
                 }
 
+                $isOfflineQr = $user->studentProgress->contains(
+                    fn ($sp) => (($sp->answers_log['source'] ?? null) === 'offline_qr')
+                );
+
                 return [
                     'user_id' => $user->id,
                     'name' => $user->name,
+                    'source' => $isOfflineQr ? 'offline_qr' : 'online',
                     'group_id' => $playMode === 'group' ? $p->session_group_id : null,
                     'group_number' => $playMode === 'group' ? $p->sessionGroup?->group_number : null,
                     'group_name' => $playMode === 'group'
@@ -94,6 +99,7 @@ class RankingMonitorService
                     'leader_name' => $row['name'],
                     'leader_user_id' => $row['user_id'],
                     'member_names' => $row['member_names'],
+                    'source' => $row['source'],
                     'rank' => $row['rank'],
                     'current_map_number' => $row['current_map_number'],
                     'current_map_title' => $row['current_map_title'],
@@ -107,6 +113,8 @@ class RankingMonitorService
                 ])->values()
                 : collect();
 
+            $offlineQr = app(OfflineQrService::class);
+
             return [
                 'session' => [
                     'id' => $session->id,
@@ -116,6 +124,8 @@ class RankingMonitorService
                     'status' => $session->status,
                     'total_students' => $rows->count(),
                     'total_groups' => $perGroup->count(),
+                    'offline_qr_key' => $offlineQr->sessionQrKey($session),
+                    'offline_join_qr' => $offlineQr->buildJoinQrPayload($session),
                 ],
                 'max_total_score' => $maxTotalScore,
                 'max_total_hearts' => $maxTotalHearts,

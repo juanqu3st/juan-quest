@@ -149,6 +149,7 @@ class GroupingService
             ])->findOrFail($session->id);
 
             $playMode = $fresh->play_mode ?? 'group';
+            $offlineQr = app(OfflineQrService::class);
 
             return [
                 'id' => $fresh->id,
@@ -158,6 +159,7 @@ class GroupingService
                 'lesson_title' => $fresh->lesson?->title,
                 'groups_locked' => $fresh->groups_locked,
                 'status' => $fresh->status,
+                'offline_join_qr' => $offlineQr->buildJoinQrPayload($fresh),
                 'total_students' => $fresh->participants->count(),
                 'groups' => $playMode === 'group'
                     ? $fresh->groups->map(function ($g) {

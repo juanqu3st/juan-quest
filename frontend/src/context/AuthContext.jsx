@@ -1,19 +1,31 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { authApi } from '../api/authApi';
+import { clearOfflineSession, OFFLINE_TOKEN } from '../utils/offlineEngine';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(() => {
-        const raw = localStorage.getItem('juanquest_user');
-        return raw ? JSON.parse(raw) : null;
+        try {
+            const raw = localStorage.getItem('juanquest_user');
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
     });
-    const [loading, setLoading] = useState(() => Boolean(localStorage.getItem('juanquest_token')));
+    const [loading, setLoading] = useState(() => {
+        const token = localStorage.getItem('juanquest_token');
+        return Boolean(token && token !== OFFLINE_TOKEN);
+    });
 
     useEffect(() => {
         const token = localStorage.getItem('juanquest_token');
-        if (!token) {
+        if (!token || token === OFFLINE_TOKEN) {
+            setLoading(false);
+            return;
+        }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
             setLoading(false);
             return;
         }
@@ -23,10 +35,12 @@ export function AuthProvider({ children }) {
                 setUser(res.user);
                 localStorage.setItem('juanquest_user', JSON.stringify(res.user));
             })
-            .catch(() => {
-                localStorage.removeItem('juanquest_token');
-                localStorage.removeItem('juanquest_user');
-                setUser(null);
+            .catch((err) => {
+                if (err?.response?.status === 401) {
+                    localStorage.removeItem('juanquest_token');
+                    localStorage.removeItem('juanquest_user');
+                    setUser(null);
+                }
             })
             .finally(() => setLoading(false));
     }, []);
@@ -46,11 +60,15 @@ export function AuthProvider({ children }) {
     };
 
     const logout = async () => {
-        try {
-            await authApi.logout();
-        } catch {
-            // Clear client token regardless
+        const token = localStorage.getItem('juanquest_token');
+        if (token && token !== OFFLINE_TOKEN) {
+            try {
+                await authApi.logout();
+            } catch {
+                // Clear client token regardless
+            }
         }
+        clearOfflineSession();
         localStorage.removeItem('juanquest_token');
         localStorage.removeItem('juanquest_user');
         setUser(null);

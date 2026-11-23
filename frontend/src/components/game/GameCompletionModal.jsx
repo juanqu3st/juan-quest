@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Award, CheckCircle2, Clock, Heart, Trophy } from 'lucide-react';
+import { Award, Check, CheckCircle2, Clock, Copy, Heart, QrCode, ShieldCheck, Trophy } from 'lucide-react';
+import { buildSignedResultQrPayload } from '../../utils/offlineEngine';
+import QrCodeImage from '../qr/QrCodeImage';
 
 function getPerformanceLabel(score, maxScore) {
     const ratio = maxScore > 0 ? score / maxScore : 0;
@@ -43,6 +46,28 @@ export default function GameCompletionModal({
     );
     const maxTotalHearts = maps.reduce((acc, m) => acc + (m.max_hearts ?? 3), 0);
     const totalHeartsUsed = Math.max(0, maxTotalHearts - totalHeartsLeft);
+
+    const isOfflineMode = Boolean(world?.offline_mode);
+    const [resultQrPayload, setResultQrPayload] = useState(null);
+    const [copiedCode, setCopiedCode] = useState(false);
+
+    useEffect(() => {
+        if (!open || !isOfflineMode) return undefined;
+        let cancelled = false;
+        buildSignedResultQrPayload().then((payload) => {
+            if (!cancelled) setResultQrPayload(payload);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [open, isOfflineMode, totalScore, totalHeartsLeft]);
+
+    const handleCopyResultCode = () => {
+        if (!resultQrPayload) return;
+        navigator.clipboard?.writeText(JSON.stringify(resultQrPayload)).catch(() => {});
+        setCopiedCode(true);
+        setTimeout(() => setCopiedCode(false), 1800);
+    };
 
     return (
         <AnimatePresence>
@@ -112,15 +137,63 @@ export default function GameCompletionModal({
 
                                 <div>
                                     <p className="text-xs text-stone-500 flex items-center gap-1">
-                                        <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                                        Ranking
+                                        {isOfflineMode ? (
+                                            <QrCode className="w-3.5 h-3.5 text-[#C2410C]" />
+                                        ) : (
+                                            <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                                        )}
+                                        {isOfflineMode ? 'Pag-submit' : 'Ranking'}
                                     </p>
                                     <p className="text-2xl sm:text-3xl font-bold text-stone-900 tabular-nums mt-1">
-                                        {myRanking ? `#${myRanking.rank}` : '—'}
+                                        {isOfflineMode ? 'QR' : myRanking ? `#${myRanking.rank}` : '—'}
                                     </p>
-                                    <p className="text-[11px] text-stone-500">Sa klase</p>
+                                    <p className="text-[11px] text-stone-500">
+                                        {isOfflineMode ? 'I-scan ng guro' : 'Sa klase'}
+                                    </p>
                                 </div>
                             </div>
+
+                            {/* Offline Mode Tamper-Checked Result QR Section */}
+                            {isOfflineMode && resultQrPayload && (
+                                <div className="rounded-2xl border border-amber-200/90 bg-amber-50/45 p-4 sm:p-5 flex flex-col sm:flex-row items-center gap-4 sm:gap-5">
+                                    <div className="bg-white p-2.5 rounded-2xl border-2 border-stone-900 shadow-xs shrink-0">
+                                        <QrCodeImage
+                                            value={resultQrPayload}
+                                            size={188}
+                                            alt="JuanQuest Offline Result QR"
+                                            className="w-[172px] h-[172px] sm:w-[188px] sm:h-[188px]"
+                                        />
+                                    </div>
+                                    <div className="flex-1 text-center sm:text-left space-y-2">
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#15803D]">
+                                            <ShieldCheck className="w-3.5 h-3.5" />
+                                            {resultQrPayload.sig === 'manual'
+                                                ? 'Offline Result QR (Manual)'
+                                                : 'Verified Offline Result QR'}
+                                        </span>
+                                        <h3 className="text-sm sm:text-base font-extrabold text-stone-900">
+                                            Ipakita ang QR na ito sa iyong Guro
+                                        </h3>
+                                        <p className="text-xs text-stone-600 leading-relaxed">
+                                            I-sscan ito ng iyong guro sa Live Monitor upang maidagdag ang inyong puntos (
+                                            <strong>{totalScore}/{maxScore}</strong>) sa opisyal na ranking ng klase (
+                                            <span className="font-mono font-bold">{resultQrPayload.c}</span>).
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={handleCopyResultCode}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-xs font-semibold text-stone-700 cursor-pointer transition"
+                                        >
+                                            {copiedCode ? (
+                                                <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                                            ) : (
+                                                <Copy className="w-3.5 h-3.5 text-stone-500" />
+                                            )}
+                                            <span>{copiedCode ? 'Nakopya ang Result Code' : 'Kopyahin ang Result Code'}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Full 5-Map Score Review Table */}
                             <div className="space-y-2.5 pt-1">
@@ -202,17 +275,19 @@ export default function GameCompletionModal({
 
                             {/* Actions */}
                             <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 pt-2">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        onClose?.();
-                                        onOpenRankings?.();
-                                    }}
-                                    className="w-full sm:w-auto min-h-[46px] px-5 py-2 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 text-stone-800 text-sm font-semibold inline-flex items-center justify-center gap-2 transition cursor-pointer"
-                                >
-                                    <Trophy className="w-4 h-4 text-[#C2410C]" />
-                                    <span>Tingnan ang Rankings</span>
-                                </button>
+                                {!isOfflineMode && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            onClose?.();
+                                            onOpenRankings?.();
+                                        }}
+                                        className="w-full sm:w-auto min-h-[46px] px-5 py-2 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 text-stone-800 text-sm font-semibold inline-flex items-center justify-center gap-2 transition cursor-pointer"
+                                    >
+                                        <Trophy className="w-4 h-4 text-[#C2410C]" />
+                                        <span>Tingnan ang Rankings</span>
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     onClick={onClose}
