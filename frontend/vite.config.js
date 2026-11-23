@@ -3,10 +3,29 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const APP_BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+
+function emitVersionJsonPlugin(buildId) {
+    return {
+        name: 'juanquest-version-json',
+        generateBundle() {
+            this.emitFile({
+                type: 'asset',
+                fileName: 'version.json',
+                source: JSON.stringify({ build: buildId }),
+            });
+        },
+    };
+}
+
 export default defineConfig({
+    define: {
+        __APP_BUILD_ID__: JSON.stringify(APP_BUILD_ID),
+    },
     plugins: [
         react(),
         tailwindcss(),
+        emitVersionJsonPlugin(APP_BUILD_ID),
         VitePWA({
             registerType: 'prompt',
             includeAssets: [
@@ -53,8 +72,12 @@ export default defineConfig({
                 maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
                 globPatterns: ['**/*.{js,css,html,svg,png,wasm,glb}'],
                 navigateFallback: '/index.html',
-                navigateFallbackDenylist: [/^\/api\//],
+                navigateFallbackDenylist: [/^\/api\//, /^\/version\.json$/],
                 runtimeCaching: [
+                    {
+                        urlPattern: /\/version\.json$/i,
+                        handler: 'NetworkOnly',
+                    },
                     {
                         urlPattern: /^https:\/\/res\.cloudinary\.com\/.*\/image\/upload\/.*/i,
                         handler: 'CacheFirst',

@@ -10,18 +10,59 @@ import {
 import { useToast } from './ToastContext';
 
 const PwaContext = createContext(null);
+/* global __APP_BUILD_ID__ */
+const CURRENT_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? String(__APP_BUILD_ID__) : '';
 
 function detectStandalone() {
     if (typeof window === 'undefined') return false;
     return (
         window.matchMedia?.('(display-mode: standalone)')?.matches ||
-        window.navigator.standalone === true
+        window.matchMedia?.('(display-mode: minimal-ui)')?.matches ||
+        window.matchMedia?.('(display-mode: fullscreen)')?.matches ||
+        window.navigator.standalone === true ||
+        document.referrer.startsWith('android-app://')
     );
 }
 
 function detectIos() {
     if (typeof navigator === 'undefined') return false;
     return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
+async function checkRemoteAppBuildChanged() {
+    if (!CURRENT_BUILD_ID || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+        return false;
+    }
+    try {
+        const res = await fetch(`/version.json?t=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache' },
+        });
+        if (!res.ok) return false;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('json')) return false;
+        const data = await res.json();
+        return Boolean(data?.build && String(data.build) !== CURRENT_BUILD_ID);
+    } catch {
+        return false;
+    }
+}
+
+async function waitForWaitingWorker(registration, timeoutMs = 2500) {
+    if (!registration) return null;
+    if (registration.waiting) return registration.waiting;
+    const installing = registration.installing;
+    if (!installing) return null;
+
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(registration.waiting || null), timeoutMs);
+        installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed') {
+                clearTimeout(timer);
+                resolve(registration.waiting || installing);
+            }
+        });
+    });
 }
 
 export function PwaProvider({ children }) {
@@ -41,6 +82,7 @@ export function PwaProvider({ children }) {
 
     // Force Update modal state for Installed PWA when online and a new build or content change is found
     const [swNeedsRefresh, setSwNeedsRefresh] = useState(false);
+    const [buildNeedsUpdate, setBuildNeedsUpdate] = useState(false);
     const [contentNeedsUpdate, setContentNeedsUpdate] = useState(false);
     const [updatingApp, setUpdatingApp] = useState(false);
     const [updateProgress, setUpdateProgress] = useState({ percent: 0, label: '' });
@@ -60,11 +102,20 @@ export function PwaProvider({ children }) {
         // Ask Service Worker to check server for a newer app build right now
         if (swRegistrationRef.current) {
             swRegistrationRef.current.update().catch(() => {});
+            if (isInstalledRef.current && swRegistrationRef.current.waiting) {
+                setSwNeedsRefresh(true);
+            }
         }
 
         if (isInstalledRef.current) {
-            const { hasUpdate } = await checkRemoteContentUpdate();
-            if (hasUpdate) {
+            const [buildChanged, contentCheck] = await Promise.all([
+                checkRemoteAppBuildChanged(),
+                checkRemoteContentUpdate(),
+            ]);
+            if (buildChanged) {
+                setBuildNeedsUpdate(true);
+            }
+            if (contentCheck?.hasUpdate) {
                 setContentNeedsUpdate(true);
             }
         } else {
@@ -86,8 +137,13 @@ export function PwaProvider({ children }) {
             },
             onRegisteredSW(_swUrl, registration) {
                 swRegistrationRef.current = registration || null;
-                if (registration && navigator.onLine !== false) {
-                    registration.update().catch(() => {});
+                if (registration) {
+                    if (isInstalledRef.current && registration.waiting) {
+                        setSwNeedsRefresh(true);
+                    }
+                    if (navigator.onLine !== false) {
+                        registration.update().catch(() => {});
+                    }
                 }
             },
         });
@@ -126,12 +182,12 @@ export function PwaProvider({ children }) {
         window.addEventListener('beforeinstallprompt', onBeforeInstall);
         window.addEventListener('appinstalled', onAppInstalled);
 
-        // Initial check after mount
+        // Fast initial update check (~350ms after opening installed app!)
         const initialTimer = setTimeout(() => {
             if (navigator.onLine !== false) {
                 checkInstalledUpdates();
             }
-        }, 900);
+        }, 350);
 
         return () => {
             clearTimeout(initialTimer);
@@ -144,7 +200,8 @@ export function PwaProvider({ children }) {
     }, [checkInstalledUpdates, showToast]);
 
     const canShowInstallButton = isOnline && !isInstalled && (Boolean(deferredPrompt) || isIos);
-    const showForceUpdateModal = isInstalled && isOnline && (swNeedsRefresh || contentNeedsUpdate);
+    const showForceUpdateModal =
+        isInstalled && isOnline && (swNeedsRefresh || buildNeedsUpdate || contentNeedsUpdate);
 
     const triggerNativePrompt = useCallback(async () => {
         const promptEvent = promptRef.current;
@@ -219,8 +276,8 @@ export function PwaProvider({ children }) {
 
     /**
      * Force Update Handler for Installed PWA:
-     * Shows smooth visual progress (0% -> 100%), downloads latest app content & media,
-     * and activates the newest Service Worker build immediately.
+     * Shows smooth visual progress (0% -> 100%), downloads latest content & media,
+     * and activates the newest Service Worker build immediately without loops.
      */
     const handleForceUpdate = useCallback(async () => {
         if (updatingApp) return;
@@ -233,27 +290,41 @@ export function PwaProvider({ children }) {
                 includeVideos: true,
                 strictVideos: true,
                 onProgress: (p) => {
-                    const scaled = Math.min(92, Math.max(10, Math.round((p.percent || 0) * 0.92)));
+                    const scaled = Math.min(90, Math.max(10, Math.round((p.percent || 0) * 0.9)));
                     setUpdateProgress({
                         percent: scaled,
-                        label: scaled >= 85 ? 'Inilalapat ang update...' : 'Nagda-download ng update...',
+                        label: scaled >= 82 ? 'Inilalapat ang update...' : 'Nagda-download ng update...',
                     });
                 },
             });
 
-            setUpdateProgress({ percent: 96, label: 'Inilalapat ang bagong bersyon...' });
-
-            if (swNeedsRefresh && updateSwFnRef.current) {
+            if (swNeedsRefresh || buildNeedsUpdate) {
+                setUpdateProgress({ percent: 94, label: 'Inilalapat ang bagong bersyon...' });
+                const reg = swRegistrationRef.current;
+                if (reg) {
+                    await reg.update().catch(() => {});
+                }
+                const waiting = await waitForWaitingWorker(reg, 2500);
                 setUpdateProgress({ percent: 100, label: 'Nire-restart ang app...' });
-                await updateSwFnRef.current(true);
-                // Fallback reload if SW controllerchange doesn't reload within 1.5s
-                setTimeout(() => window.location.reload(), 1500);
+
+                if (waiting && updateSwFnRef.current) {
+                    await updateSwFnRef.current(true).catch(() => {});
+                    setTimeout(() => window.location.reload(), 1200);
+                    return;
+                }
+
+                // Fallback when version.json is newer than running JS but browser hasn't queued a waiting SW yet
+                if (reg) {
+                    await reg.unregister().catch(() => {});
+                }
+                window.location.reload();
                 return;
             }
 
             setUpdateProgress({ percent: 100, label: 'Na-update na!' });
             setContentNeedsUpdate(false);
             setSwNeedsRefresh(false);
+            setBuildNeedsUpdate(false);
             setUpdatingApp(false);
             showToast?.('success', 'Na-update na sa pinakabagong bersyon ang JuanQuest.', 'Updated!');
         } catch (err) {
@@ -262,7 +333,7 @@ export function PwaProvider({ children }) {
             );
             setUpdatingApp(false);
         }
-    }, [swNeedsRefresh, updatingApp, showToast]);
+    }, [swNeedsRefresh, buildNeedsUpdate, updatingApp, showToast]);
 
     return (
         <PwaContext.Provider
