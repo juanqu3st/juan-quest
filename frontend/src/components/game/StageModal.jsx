@@ -663,6 +663,8 @@ export default function StageModal({
                                         lastDetails={lastDetails}
                                         savedPairs={drafts.matchingPairs}
                                         onSavePairs={(val) => handleDraftChange('matchingPairs', val)}
+                                        savedLockedIds={drafts.matchingLockedIds}
+                                        onSaveLockedIds={(val) => handleDraftChange('matchingLockedIds', val)}
                                     />
                                 )}
                                 {map.strategy_type === 'four_pics' && (

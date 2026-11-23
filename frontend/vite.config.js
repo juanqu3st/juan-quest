@@ -8,7 +8,7 @@ export default defineConfig({
         react(),
         tailwindcss(),
         VitePWA({
-            registerType: 'autoUpdate',
+            registerType: 'prompt',
             includeAssets: [
                 'logo.svg',
                 'apple-touch-icon.png',

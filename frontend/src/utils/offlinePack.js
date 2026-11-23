@@ -129,7 +129,7 @@ export function hasOfflinePack() {
 }
 
 /**
- * Fast check (~5ms) to verify whether the quiz pack AND all 5 story videos are already saved locally.
+ * Fast check (~5ms) to verify whether the quiz pack AND all media assets are already saved locally.
  */
 export async function isFullOfflineBundleReady() {
     const pack = loadOfflinePack();
@@ -138,27 +138,54 @@ export async function isFullOfflineBundleReady() {
     return areAllVideosCached(videoUrls);
 }
 
+/**
+ * Lightweight version & completeness check used when an installed app opens online
+ * to detect CMS edits or missing assets and prompt a clean Force Update.
+ */
+export async function checkRemoteContentUpdate() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return { hasUpdate: false };
+    }
+    try {
+        const { data: remotePack } = await axiosClient.get('/offline/pack', {
+            params: { _t: Date.now() },
+        });
+        if (!remotePack || !Array.isArray(remotePack.maps)) {
+            return { hasUpdate: false };
+        }
+        const localPack = loadOfflinePack();
+        const versionChanged = !localPack || localPack.version !== remotePack.version;
+        const remoteVideoUrls = (remotePack.media_manifest?.videos || [])
+            .map((p) => resolveMediaUrl(p))
+            .filter(Boolean);
+        const allMediaPresent = await areAllVideosCached(remoteVideoUrls);
+
+        return {
+            hasUpdate: versionChanged || !allMediaPresent,
+            remoteVersion: remotePack.version || null,
+        };
+    } catch {
+        return { hasUpdate: false };
+    }
+}
+
 async function runSharedSync({ includeVideos = true } = {}) {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         const existing = loadOfflinePack();
         if (existing) {
             emitProgress({ percent: 100, label: 'Handa na', completed: 1, total: 1 });
-            return { pack: existing, videosOk: 0, videosTotal: 0 };
+            return { pack: existing, videosOk: 0, videosTotal: 0, allVideosSaved: true };
         }
         throw new Error('Walang koneksyon sa internet.');
     }
 
-    emitProgress({ percent: 5, label: 'Kinukuha ang datos ng aralin...', completed: 0, total: 1 });
+    emitProgress({ percent: 6, label: 'Inihahanda ang JuanQuest...', completed: 0, total: 1 });
 
-    const { data: pack } = await axiosClient.get('/offline/pack');
+    const { data: pack } = await axiosClient.get('/offline/pack', {
+        params: { _t: Date.now() },
+    });
     if (!pack || !Array.isArray(pack.maps)) {
-        throw new Error('Hindi nakuha ang datos ng aralin.');
-    }
-
-    try {
-        localStorage.setItem(PACK_STORAGE_KEY, JSON.stringify(pack));
-    } catch {
-        // Ignore localStorage quota error
+        throw new Error('Hindi nakuha ang datos ng app.');
     }
 
     const imageUrls = (pack.media_manifest?.images || [])
@@ -172,20 +199,19 @@ async function runSharedSync({ includeVideos = true } = {}) {
         : [];
 
     const lightTasks = [
-        ...imageUrls.map((url) => ({ cache: IMAGE_CACHE_NAME, url, minBytes: 512, label: 'Inihahanda ang mga larawan...' })),
-        ...audioUrls.map((url) => ({ cache: VIDEO_CACHE_NAME, url, minBytes: 1024, label: 'Inihahanda ang mga tunog...' })),
+        ...imageUrls.map((url) => ({ cache: IMAGE_CACHE_NAME, url, minBytes: 512 })),
+        ...audioUrls.map((url) => ({ cache: VIDEO_CACHE_NAME, url, minBytes: 1024 })),
     ];
-    const videoTasks = videoUrls.map((url, idx) => ({
+    const videoTasks = videoUrls.map((url) => ({
         cache: VIDEO_CACHE_NAME,
         url,
         minBytes: 50000,
-        label: `Inihahanda ang Story Video ${idx + 1} ng ${videoUrls.length}...`,
     }));
 
     const totalWeight = lightTasks.length + videoTasks.length * 4;
     let doneWeight = 0;
 
-    // 1. Download lightweight images & audio in batches of 4
+    // 1. Download lightweight assets in batches of 4
     for (let i = 0; i < lightTasks.length; i += 4) {
         const batch = lightTasks.slice(i, i + 4);
         await Promise.all(
@@ -197,18 +223,23 @@ async function runSharedSync({ includeVideos = true } = {}) {
                 });
                 doneWeight += 1;
                 const percent = Math.min(35, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88));
-                emitProgress({ percent, label: item.label, completed: doneWeight, total: totalWeight });
+                emitProgress({
+                    percent,
+                    label: 'Nagda-download ng app...',
+                    completed: doneWeight,
+                    total: totalWeight,
+                });
             })
         );
     }
 
-    // 2. Download ALL 5 Story Videos sequentially with 3x retry & strict verification
+    // 2. Download media sequentially with 3x retry & strict verification
     let videosOk = 0;
     for (let i = 0; i < videoTasks.length; i += 1) {
         const item = videoTasks[i];
         emitProgress({
-            percent: Math.min(96, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88)),
-            label: item.label,
+            percent: Math.min(95, 10 + Math.round((doneWeight / Math.max(1, totalWeight)) * 85)),
+            label: 'Nagda-download ng app...',
             completed: doneWeight,
             total: totalWeight,
         });
@@ -220,25 +251,34 @@ async function runSharedSync({ includeVideos = true } = {}) {
         if (ok) videosOk += 1;
         doneWeight += 4;
         emitProgress({
-            percent: Math.min(99, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 91)),
-            label: item.label,
+            percent: Math.min(98, 10 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88)),
+            label: 'Tinatapos ang paghahanda...',
             completed: doneWeight,
             total: totalWeight,
         });
     }
 
-    // Final verification of all 5 videos in CacheStorage
+    try {
+        localStorage.setItem(PACK_STORAGE_KEY, JSON.stringify(pack));
+    } catch {
+        // Ignore localStorage quota error
+    }
+
     const allSaved = videoUrls.length === 0 || (await areAllVideosCached(videoUrls));
     if (allSaved) {
-        emitProgress({ percent: 100, label: 'Kumpleto na ang buong app!', completed: totalWeight, total: totalWeight });
+        emitProgress({
+            percent: 100,
+            label: 'Handa na!',
+            completed: totalWeight,
+            total: totalWeight,
+        });
     }
 
     return { pack, videosOk, videosTotal: videoUrls.length, allVideosSaved: allSaved };
 }
 
 /**
- * Download & verify 100% of JuanQuest offline assets (hashed quiz pack, all challenge images,
- * audio voice-overs, and ALL 5 Cloudinary 3D story MP4 videos) with shared deduplication.
+ * Download & verify 100% of JuanQuest offline assets with shared deduplication.
  */
 export async function syncAllOfflineResources({ onProgress, includeVideos = true, strictVideos = false } = {}) {
     if (onProgress) {
@@ -258,7 +298,7 @@ export async function syncAllOfflineResources({ onProgress, includeVideos = true
 
         if (strictVideos && includeVideos && result.videosTotal > 0 && !result.allVideosSaved) {
             throw new Error(
-                `Hindi natapos ang pag-download ng lahat ng Story Video (${result.videosOk}/${result.videosTotal}). Pakisuri ang internet at subukan muli.`
+                'Hindi natapos ang pag-download ng app. Pakisuri ang iyong internet at subukan muli.'
             );
         }
 
@@ -271,8 +311,7 @@ export async function syncAllOfflineResources({ onProgress, includeVideos = true
 }
 
 /**
- * Silent background precache while online so all 3D models, images, audio, and 5 videos
- * are automatically ready (and any missing videos from earlier visits get filled in quietly).
+ * Silent background sync while online (used on web browser; installed PWA shows explicit Force Update UI).
  */
 export function ensureSilentOfflineCache() {
     if (typeof window === 'undefined' || navigator.onLine === false) return;

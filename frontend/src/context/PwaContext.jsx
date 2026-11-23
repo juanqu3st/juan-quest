@@ -1,6 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Download, Share, X } from 'lucide-react';
-import { ensureSilentOfflineCache, isFullOfflineBundleReady, syncAllOfflineResources } from '../utils/offlinePack';
+import { registerSW } from 'virtual:pwa-register';
+import { Download, RefreshCw, Share, X } from 'lucide-react';
+import {
+    checkRemoteContentUpdate,
+    ensureSilentOfflineCache,
+    isFullOfflineBundleReady,
+    syncAllOfflineResources,
+} from '../utils/offlinePack';
 import { useToast } from './ToastContext';
 
 const PwaContext = createContext(null);
@@ -26,23 +32,82 @@ export function PwaProvider({ children }) {
     );
     const [isInstalled, setIsInstalled] = useState(() => detectStandalone());
     const [deferredPrompt, setDeferredPrompt] = useState(null);
+
+    // Install modal state (Clean native feel — zero verbose/technical descriptions!)
     const [installModalOpen, setInstallModalOpen] = useState(false);
     const [installPhase, setInstallPhase] = useState('idle'); // 'preparing' | 'tap_install' | 'ios_guide' | 'error'
     const [installProgress, setInstallProgress] = useState({ percent: 0, label: '' });
     const [installError, setInstallError] = useState('');
+
+    // Force Update modal state for Installed PWA when online and a new build or content change is found
+    const [swNeedsRefresh, setSwNeedsRefresh] = useState(false);
+    const [contentNeedsUpdate, setContentNeedsUpdate] = useState(false);
+    const [updatingApp, setUpdatingApp] = useState(false);
+    const [updateProgress, setUpdateProgress] = useState({ percent: 0, label: '' });
+    const [updateError, setUpdateError] = useState('');
+
     const promptRef = useRef(null);
+    const swRegistrationRef = useRef(null);
+    const updateSwFnRef = useRef(null);
+    const isInstalledRef = useRef(isInstalled);
+    isInstalledRef.current = isInstalled;
 
     const isIos = detectIos();
 
+    const checkInstalledUpdates = useCallback(async () => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+        // Ask Service Worker to check server for a newer app build right now
+        if (swRegistrationRef.current) {
+            swRegistrationRef.current.update().catch(() => {});
+        }
+
+        if (isInstalledRef.current) {
+            const { hasUpdate } = await checkRemoteContentUpdate();
+            if (hasUpdate) {
+                setContentNeedsUpdate(true);
+            }
+        } else {
+            ensureSilentOfflineCache();
+        }
+    }, []);
+
     useEffect(() => {
+        // Register PWA Service Worker with prompt control so installed apps get Force Update UI!
+        const updateSW = registerSW({
+            immediate: true,
+            onNeedRefresh() {
+                if (isInstalledRef.current) {
+                    setSwNeedsRefresh(true);
+                } else {
+                    // Normal browser tab updates seamlessly without blocking
+                    updateSW(true).catch(() => {});
+                }
+            },
+            onRegisteredSW(_swUrl, registration) {
+                swRegistrationRef.current = registration || null;
+                if (registration && navigator.onLine !== false) {
+                    registration.update().catch(() => {});
+                }
+            },
+        });
+        updateSwFnRef.current = updateSW;
+
         const goOnline = () => {
             setIsOnline(true);
-            ensureSilentOfflineCache();
+            checkInstalledUpdates();
         };
         const goOffline = () => setIsOnline(false);
 
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible' && navigator.onLine !== false) {
+                checkInstalledUpdates();
+            }
+        };
+
         window.addEventListener('online', goOnline);
         window.addEventListener('offline', goOffline);
+        document.addEventListener('visibilitychange', onVisibility);
 
         const onBeforeInstall = (e) => {
             e.preventDefault();
@@ -55,29 +120,31 @@ export function PwaProvider({ children }) {
             promptRef.current = null;
             setInstallModalOpen(false);
             setInstallPhase('idle');
-            showToast?.('success', 'Na-install na ang JuanQuest App sa iyong device.', 'Na-install na!');
+            showToast?.('success', 'Na-install na ang JuanQuest App.', 'Na-install na!');
         };
 
         window.addEventListener('beforeinstallprompt', onBeforeInstall);
         window.addEventListener('appinstalled', onAppInstalled);
 
-        // Quietly keep all 5 story videos + game data synced in background whenever online
-        const silentTimer = setTimeout(() => {
+        // Initial check after mount
+        const initialTimer = setTimeout(() => {
             if (navigator.onLine !== false) {
-                ensureSilentOfflineCache();
+                checkInstalledUpdates();
             }
-        }, 1200);
+        }, 900);
 
         return () => {
-            clearTimeout(silentTimer);
+            clearTimeout(initialTimer);
             window.removeEventListener('online', goOnline);
             window.removeEventListener('offline', goOffline);
+            document.removeEventListener('visibilitychange', onVisibility);
             window.removeEventListener('beforeinstallprompt', onBeforeInstall);
             window.removeEventListener('appinstalled', onAppInstalled);
         };
-    }, [showToast]);
+    }, [checkInstalledUpdates, showToast]);
 
     const canShowInstallButton = isOnline && !isInstalled && (Boolean(deferredPrompt) || isIos);
+    const showForceUpdateModal = isInstalled && isOnline && (swNeedsRefresh || contentNeedsUpdate);
 
     const triggerNativePrompt = useCallback(async () => {
         const promptEvent = promptRef.current;
@@ -94,25 +161,20 @@ export function PwaProvider({ children }) {
                 setIsInstalled(true);
                 setDeferredPrompt(null);
                 promptRef.current = null;
-                showToast?.('success', 'Ini-install na ang JuanQuest App sa iyong device...', 'Ini-install...');
+                showToast?.('success', 'Ini-install na ang JuanQuest App...', 'Ini-install...');
             }
             return true;
         } catch {
-            // Browser expired user gesture during long video download — show single instant Install tap button
             return false;
         }
     }, [showToast]);
 
     /**
-     * Seamless All-in-One App Installation:
-     * - If all 5 videos & app files are already saved -> triggers native Install dialog immediately (0ms)!
-     * - Otherwise downloads & verifies 100% of all 5 videos first, then triggers native Install immediately
-     *   with ZERO confusing "Tapos" confirmation modal!
+     * Clean Seamless App Installation (no technical asset descriptions, no confusing "Tapos" modal).
      */
     const startAppInstall = useCallback(async () => {
         setInstallError('');
 
-        // Fast path: everything already saved in background -> native browser Install popup immediately!
         const alreadyReady = await isFullOfflineBundleReady().catch(() => false);
         if (alreadyReady) {
             if (promptRef.current) {
@@ -127,7 +189,7 @@ export function PwaProvider({ children }) {
 
         setInstallModalOpen(true);
         setInstallPhase('preparing');
-        setInstallProgress({ percent: 6, label: 'Inihahanda ang JuanQuest App...' });
+        setInstallProgress({ percent: 6, label: 'Inihahanda ang JuanQuest...' });
 
         try {
             await syncAllOfflineResources({
@@ -139,7 +201,6 @@ export function PwaProvider({ children }) {
             if (promptRef.current) {
                 const triggered = await triggerNativePrompt();
                 if (!triggered) {
-                    // Only if Chrome blocked async prompt after long download -> 1-tap instant Install button
                     setInstallPhase('tap_install');
                 }
             } else if (isIos) {
@@ -149,10 +210,59 @@ export function PwaProvider({ children }) {
                 setInstallPhase('idle');
             }
         } catch (err) {
-            setInstallError(err?.message || 'Hindi natapos ang pag-download ng mga files. Pakisubukan muli.');
+            setInstallError(
+                err?.message || 'Hindi natapos ang pag-download ng app. Pakisuri ang internet at subukan muli.'
+            );
             setInstallPhase('error');
         }
     }, [isIos, triggerNativePrompt]);
+
+    /**
+     * Force Update Handler for Installed PWA:
+     * Shows smooth visual progress (0% -> 100%), downloads latest app content & media,
+     * and activates the newest Service Worker build immediately.
+     */
+    const handleForceUpdate = useCallback(async () => {
+        if (updatingApp) return;
+        setUpdateError('');
+        setUpdatingApp(true);
+        setUpdateProgress({ percent: 8, label: 'Nagda-download ng update...' });
+
+        try {
+            await syncAllOfflineResources({
+                includeVideos: true,
+                strictVideos: true,
+                onProgress: (p) => {
+                    const scaled = Math.min(92, Math.max(10, Math.round((p.percent || 0) * 0.92)));
+                    setUpdateProgress({
+                        percent: scaled,
+                        label: scaled >= 85 ? 'Inilalapat ang update...' : 'Nagda-download ng update...',
+                    });
+                },
+            });
+
+            setUpdateProgress({ percent: 96, label: 'Inilalapat ang bagong bersyon...' });
+
+            if (swNeedsRefresh && updateSwFnRef.current) {
+                setUpdateProgress({ percent: 100, label: 'Nire-restart ang app...' });
+                await updateSwFnRef.current(true);
+                // Fallback reload if SW controllerchange doesn't reload within 1.5s
+                setTimeout(() => window.location.reload(), 1500);
+                return;
+            }
+
+            setUpdateProgress({ percent: 100, label: 'Na-update na!' });
+            setContentNeedsUpdate(false);
+            setSwNeedsRefresh(false);
+            setUpdatingApp(false);
+            showToast?.('success', 'Na-update na sa pinakabagong bersyon ang JuanQuest.', 'Updated!');
+        } catch (err) {
+            setUpdateError(
+                err?.message || 'Hindi natapos ang pag-update. Pakisuri ang iyong internet at subukan muli.'
+            );
+            setUpdatingApp(false);
+        }
+    }, [swNeedsRefresh, updatingApp, showToast]);
 
     return (
         <PwaContext.Provider
@@ -166,8 +276,68 @@ export function PwaProvider({ children }) {
         >
             {children}
 
-            {/* Clean Seamless Installation Progress Modal (Auto-closes on Install — Zero "Tapos" screen!) */}
-            {installModalOpen && (
+            {/* Clean Force Update Modal (Shown ONLY when installed app opens online and an update is available) */}
+            {showForceUpdateModal && (
+                <div className="fixed inset-0 z-[95] bg-stone-900/65 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="w-full max-w-sm rounded-2xl bg-white border border-stone-200 shadow-2xl p-6 text-center space-y-5">
+                        <div className="space-y-2.5">
+                            <img
+                                src="/logo.svg"
+                                alt="JuanQuest"
+                                className="w-14 h-14 mx-auto select-none"
+                            />
+                            <div>
+                                <h3 className="text-base font-extrabold text-stone-900">
+                                    {updatingApp ? 'Ina-update ang JuanQuest' : 'May Bagong Update'}
+                                </h3>
+                                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                                    {updatingApp
+                                        ? 'Pakihintay habang inilalapat ang pinakabagong bersyon ng laro.'
+                                        : 'May bagong bersyon ng JuanQuest. I-update muna ang laro upang magpatuloy.'}
+                                </p>
+                            </div>
+                        </div>
+
+                        {updatingApp ? (
+                            <div className="space-y-2 text-left">
+                                <div className="h-2.5 w-full rounded-full bg-stone-100 overflow-hidden border border-stone-200/70">
+                                    <div
+                                        className="h-full bg-[#C2410C] rounded-full transition-all duration-300"
+                                        style={{ width: `${Math.max(8, updateProgress.percent)}%` }}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="text-stone-600 font-medium">
+                                        {updateProgress.label || 'Nagda-download ng update...'}
+                                    </span>
+                                    <span className="font-bold text-[#C2410C] tabular-nums">
+                                        {updateProgress.percent}%
+                                    </span>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {updateError && (
+                                    <p className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 text-left">
+                                        {updateError}
+                                    </p>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleForceUpdate}
+                                    className="w-full min-h-[46px] px-5 py-2.5 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-sm font-bold inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                                >
+                                    <RefreshCw className="w-4 h-4" />
+                                    <span>I-update ang Laro</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Clean Seamless Installation Progress Modal (Zero technical descriptions, zero "Tapos" screen!) */}
+            {installModalOpen && !showForceUpdateModal && (
                 <div className="fixed inset-0 z-[90] bg-stone-900/60 backdrop-blur-[2px] flex items-center justify-center p-4">
                     <div className="w-full max-w-sm rounded-2xl bg-white border border-stone-200 shadow-2xl p-5 sm:p-6 space-y-4">
                         <div className="flex items-start justify-between gap-3">
@@ -183,11 +353,11 @@ export function PwaProvider({ children }) {
                                     </h3>
                                     <p className="text-xs text-stone-500 mt-0.5">
                                         {installPhase === 'preparing'
-                                            ? 'Kasama na lahat ng 3D mapa, larawan, at 5 video.'
+                                            ? 'Pakihintay habang inihahanda ang app.'
                                             : installPhase === 'tap_install'
-                                              ? 'Kumpleto na ang 5 story video at buong laro.'
+                                              ? 'Pindutin ang button sa ibaba upang ituloy.'
                                               : installPhase === 'ios_guide'
-                                                ? 'Kumpleto na ang files! Sundin ang 2 hakbang sa Safari:'
+                                                ? 'Sundin ang 2 hakbang sa Safari upang idagdag:'
                                                 : 'May problema sa koneksyon habang nagda-download.'}
                                     </p>
                                 </div>
@@ -214,7 +384,7 @@ export function PwaProvider({ children }) {
                                 </div>
                                 <div className="flex items-center justify-between text-xs">
                                     <span className="text-stone-600 font-medium truncate pr-2">
-                                        {installProgress.label || 'Inihahanda ang mga files...'}
+                                        {installProgress.label || 'Inihahanda ang JuanQuest...'}
                                     </span>
                                     <span className="font-bold text-[#C2410C] tabular-nums shrink-0">
                                         {installProgress.percent}%

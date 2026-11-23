@@ -206,12 +206,11 @@ export default function LoginPage() {
                         {!offlinePackReady ? (
                             <div className="py-4 text-center space-y-2">
                                 <p className="text-sm font-bold text-stone-900">
-                                    Hindi pa naka-install ang offline data
+                                    Hindi pa handa ang JuanQuest App
                                 </p>
                                 <p className="text-xs text-stone-500 leading-relaxed">
                                     Kumonekta muna sandali sa Wi-Fi o mobile data at pindutin ang{' '}
-                                    <strong>I-install ang App</strong> upang ma-save ang buong 3D laro at mga video sa
-                                    iyong device.
+                                    <strong>I-install ang JuanQuest App</strong> bago maglaro nang offline.
                                 </p>
                             </div>
                         ) : !scannedSession && offlineJoinMode === 'scan' ? (
