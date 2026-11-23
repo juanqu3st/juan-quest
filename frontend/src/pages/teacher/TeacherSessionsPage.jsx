@@ -573,9 +573,17 @@ export default function TeacherSessionsPage() {
                         <section className="lg:col-span-5 rounded-2xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-5 flex flex-col justify-between gap-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                                        {isGroupMode ? 'Mga Nakapasok na Pangkat' : 'Mga Nakapasok na Mag-aaral'}
-                                    </p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                            {isGroupMode ? 'Mga Nakapasok na Pangkat' : 'Mga Nakapasok na Mag-aaral'}
+                                        </p>
+                                        {lobby.groups_locked && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 border border-rose-200 text-rose-700">
+                                                <Lock className="w-2.5 h-2.5" />
+                                                Sarado
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="flex items-baseline gap-2 mt-1">
                                         <span className="text-3xl font-extrabold text-slate-900 tabular-nums leading-none">
                                             {isGroupMode ? lobby.groups.length : lobby.total_students}
@@ -592,16 +600,16 @@ export default function TeacherSessionsPage() {
                                     onClick={handleToggleLock}
                                     className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
                                         lobby.groups_locked
-                                            ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100/70'
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100/80'
                                             : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                                     }`}
                                 >
                                     {lobby.groups_locked ? (
-                                        <Lock className="w-3.5 h-3.5" />
-                                    ) : (
                                         <Unlock className="w-3.5 h-3.5" />
+                                    ) : (
+                                        <Lock className="w-3.5 h-3.5" />
                                     )}
-                                    <span>{lobby.groups_locked ? 'Sarado ang Pagsali' : 'Isara ang Pagsali'}</span>
+                                    <span>{lobby.groups_locked ? 'Buksan ang Pagsali' : 'Isara ang Pagsali'}</span>
                                 </button>
                             </div>
 
