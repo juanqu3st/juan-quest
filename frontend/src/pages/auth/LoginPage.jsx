@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Compass, Gamepad2, GraduationCap, Play } from 'lucide-react';
+import { Gamepad2, GraduationCap, Play } from 'lucide-react';
 import { authApi } from '../../api/authApi';
 import { useAuth } from '../../context/AuthContext';
 
@@ -68,10 +68,12 @@ export default function LoginPage() {
 
             <div className="relative w-full max-w-[410px] space-y-6">
                 {/* Compact Game Crest */}
-                <div className="text-center space-y-2">
-                    <div className="mx-auto w-12 h-12 rounded-2xl bg-[#C2410C] text-white shadow-sm flex items-center justify-center">
-                        <Compass className="w-6 h-6" />
-                    </div>
+                <div className="text-center space-y-2.5">
+                    <img
+                        src="/logo.svg"
+                        alt="JuanQuest"
+                        className="mx-auto w-16 h-16 sm:w-[72px] sm:h-[72px] select-none drop-shadow-xs"
+                    />
                     <div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-stone-900">
                             JUANQUEST

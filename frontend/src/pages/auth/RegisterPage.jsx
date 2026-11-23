@@ -28,9 +28,12 @@ export default function RegisterPage() {
     return (
         <div className="min-h-dvh bg-[#FAF8F5] flex items-center justify-center px-4 py-6 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))]">
             <div className="w-full max-w-md bg-white rounded-2xl border border-[#E5E7EB] p-5 sm:p-7 space-y-4">
-                <div>
-                    <h1 className="text-xl font-extrabold text-[#1E293B]">Magparehistro (Mag-aaral)</h1>
-                    <p className="text-xs text-slate-500 mt-0.5">Opsyonal kung nais gumamit ng sariling email.</p>
+                <div className="flex items-center gap-3">
+                    <img src="/logo.svg" alt="JuanQuest" className="w-11 h-11 shrink-0 select-none" />
+                    <div>
+                        <h1 className="text-xl font-extrabold text-[#1E293B]">Magparehistro (Mag-aaral)</h1>
+                        <p className="text-xs text-slate-500 mt-0.5">Opsyonal kung nais gumamit ng sariling email.</p>
+                    </div>
                 </div>
 
                 {error && (

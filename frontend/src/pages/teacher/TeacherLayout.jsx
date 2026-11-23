@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
     Activity,
     Clapperboard,
-    Compass,
     LogOut,
     Map,
     Menu,
@@ -55,9 +54,11 @@ export default function TeacherLayout({ title, subtitle, toolbarRight, children 
             <div>
                 <div className="h-[60px] px-4 border-b border-slate-200/80 flex items-center justify-between">
                     <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-xl bg-[#C2410C] text-white flex items-center justify-center shrink-0">
-                            <Compass className="w-4 h-4" />
-                        </div>
+                        <img
+                            src="/logo.svg"
+                            alt="JuanQuest"
+                            className="w-9 h-9 shrink-0 select-none"
+                        />
                         <div className="min-w-0">
                             <span className="text-sm font-extrabold tracking-tight text-slate-900 block leading-tight truncate">
                                 JuanQuest
