@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Camera, CameraOff, RefreshCw } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 /**
- * Clean camera QR scanner using html5-qrcode (Android Chrome, iOS Safari, Desktop webcam)
- * with graceful teardown and cooldown debouncing between scans.
+ * High-speed QR-only camera scanner using native hardware BarcodeDetector when supported
+ * + wide responsive viewfinder for fast scanning on phones, tablets, and webcams.
  */
-export default function QrScannerBox({ active = true, onScan, cooldownMs = 1800, className = '' }) {
+export default function QrScannerBox({ active = true, onScan, cooldownMs = 1500, className = '' }) {
     const rawId = useId();
     const containerId = `jq-qr-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
     const onScanRef = useRef(onScan);
@@ -31,29 +31,58 @@ export default function QrScannerBox({ active = true, onScan, cooldownMs = 1800,
 
         const startCamera = async () => {
             try {
-                scanner = new Html5Qrcode(containerId, { verbose: false });
-                await scanner.start(
-                    { facingMode: 'environment' },
-                    {
-                        fps: 10,
-                        qrbox: { width: 220, height: 220 },
-                        aspectRatio: 1.0,
+                // Restrict strictly to QR_CODE + enable native hardware BarcodeDetector for <100ms scans
+                scanner = new Html5Qrcode(containerId, {
+                    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+                    useBarCodeDetectorIfSupported: true,
+                    verbose: false,
+                });
+
+                const scanConfig = {
+                    fps: 15,
+                    qrbox: (viewfinderWidth, viewfinderHeight) => {
+                        const edge = Math.max(
+                            180,
+                            Math.min(300, Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.78))
+                        );
+                        return { width: edge, height: edge };
                     },
-                    (decodedText) => {
-                        const now = Date.now();
-                        if (
-                            decodedText === lastScanRef.current.text &&
-                            now - lastScanRef.current.at < cooldownMs
-                        ) {
-                            return;
-                        }
-                        lastScanRef.current = { text: decodedText, at: now };
-                        onScanRef.current?.(decodedText);
-                    },
-                    () => {
-                        // ignore non-QR frame ticks
+                    disableFlip: false,
+                };
+
+                const onDecode = (decodedText) => {
+                    const now = Date.now();
+                    if (
+                        decodedText === lastScanRef.current.text &&
+                        now - lastScanRef.current.at < cooldownMs
+                    ) {
+                        return;
                     }
-                );
+                    lastScanRef.current = { text: decodedText, at: now };
+                    onScanRef.current?.(decodedText);
+                };
+
+                try {
+                    await scanner.start(
+                        {
+                            facingMode: 'environment',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                        },
+                        scanConfig,
+                        onDecode,
+                        () => {}
+                    );
+                } catch {
+                    // Fallback to basic constraint on devices that reject ideal resolution constraints
+                    await scanner.start(
+                        { facingMode: 'environment' },
+                        scanConfig,
+                        onDecode,
+                        () => {}
+                    );
+                }
+
                 started = true;
                 if (!cancelled) setStarting(false);
             } catch (err) {
@@ -61,9 +90,9 @@ export default function QrScannerBox({ active = true, onScan, cooldownMs = 1800,
                     setStarting(false);
                     const msg = String(err?.message || err || '');
                     if (/Permission|NotAllowed/i.test(msg)) {
-                        setCamError('Walang pahintulot sa camera. Payagan ang camera o gamitin ang manual input sa ibaba.');
+                        setCamError('Walang pahintulot sa camera. Payagan ang camera o gumamit ng larawan / manual input sa ibaba.');
                     } else {
-                        setCamError('Hindi mabuksan ang camera sa device na ito. Gamitin ang manual input sa ibaba.');
+                        setCamError('Hindi mabuksan ang camera sa device na ito. Gumamit ng larawan o manual input sa ibaba.');
                     }
                 }
             }

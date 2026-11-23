@@ -7,6 +7,7 @@ export default function GameHudBar({
     secondsLeft,
     projectedScore,
     maxScore = 10,
+    hideScore = false,
     shakeTrigger,
     muted = false,
     onToggleMute,
@@ -62,19 +63,23 @@ export default function GameHudBar({
                 </span>
             </div>
 
-            <span className="h-4 w-px bg-stone-200 hidden sm:inline-block" aria-hidden="true" />
+            {!hideScore && (
+                <>
+                    <span className="h-4 w-px bg-stone-200 hidden sm:inline-block" aria-hidden="true" />
 
-            {/* Live Earned Score (Always visible — compact badge on phone, label on sm+) */}
-            <div
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 sm:px-0 sm:py-0 rounded-md bg-emerald-50 sm:bg-transparent border border-emerald-200 sm:border-0 text-[#15803D] sm:text-stone-700 font-bold sm:font-semibold tabular-nums"
-                title="Nakuhang puntos"
-            >
-                <Award className="hidden sm:inline w-4 h-4 text-[#15803D] shrink-0" />
-                <span>
-                    {projectedScore}/{maxScore}
-                    <span className="hidden sm:inline"> pts</span>
-                </span>
-            </div>
+                    {/* Live Earned Score (Always visible online; hidden offline so final score stays secret until QR scan) */}
+                    <div
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 sm:px-0 sm:py-0 rounded-md bg-emerald-50 sm:bg-transparent border border-emerald-200 sm:border-0 text-[#15803D] sm:text-stone-700 font-bold sm:font-semibold tabular-nums"
+                        title="Nakuhang puntos"
+                    >
+                        <Award className="hidden sm:inline w-4 h-4 text-[#15803D] shrink-0" />
+                        <span>
+                            {projectedScore}/{maxScore}
+                            <span className="hidden sm:inline"> pts</span>
+                        </span>
+                    </div>
+                </>
+            )}
 
             {onToggleMute && (
                 <>

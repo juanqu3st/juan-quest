@@ -56,7 +56,7 @@ export function startOfflineSession({
 }) {
     const pack = loadOfflinePack();
     if (!pack || !Array.isArray(pack.maps) || pack.maps.length === 0) {
-        throw new Error('Hindi pa naka-cache ang datos ng laro. Buksan muna ang app nang may internet.');
+        throw new Error('Hindi pa handa ang mga file ng laro sa device na ito. Kumonekta muna sandali sa internet at buksan ang app.');
     }
 
     const cleanCode = String(joinCode || '').trim().toUpperCase();

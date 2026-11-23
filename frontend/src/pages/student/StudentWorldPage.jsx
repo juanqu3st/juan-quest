@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, FastForward, LogOut, Pencil, QrCode, Star, Trophy, User, Users, WifiOff } from 'lucide-react';
+import { Award, CheckCircle2, FastForward, LogOut, Pencil, QrCode, Star, Trophy, User, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -434,11 +434,23 @@ export default function StudentWorldPage() {
                     <div className="h-6 sm:h-7 w-px bg-stone-200/90 shrink-0" />
 
                     <div className="inline-flex items-center gap-1 sm:gap-1.5 pr-0.5 sm:pr-1 text-[11px] sm:text-xs font-extrabold text-stone-900 tabular-nums shrink-0">
-                        <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 fill-amber-400 shrink-0" />
-                        <span>
-                            {world.total_score}
-                            <span className="font-medium text-stone-400">/{world.max_total_score}</span>
-                        </span>
+                        {isOfflineMode ? (
+                            <>
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#15803D] shrink-0" />
+                                <span>
+                                    {world.completed_count || 0}
+                                    <span className="font-medium text-stone-400">/{maps.length || 5}</span>
+                                </span>
+                            </>
+                        ) : (
+                            <>
+                                <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 fill-amber-400 shrink-0" />
+                                <span>
+                                    {world.total_score}
+                                    <span className="font-medium text-stone-400">/{world.max_total_score}</span>
+                                </span>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -609,6 +621,7 @@ export default function StudentWorldPage() {
                     map={activeStageMap}
                     lesson={world.lesson}
                     totalMaps={maps.length || 5}
+                    isOfflineMode={isOfflineMode}
                     initialResume={resumePayload}
                     onClose={handleCloseStage}
                     onStageFinished={handleStageFinished}

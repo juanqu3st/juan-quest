@@ -914,6 +914,7 @@ export default function TeacherSessionsPage() {
                                 <QrCodeImage
                                     value={lobby.offline_join_qr}
                                     size={248}
+                                    errorCorrectionLevel="L"
                                     alt="JuanQuest Offline Join QR"
                                     className="w-[228px] h-[228px] sm:w-[248px] sm:h-[248px]"
                                 />

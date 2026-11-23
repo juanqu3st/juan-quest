@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, Share, Smartphone, X } from 'lucide-react';
-import { ensureSilentOfflineCache, syncAllOfflineResources } from '../utils/offlinePack';
+import { Download, Share, X } from 'lucide-react';
+import { ensureSilentOfflineCache, isFullOfflineBundleReady, syncAllOfflineResources } from '../utils/offlinePack';
+import { useToast } from './ToastContext';
 
 const PwaContext = createContext(null);
 
@@ -18,13 +19,15 @@ function detectIos() {
 }
 
 export function PwaProvider({ children }) {
+    const toastApi = useToast();
+    const showToast = toastApi?.showToast;
     const [isOnline, setIsOnline] = useState(() =>
         typeof navigator === 'undefined' ? true : navigator.onLine !== false
     );
     const [isInstalled, setIsInstalled] = useState(() => detectStandalone());
     const [deferredPrompt, setDeferredPrompt] = useState(null);
     const [installModalOpen, setInstallModalOpen] = useState(false);
-    const [installPhase, setInstallPhase] = useState('idle'); // 'preparing' | 'ready_prompt' | 'ios_guide' | 'done' | 'error'
+    const [installPhase, setInstallPhase] = useState('idle'); // 'preparing' | 'tap_install' | 'ios_guide' | 'error'
     const [installProgress, setInstallProgress] = useState({ percent: 0, label: '' });
     const [installError, setInstallError] = useState('');
     const promptRef = useRef(null);
@@ -50,18 +53,20 @@ export function PwaProvider({ children }) {
             setIsInstalled(true);
             setDeferredPrompt(null);
             promptRef.current = null;
-            setInstallPhase('done');
+            setInstallModalOpen(false);
+            setInstallPhase('idle');
+            showToast?.('success', 'Na-install na ang JuanQuest App sa iyong device.', 'Na-install na!');
         };
 
         window.addEventListener('beforeinstallprompt', onBeforeInstall);
         window.addEventListener('appinstalled', onAppInstalled);
 
-        // Silent background offline pre-caching while online (zero UI clutter!)
+        // Quietly keep all 5 story videos + game data synced in background whenever online
         const silentTimer = setTimeout(() => {
             if (navigator.onLine !== false) {
                 ensureSilentOfflineCache();
             }
-        }, 1800);
+        }, 1200);
 
         return () => {
             clearTimeout(silentTimer);
@@ -70,54 +75,84 @@ export function PwaProvider({ children }) {
             window.removeEventListener('beforeinstallprompt', onBeforeInstall);
             window.removeEventListener('appinstalled', onAppInstalled);
         };
-    }, []);
+    }, [showToast]);
 
     const canShowInstallButton = isOnline && !isInstalled && (Boolean(deferredPrompt) || isIos);
 
+    const triggerNativePrompt = useCallback(async () => {
+        const promptEvent = promptRef.current;
+        if (!promptEvent) {
+            setInstallModalOpen(false);
+            return false;
+        }
+        try {
+            await promptEvent.prompt();
+            const choice = await promptEvent.userChoice;
+            setInstallModalOpen(false);
+            setInstallPhase('idle');
+            if (choice?.outcome === 'accepted') {
+                setIsInstalled(true);
+                setDeferredPrompt(null);
+                promptRef.current = null;
+                showToast?.('success', 'Ini-install na ang JuanQuest App sa iyong device...', 'Ini-install...');
+            }
+            return true;
+        } catch {
+            // Browser expired user gesture during long video download — show single instant Install tap button
+            return false;
+        }
+    }, [showToast]);
+
     /**
-     * Unified All-in-One Installation Flow:
-     * Downloads & caches 100% of App + 3D Models + Images + Audio + All 5 Story Videos
-     * AS PART OF THE INSTALL PROGRESS before triggering the native install prompt / iOS Home Screen guide!
+     * Seamless All-in-One App Installation:
+     * - If all 5 videos & app files are already saved -> triggers native Install dialog immediately (0ms)!
+     * - Otherwise downloads & verifies 100% of all 5 videos first, then triggers native Install immediately
+     *   with ZERO confusing "Tapos" confirmation modal!
      */
     const startAppInstall = useCallback(async () => {
         setInstallError('');
+
+        // Fast path: everything already saved in background -> native browser Install popup immediately!
+        const alreadyReady = await isFullOfflineBundleReady().catch(() => false);
+        if (alreadyReady) {
+            if (promptRef.current) {
+                const ok = await triggerNativePrompt();
+                if (ok) return;
+            } else if (isIos) {
+                setInstallModalOpen(true);
+                setInstallPhase('ios_guide');
+                return;
+            }
+        }
+
         setInstallModalOpen(true);
         setInstallPhase('preparing');
-        setInstallProgress({ percent: 4, label: 'Inihahanda ang JuanQuest App...' });
+        setInstallProgress({ percent: 6, label: 'Inihahanda ang JuanQuest App...' });
 
         try {
             await syncAllOfflineResources({
                 includeVideos: true,
+                strictVideos: true,
                 onProgress: (p) => setInstallProgress(p),
             });
 
             if (promptRef.current) {
-                setInstallPhase('ready_prompt');
-                const promptEvent = promptRef.current;
-                try {
-                    await promptEvent.prompt();
-                    const choice = await promptEvent.userChoice;
-                    if (choice?.outcome === 'accepted') {
-                        setInstallPhase('done');
-                        setIsInstalled(true);
-                        setDeferredPrompt(null);
-                        promptRef.current = null;
-                    } else {
-                        setInstallModalOpen(false);
-                    }
-                } catch {
-                    setInstallPhase('done');
+                const triggered = await triggerNativePrompt();
+                if (!triggered) {
+                    // Only if Chrome blocked async prompt after long download -> 1-tap instant Install button
+                    setInstallPhase('tap_install');
                 }
             } else if (isIos) {
                 setInstallPhase('ios_guide');
             } else {
-                setInstallPhase('done');
+                setInstallModalOpen(false);
+                setInstallPhase('idle');
             }
         } catch (err) {
             setInstallError(err?.message || 'Hindi natapos ang pag-download ng mga files. Pakisubukan muli.');
             setInstallPhase('error');
         }
-    }, [isIos]);
+    }, [isIos, triggerNativePrompt]);
 
     return (
         <PwaContext.Provider
@@ -131,7 +166,7 @@ export function PwaProvider({ children }) {
         >
             {children}
 
-            {/* Unified Installation Progress Modal (Only shown during active Install!) */}
+            {/* Clean Seamless Installation Progress Modal (Auto-closes on Install — Zero "Tapos" screen!) */}
             {installModalOpen && (
                 <div className="fixed inset-0 z-[90] bg-stone-900/60 backdrop-blur-[2px] flex items-center justify-center p-4">
                     <div className="w-full max-w-sm rounded-2xl bg-white border border-stone-200 shadow-2xl p-5 sm:p-6 space-y-4">
@@ -140,20 +175,20 @@ export function PwaProvider({ children }) {
                                 <img src="/logo.svg" alt="JuanQuest" className="w-11 h-11 shrink-0" />
                                 <div>
                                     <h3 className="text-sm font-extrabold text-stone-900">
-                                        {installPhase === 'done'
-                                            ? 'Naka-install na ang JuanQuest'
-                                            : installPhase === 'ios_guide'
-                                              ? 'Idagdag sa Home Screen'
+                                        {installPhase === 'ios_guide'
+                                            ? 'Idagdag sa Home Screen'
+                                            : installPhase === 'tap_install'
+                                              ? 'Handa nang I-install'
                                               : 'Ini-install ang JuanQuest'}
                                     </h3>
                                     <p className="text-xs text-stone-500 mt-0.5">
                                         {installPhase === 'preparing'
                                             ? 'Kasama na lahat ng 3D mapa, larawan, at 5 video.'
-                                            : installPhase === 'done'
-                                              ? 'Handa na rin itong gamitin kahit walang internet.'
+                                            : installPhase === 'tap_install'
+                                              ? 'Kumpleto na ang 5 story video at buong laro.'
                                               : installPhase === 'ios_guide'
                                                 ? 'Kumpleto na ang files! Sundin ang 2 hakbang sa Safari:'
-                                                : 'I-kumpirma ang pag-install sa iyong device.'}
+                                                : 'May problema sa koneksyon habang nagda-download.'}
                                     </p>
                                 </div>
                             </div>
@@ -188,6 +223,19 @@ export function PwaProvider({ children }) {
                             </div>
                         )}
 
+                        {installPhase === 'tap_install' && (
+                            <div className="pt-1">
+                                <button
+                                    type="button"
+                                    onClick={triggerNativePrompt}
+                                    className="w-full min-h-[46px] rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-sm font-bold inline-flex items-center justify-center gap-2 shadow-xs cursor-pointer transition"
+                                >
+                                    <Download className="w-4 h-4" />
+                                    <span>I-install Ngayon</span>
+                                </button>
+                            </div>
+                        )}
+
                         {installPhase === 'ios_guide' && (
                             <div className="space-y-3 pt-1">
                                 <div className="rounded-xl bg-[#FAF8F5] border border-stone-200 p-3.5 space-y-2 text-xs text-stone-700">
@@ -215,22 +263,6 @@ export function PwaProvider({ children }) {
                                     className="w-full min-h-[42px] rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold cursor-pointer transition"
                                 >
                                     Naintindihan
-                                </button>
-                            </div>
-                        )}
-
-                        {installPhase === 'done' && (
-                            <div className="space-y-3 pt-1">
-                                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 flex items-center gap-2.5 text-xs font-semibold text-emerald-800">
-                                    <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
-                                    <span>Kumpleto na ang buong app at 5 story videos sa iyong device!</span>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setInstallModalOpen(false)}
-                                    className="w-full min-h-[42px] rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold cursor-pointer transition"
-                                >
-                                    Tapos
                                 </button>
                             </div>
                         )}

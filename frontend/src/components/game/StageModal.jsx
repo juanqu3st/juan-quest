@@ -87,6 +87,7 @@ export default function StageModal({
     map,
     lesson,
     totalMaps = 5,
+    isOfflineMode = false,
     initialResume,
     onClose,
     onStageFinished,
@@ -535,6 +536,7 @@ export default function StageModal({
                             secondsLeft={secondsLeft}
                             projectedScore={projectedScore}
                             maxScore={map.perfect_score ?? 10}
+                            hideScore={isOfflineMode}
                             shakeTrigger={shakeTrigger}
                             muted={muted}
                             onToggleMute={handleToggleMute}
@@ -577,14 +579,18 @@ export default function StageModal({
                                     <div className="space-y-1">
                                         <h3 className="text-xl font-bold text-stone-900">Tapos mo na ang mapang ito</h3>
                                         <p className="text-sm text-stone-600">
-                                            Naitala na ang iyong puntos para sa Mapa {map.map_number}.
+                                            {isOfflineMode
+                                                ? `Naitala na ang inyong sagot para sa Mapa ${map.map_number}.`
+                                                : `Naitala na ang iyong puntos para sa Mapa ${map.map_number}.`}
                                         </p>
                                     </div>
-                                    <ScoreSummaryRow
-                                        score={map.progress.score}
-                                        maxScore={map.perfect_score ?? 10}
-                                        hearts={map.progress.hearts_remaining}
-                                    />
+                                    {!isOfflineMode && (
+                                        <ScoreSummaryRow
+                                            score={map.progress.score}
+                                            maxScore={map.perfect_score ?? 10}
+                                            hearts={map.progress.hearts_remaining}
+                                        />
+                                    )}
                                     <button
                                         type="button"
                                         onClick={onClose}
@@ -704,15 +710,23 @@ export default function StageModal({
                                                     : 'Tapos na ang mapa'}
                                         </h3>
                                         <p className="text-sm text-stone-600 leading-relaxed">
-                                            {summaryResult.feedback}
+                                            {isOfflineMode
+                                                ? summaryResult.finish_reason === 'timeout'
+                                                    ? 'Naubos na ang oras. Naitala na ang inyong sagot at nabuksan ang susunod na mapa.'
+                                                    : isFinalMap
+                                                      ? 'Kumpleto na ang lahat ng 5 mapa! Kunin na ang iyong Result QR upang i-scan ng guro.'
+                                                      : 'Naitala na ang inyong sagot! Handa na ang susunod na mapa.'
+                                                : summaryResult.feedback}
                                         </p>
                                     </div>
 
-                                    <ScoreSummaryRow
-                                        score={summaryResult.score}
-                                        maxScore={map.perfect_score ?? 10}
-                                        hearts={summaryResult.hearts_remaining}
-                                    />
+                                    {!isOfflineMode && (
+                                        <ScoreSummaryRow
+                                            score={summaryResult.score}
+                                            maxScore={map.perfect_score ?? 10}
+                                            hearts={summaryResult.hearts_remaining}
+                                        />
+                                    )}
 
                                     <button
                                         type="button"
@@ -720,7 +734,11 @@ export default function StageModal({
                                         className="w-full min-h-[46px] px-6 py-2.5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer"
                                     >
                                         <span>
-                                            {isFinalMap ? 'Tingnan ang Buod ng Puntos' : 'Magpatuloy sa Mapa'}
+                                            {isFinalMap
+                                                ? isOfflineMode
+                                                    ? 'Kunin ang Result QR'
+                                                    : 'Tingnan ang Buod ng Puntos'
+                                                : 'Magpatuloy sa Mapa'}
                                         </span>
                                         <ArrowRight className="w-4 h-4" />
                                     </button>

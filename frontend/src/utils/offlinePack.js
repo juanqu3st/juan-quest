@@ -1,10 +1,23 @@
 import axiosClient, { resolveMediaUrl, resolveStorageUrl } from '../api/axiosClient';
-import { VIDEO_CACHE_NAME } from './videoCache';
+import { areAllVideosCached, cacheMediaWithRetry, VIDEO_CACHE_NAME } from './videoCache';
 
 const PACK_STORAGE_KEY = 'juanquest_offline_pack_v1';
 const IMAGE_CACHE_NAME = 'juanquest-offline-images-v1';
 
 let activeSyncPromise = null;
+const progressListeners = new Set();
+let latestProgress = { percent: 0, label: '', completed: 0, total: 1 };
+
+function emitProgress(next) {
+    latestProgress = next;
+    progressListeners.forEach((cb) => {
+        try {
+            cb(next);
+        } catch {
+            // ignore listener error
+        }
+    });
+}
 
 /**
  * Pure-JS SHA-256 fallback so hashing works even on non-HTTPS LAN URLs where crypto.subtle is unavailable.
@@ -115,38 +128,27 @@ export function hasOfflinePack() {
     return Boolean(pack && Array.isArray(pack.maps) && pack.maps.length > 0);
 }
 
-async function cacheUrlIfMissing(cacheName, url) {
-    if (!url || typeof window === 'undefined' || !('caches' in window)) return false;
-    try {
-        const cache = await caches.open(cacheName);
-        const existing = await cache.match(url);
-        if (existing) return true;
-        const res = await fetch(url, { mode: 'cors' });
-        if (res.ok && res.status === 200) {
-            await cache.put(url, res.clone());
-            return true;
-        }
-    } catch {
-        // Ignore single-asset failure so remaining assets still cache cleanly
-    }
-    return false;
+/**
+ * Fast check (~5ms) to verify whether the quiz pack AND all 5 story videos are already saved locally.
+ */
+export async function isFullOfflineBundleReady() {
+    const pack = loadOfflinePack();
+    if (!pack || !Array.isArray(pack.maps) || pack.maps.length === 0) return false;
+    const videoUrls = (pack.media_manifest?.videos || []).map((p) => resolveMediaUrl(p)).filter(Boolean);
+    return areAllVideosCached(videoUrls);
 }
 
-/**
- * Download & cache 100% of JuanQuest offline assets (hashed quiz pack, all 25 challenge images,
- * all audio voice-overs, and all 5 Cloudinary 3D story MP4 videos) with live progress callback.
- */
-export async function syncAllOfflineResources({ onProgress, includeVideos = true } = {}) {
+async function runSharedSync({ includeVideos = true } = {}) {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         const existing = loadOfflinePack();
         if (existing) {
-            onProgress?.({ percent: 100, label: 'Handa na', completed: 1, total: 1 });
-            return existing;
+            emitProgress({ percent: 100, label: 'Handa na', completed: 1, total: 1 });
+            return { pack: existing, videosOk: 0, videosTotal: 0 };
         }
         throw new Error('Walang koneksyon sa internet.');
     }
 
-    onProgress?.({ percent: 5, label: 'Kinukuha ang datos ng aralin...', completed: 0, total: 1 });
+    emitProgress({ percent: 5, label: 'Kinukuha ang datos ng aralin...', completed: 0, total: 1 });
 
     const { data: pack } = await axiosClient.get('/offline/pack');
     if (!pack || !Array.isArray(pack.maps)) {
@@ -169,63 +171,112 @@ export async function syncAllOfflineResources({ onProgress, includeVideos = true
         ? (pack.media_manifest?.videos || []).map((p) => resolveMediaUrl(p)).filter(Boolean)
         : [];
 
-    const tasks = [
-        ...imageUrls.map((url) => ({ cache: IMAGE_CACHE_NAME, url, label: 'Inihahanda ang mga larawan...' })),
-        ...audioUrls.map((url) => ({ cache: VIDEO_CACHE_NAME, url, label: 'Inihahanda ang mga tunog...' })),
-        ...videoUrls.map((url, idx) => ({
-            cache: VIDEO_CACHE_NAME,
-            url,
-            label: `Inihahanda ang Story Video ${idx + 1}/${videoUrls.length}...`,
-        })),
+    const lightTasks = [
+        ...imageUrls.map((url) => ({ cache: IMAGE_CACHE_NAME, url, minBytes: 512, label: 'Inihahanda ang mga larawan...' })),
+        ...audioUrls.map((url) => ({ cache: VIDEO_CACHE_NAME, url, minBytes: 1024, label: 'Inihahanda ang mga tunog...' })),
     ];
+    const videoTasks = videoUrls.map((url, idx) => ({
+        cache: VIDEO_CACHE_NAME,
+        url,
+        minBytes: 50000,
+        label: `Inihahanda ang Story Video ${idx + 1} ng ${videoUrls.length}...`,
+    }));
 
-    const total = Math.max(1, tasks.length);
-    let completed = 0;
+    const totalWeight = lightTasks.length + videoTasks.length * 4;
+    let doneWeight = 0;
 
-    // Fetch lightweight images/audio in small batches of 4, then sequential MP4 videos for stability on phones
-    const lightTasks = tasks.filter((t) => !t.label.includes('Story Video'));
-    const heavyTasks = tasks.filter((t) => t.label.includes('Story Video'));
-
+    // 1. Download lightweight images & audio in batches of 4
     for (let i = 0; i < lightTasks.length; i += 4) {
         const batch = lightTasks.slice(i, i + 4);
         await Promise.all(
             batch.map(async (item) => {
-                await cacheUrlIfMissing(item.cache, item.url);
-                completed += 1;
-                const percent = Math.min(98, 8 + Math.round((completed / total) * 90));
-                onProgress?.({ percent, label: item.label, completed, total });
+                await cacheMediaWithRetry(item.url, {
+                    cacheName: item.cache,
+                    retries: 2,
+                    minBytes: item.minBytes,
+                });
+                doneWeight += 1;
+                const percent = Math.min(35, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88));
+                emitProgress({ percent, label: item.label, completed: doneWeight, total: totalWeight });
             })
         );
     }
 
-    for (const item of heavyTasks) {
-        onProgress?.({
-            percent: Math.min(98, 8 + Math.round((completed / total) * 90)),
+    // 2. Download ALL 5 Story Videos sequentially with 3x retry & strict verification
+    let videosOk = 0;
+    for (let i = 0; i < videoTasks.length; i += 1) {
+        const item = videoTasks[i];
+        emitProgress({
+            percent: Math.min(96, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88)),
             label: item.label,
-            completed,
-            total,
+            completed: doneWeight,
+            total: totalWeight,
         });
-        await cacheUrlIfMissing(item.cache, item.url);
-        completed += 1;
-        const percent = Math.min(99, 8 + Math.round((completed / total) * 91));
-        onProgress?.({ percent, label: item.label, completed, total });
+        const ok = await cacheMediaWithRetry(item.url, {
+            cacheName: item.cache,
+            retries: 3,
+            minBytes: item.minBytes,
+        });
+        if (ok) videosOk += 1;
+        doneWeight += 4;
+        emitProgress({
+            percent: Math.min(99, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 91)),
+            label: item.label,
+            completed: doneWeight,
+            total: totalWeight,
+        });
     }
 
-    onProgress?.({ percent: 100, label: 'Kumpleto na!', completed: total, total });
-    return pack;
+    // Final verification of all 5 videos in CacheStorage
+    const allSaved = videoUrls.length === 0 || (await areAllVideosCached(videoUrls));
+    if (allSaved) {
+        emitProgress({ percent: 100, label: 'Kumpleto na ang buong app!', completed: totalWeight, total: totalWeight });
+    }
+
+    return { pack, videosOk, videosTotal: videoUrls.length, allVideosSaved: allSaved };
 }
 
 /**
- * Silent background precache (zero UI noise while online) so even users who install directly
- * via the browser menu automatically have all 3D models, images, audio, and 5 videos ready offline.
+ * Download & verify 100% of JuanQuest offline assets (hashed quiz pack, all challenge images,
+ * audio voice-overs, and ALL 5 Cloudinary 3D story MP4 videos) with shared deduplication.
+ */
+export async function syncAllOfflineResources({ onProgress, includeVideos = true, strictVideos = false } = {}) {
+    if (onProgress) {
+        progressListeners.add(onProgress);
+        if (activeSyncPromise && latestProgress.percent > 0) {
+            onProgress(latestProgress);
+        }
+    }
+
+    try {
+        if (!activeSyncPromise) {
+            activeSyncPromise = runSharedSync({ includeVideos }).finally(() => {
+                activeSyncPromise = null;
+            });
+        }
+        const result = await activeSyncPromise;
+
+        if (strictVideos && includeVideos && result.videosTotal > 0 && !result.allVideosSaved) {
+            throw new Error(
+                `Hindi natapos ang pag-download ng lahat ng Story Video (${result.videosOk}/${result.videosTotal}). Pakisuri ang internet at subukan muli.`
+            );
+        }
+
+        return result.pack;
+    } finally {
+        if (onProgress) {
+            progressListeners.delete(onProgress);
+        }
+    }
+}
+
+/**
+ * Silent background precache while online so all 3D models, images, audio, and 5 videos
+ * are automatically ready (and any missing videos from earlier visits get filled in quietly).
  */
 export function ensureSilentOfflineCache() {
     if (typeof window === 'undefined' || navigator.onLine === false) return;
     if (activeSyncPromise) return;
 
-    activeSyncPromise = syncAllOfflineResources({ includeVideos: true })
-        .catch(() => {})
-        .finally(() => {
-            activeSyncPromise = null;
-        });
+    syncAllOfflineResources({ includeVideos: true, strictVideos: false }).catch(() => {});
 }

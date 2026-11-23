@@ -84,6 +84,20 @@ export default defineConfig({
             },
         }),
     ],
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (!id.includes('node_modules')) return undefined;
+                    if (id.includes('three') || id.includes('@react-three')) return 'three-vendor';
+                    if (id.includes('html5-qrcode') || id.includes('qrcode')) return 'qr-vendor';
+                    if (id.includes('framer-motion')) return 'motion-vendor';
+                    if (id.includes('react-dom') || id.includes('react-router')) return 'react-vendor';
+                    return undefined;
+                },
+            },
+        },
+    },
     server: {
         port: 5173,
     },

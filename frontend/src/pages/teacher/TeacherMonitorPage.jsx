@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Award,
     CheckCircle2,
     CloudUpload,
     Download,
     Heart,
+    ImageUp,
     QrCode,
     RefreshCw,
     ShieldAlert,
@@ -18,6 +19,7 @@ import { teacherApi } from '../../api/teacherApi';
 import { useToast } from '../../context/ToastContext';
 import { usePwa } from '../../context/PwaContext';
 import { verifyOfflineResultSignature } from '../../utils/offlineEngine';
+import { decodeQrFromImageFile } from '../../utils/qrImageDecode';
 import { playFeedbackAudio } from '../../utils/gameAudio';
 import QrScannerBox from '../../components/qr/QrScannerBox';
 import TeacherLayout from './TeacherLayout';
@@ -190,10 +192,12 @@ export default function TeacherMonitorPage() {
     // Result QR Scanner Modal state
     const [scannerOpen, setScannerOpen] = useState(false);
     const [scannerBusy, setScannerBusy] = useState(false);
+    const [decodingImage, setDecodingImage] = useState(false);
     const [scannerError, setScannerError] = useState('');
     const [manualCodeInput, setManualCodeInput] = useState('');
     const [manualConfirmPayload, setManualConfirmPayload] = useState(null);
     const [recentScans, setRecentScans] = useState([]);
+    const qrFileInputRef = useRef(null);
 
     useEffect(() => {
         teacherApi
@@ -484,15 +488,70 @@ export default function TeacherMonitorPage() {
         }
     };
 
-    const handleRawQrText = (rawText) => {
+    const handleRawQrText = async (rawText) => {
         if (scannerBusy) return;
         try {
             const parsed = JSON.parse(String(rawText || '').trim());
-            processQrPayload(parsed, false);
+            await processQrPayload(parsed, false);
         } catch {
             setScannerError('Hindi mabasa ang format ng Result QR. Tiyaking JuanQuest Result QR ito.');
         }
     };
+
+    const handleQrImageFiles = async (fileList) => {
+        const files = Array.from(fileList || []).filter((f) => f && f.type.startsWith('image/'));
+        if (files.length === 0) return;
+
+        setScannerError('');
+        setDecodingImage(true);
+        try {
+            let failedCount = 0;
+            for (const file of files) {
+                try {
+                    const decodedText = await decodeQrFromImageFile(file);
+                    const parsed = JSON.parse(String(decodedText || '').trim());
+                    await processQrPayload(parsed, false);
+                } catch (err) {
+                    failedCount += 1;
+                    if (files.length === 1) {
+                        setScannerError(
+                            err?.message ||
+                                'Walang mabasang JuanQuest Result QR sa larawan. Tiyaking malinaw ang QR code.'
+                        );
+                    }
+                }
+            }
+            if (files.length > 1 && failedCount > 0) {
+                setScannerError(
+                    `${failedCount} sa ${files.length} larawan ang hindi nabasa. Tiyaking malinaw ang QR code.`
+                );
+            }
+        } finally {
+            setDecodingImage(false);
+            if (qrFileInputRef.current) {
+                qrFileInputRef.current.value = '';
+            }
+        }
+    };
+
+    // Allow desktop teachers to Ctrl+V paste a Messenger QR screenshot straight into the scanner modal!
+    useEffect(() => {
+        if (!scannerOpen) return undefined;
+        const onPaste = (e) => {
+            const items = Array.from(e.clipboardData?.items || []);
+            const imgFiles = items
+                .filter((it) => it.type.startsWith('image/'))
+                .map((it) => it.getAsFile())
+                .filter(Boolean);
+            if (imgFiles.length > 0) {
+                e.preventDefault();
+                handleQrImageFiles(imgFiles);
+            }
+        };
+        window.addEventListener('paste', onPaste);
+        return () => window.removeEventListener('paste', onPaste);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scannerOpen, selectedId, monitor, pendingQueue]);
 
     const handleManualPasteSubmit = (e) => {
         e.preventDefault();
@@ -1014,11 +1073,36 @@ export default function TeacherMonitorPage() {
                                     </div>
                                 </div>
                             ) : (
-                                <QrScannerBox
-                                    active={scannerOpen && !manualConfirmPayload}
-                                    onScan={handleRawQrText}
-                                    cooldownMs={2200}
-                                />
+                                <div className="space-y-3">
+                                    <QrScannerBox
+                                        active={scannerOpen && !manualConfirmPayload}
+                                        onScan={handleRawQrText}
+                                        cooldownMs={1500}
+                                    />
+
+                                    {/* Accept QR Picture from Gallery / Messenger / Downloaded PNG (Supports multi-select + Ctrl+V!) */}
+                                    <input
+                                        ref={qrFileInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        onChange={(e) => handleQrImageFiles(e.target.files)}
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={decodingImage || scannerBusy}
+                                        onClick={() => qrFileInputRef.current?.click()}
+                                        className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-orange-200 bg-orange-50/75 hover:bg-orange-100/80 text-[#C2410C] text-xs font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer transition"
+                                    >
+                                        <ImageUp className="w-4 h-4 shrink-0" />
+                                        <span>
+                                            {decodingImage
+                                                ? 'Binabasa ang QR mula sa larawan...'
+                                                : 'Pumili ng Larawan ng QR (Gallery / Messenger)'}
+                                        </span>
+                                    </button>
+                                </div>
                             )}
 
                             {scannerError && (

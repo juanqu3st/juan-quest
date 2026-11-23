@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 
-export default function QrCodeImage({ value, size = 260, alt = 'QR Code', className = '' }) {
+export default function QrCodeImage({
+    value,
+    size = 260,
+    errorCorrectionLevel = 'M',
+    alt = 'QR Code',
+    className = '',
+}) {
     const [dataUrl, setDataUrl] = useState('');
 
     useEffect(() => {
@@ -12,8 +18,8 @@ export default function QrCodeImage({ value, size = 260, alt = 'QR Code', classN
         }
         const text = typeof value === 'string' ? value : JSON.stringify(value);
         QRCode.toDataURL(text, {
-            errorCorrectionLevel: 'M',
-            margin: 2,
+            errorCorrectionLevel,
+            margin: 3,
             width: size,
             color: {
                 dark: '#1C1917',
@@ -30,7 +36,7 @@ export default function QrCodeImage({ value, size = 260, alt = 'QR Code', classN
         return () => {
             cancelled = true;
         };
-    }, [value, size]);
+    }, [value, size, errorCorrectionLevel]);
 
     if (!dataUrl) {
         return (

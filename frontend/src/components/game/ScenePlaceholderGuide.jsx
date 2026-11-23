@@ -71,8 +71,9 @@ export default function ScenePlaceholderGuide({
         [map?.scene_script, map?.youtube_start_sec]
     );
 
-    const [cachedVideoSrc, setCachedVideoSrc] = useState(rawMapVideoUrl);
-    const [videoCachedHit, setVideoCachedHit] = useState(false);
+    const isOfflineNow = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const [cachedVideoSrc, setCachedVideoSrc] = useState(() => (isOfflineNow ? null : rawMapVideoUrl));
+    const [resolvingOfflineVideo, setResolvingOfflineVideo] = useState(() => Boolean(isOfflineNow && rawMapVideoUrl));
     const [videoUnavailableOffline, setVideoUnavailableOffline] = useState(false);
     const [showCaptions, setShowCaptions] = useState(true);
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -128,11 +129,13 @@ export default function ScenePlaceholderGuide({
 
         if (!rawMapVideoUrl) {
             setCachedVideoSrc(null);
-            setVideoCachedHit(false);
+            setResolvingOfflineVideo(false);
             return undefined;
         }
 
-        setCachedVideoSrc(rawMapVideoUrl);
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        setCachedVideoSrc(offline ? null : rawMapVideoUrl);
+        setResolvingOfflineVideo(offline);
         setVideoUnavailableOffline(false);
         resolveCachedVideoUrl(rawMapVideoUrl).then(({ url, isObjectUrl, fromCache }) => {
             if (cancelled) {
@@ -141,7 +144,7 @@ export default function ScenePlaceholderGuide({
             }
             if (isObjectUrl) objUrlToRevoke = url;
             setCachedVideoSrc(url);
-            setVideoCachedHit(fromCache);
+            setResolvingOfflineVideo(false);
             if (!fromCache && typeof navigator !== 'undefined' && navigator.onLine === false) {
                 setVideoUnavailableOffline(true);
             }
@@ -327,7 +330,7 @@ export default function ScenePlaceholderGuide({
             stopWholeAudio();
             stopSceneAudio();
         };
-    }, [hasMapVideo, useWholeVoiceover, usePerSceneVoiceover, wholeVoiceoverUrl, wholeVoiceoverOffset, timedScenes]);
+    }, [hasMapVideo, resolvingOfflineVideo, useWholeVoiceover, usePerSceneVoiceover, wholeVoiceoverUrl, wholeVoiceoverOffset, timedScenes]);
 
     // Legacy global lesson MP4 start/end clamp
     useEffect(() => {
@@ -389,7 +392,6 @@ export default function ScenePlaceholderGuide({
                                 : usePerSceneVoiceover
                                   ? 'Boses ng Guro (Bawat Eksena)'
                                   : '3D Story-Animation Video'}
-                            {videoCachedHit && <span className="text-stone-400">· Naka-cache</span>}
                         </span>
                         <button
                             type="button"
@@ -407,8 +409,13 @@ export default function ScenePlaceholderGuide({
 
                     {/* Video container with modern YouTube-style bottom-center translucent caption overlay */}
                     <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-stone-950 border border-stone-200">
+                        {resolvingOfflineVideo ? (
+                            <div className="w-full h-full flex items-center justify-center text-xs font-medium text-stone-300">
+                                Inihahanda ang video...
+                            </div>
+                        ) : (
                         <video
-                            key={rawMapVideoUrl}
+                            key={cachedVideoSrc || rawMapVideoUrl}
                             ref={videoRef}
                             src={cachedVideoSrc || rawMapVideoUrl}
                             controls
@@ -426,6 +433,7 @@ export default function ScenePlaceholderGuide({
                                 />
                             )}
                         </video>
+                        )}
 
                         {/* Modern YouTube-style bottom-center in-video subtitle pill (auto-hides in native fullscreen) */}
                         {showCaptions && !isFullscreen && (
