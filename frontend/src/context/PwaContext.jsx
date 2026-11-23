@@ -10,7 +10,8 @@ import {
 import { useToast } from './ToastContext';
 
 const PwaContext = createContext(null);
-/* global __APP_BUILD_ID__ */
+/* global __APP_VERSION__, __APP_BUILD_ID__ */
+const CURRENT_APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.2.0';
 const CURRENT_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? String(__APP_BUILD_ID__) : '';
 
 function detectStandalone() {
@@ -31,20 +32,23 @@ function detectIos() {
 
 async function checkRemoteAppBuildChanged() {
     if (!CURRENT_BUILD_ID || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
-        return false;
+        return { changed: false, version: null };
     }
     try {
         const res = await fetch(`/version.json?t=${Date.now()}`, {
             cache: 'no-store',
             headers: { 'Cache-Control': 'no-cache' },
         });
-        if (!res.ok) return false;
+        if (!res.ok) return { changed: false, version: null };
         const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('json')) return false;
+        if (!ct.includes('json')) return { changed: false, version: null };
         const data = await res.json();
-        return Boolean(data?.build && String(data.build) !== CURRENT_BUILD_ID);
+        return {
+            changed: Boolean(data?.build && String(data.build) !== CURRENT_BUILD_ID),
+            version: data?.version ? String(data.version) : null,
+        };
     } catch {
-        return false;
+        return { changed: false, version: null };
     }
 }
 
@@ -83,6 +87,7 @@ export function PwaProvider({ children }) {
     // Force Update modal state for Installed PWA when online and a new build or content change is found
     const [swNeedsRefresh, setSwNeedsRefresh] = useState(false);
     const [buildNeedsUpdate, setBuildNeedsUpdate] = useState(false);
+    const [remoteVersion, setRemoteVersion] = useState(null);
     const [contentNeedsUpdate, setContentNeedsUpdate] = useState(false);
     const [updatingApp, setUpdatingApp] = useState(false);
     const [updateProgress, setUpdateProgress] = useState({ percent: 0, label: '' });
@@ -108,12 +113,13 @@ export function PwaProvider({ children }) {
         }
 
         if (isInstalledRef.current) {
-            const [buildChanged, contentCheck] = await Promise.all([
+            const [buildInfo, contentCheck] = await Promise.all([
                 checkRemoteAppBuildChanged(),
                 checkRemoteContentUpdate(),
             ]);
-            if (buildChanged) {
+            if (buildInfo?.changed) {
                 setBuildNeedsUpdate(true);
+                if (buildInfo.version) setRemoteVersion(buildInfo.version);
             }
             if (contentCheck?.hasUpdate) {
                 setContentNeedsUpdate(true);
@@ -307,8 +313,16 @@ export function PwaProvider({ children }) {
                 const waiting = await waitForWaitingWorker(reg, 2500);
                 setUpdateProgress({ percent: 100, label: 'Nire-restart ang app...' });
 
-                if (waiting && updateSwFnRef.current) {
-                    await updateSwFnRef.current(true).catch(() => {});
+                if (waiting) {
+                    if ('serviceWorker' in navigator) {
+                        navigator.serviceWorker.addEventListener(
+                            'controllerchange',
+                            () => window.location.reload(),
+                            { once: true }
+                        );
+                    }
+                    waiting.postMessage({ type: 'SKIP_WAITING' });
+                    updateSwFnRef.current?.(true).catch(() => {});
                     setTimeout(() => window.location.reload(), 1200);
                     return;
                 }
@@ -341,6 +355,7 @@ export function PwaProvider({ children }) {
                 isOnline,
                 isInstalled,
                 isIos,
+                appVersion: CURRENT_APP_VERSION,
                 canShowInstallButton,
                 startAppInstall,
             }}
@@ -364,7 +379,9 @@ export function PwaProvider({ children }) {
                                 <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                                     {updatingApp
                                         ? 'Pakihintay habang inilalapat ang pinakabagong bersyon ng laro.'
-                                        : 'May bagong bersyon ng JuanQuest. I-update muna ang laro upang magpatuloy.'}
+                                        : remoteVersion
+                                          ? `May bagong bersyon ng JuanQuest (v${remoteVersion}). I-update muna ang laro upang magpatuloy.`
+                                          : 'May bagong bersyon ng JuanQuest. I-update muna ang laro upang magpatuloy.'}
                                 </p>
                             </div>
                         </div>

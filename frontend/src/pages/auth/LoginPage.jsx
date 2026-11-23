@@ -21,7 +21,7 @@ import QrScannerBox from '../../components/qr/QrScannerBox';
 export default function LoginPage() {
     const navigate = useNavigate();
     const { user, loading, saveAuth } = useAuth();
-    const { isOnline, canShowInstallButton, startAppInstall } = usePwa();
+    const { isOnline, appVersion, canShowInstallButton, startAppInstall } = usePwa();
 
     // Online login state
     const [tab, setTab] = useState('student');
@@ -494,6 +494,10 @@ export default function LoginPage() {
                         )}
                     </div>
                 )}
+
+                <p className="text-center text-[11px] font-medium text-stone-400 select-none tabular-nums">
+                    v{appVersion}
+                </p>
             </div>
         </div>
     );

@@ -3,16 +3,17 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const APP_VERSION = '1.2.0';
 const APP_BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
 
-function emitVersionJsonPlugin(buildId) {
+function emitVersionJsonPlugin(version, buildId) {
     return {
         name: 'juanquest-version-json',
         generateBundle() {
             this.emitFile({
                 type: 'asset',
                 fileName: 'version.json',
-                source: JSON.stringify({ build: buildId }),
+                source: JSON.stringify({ version, build: buildId }),
             });
         },
     };
@@ -20,12 +21,13 @@ function emitVersionJsonPlugin(buildId) {
 
 export default defineConfig({
     define: {
+        __APP_VERSION__: JSON.stringify(APP_VERSION),
         __APP_BUILD_ID__: JSON.stringify(APP_BUILD_ID),
     },
     plugins: [
         react(),
         tailwindcss(),
-        emitVersionJsonPlugin(APP_BUILD_ID),
+        emitVersionJsonPlugin(APP_VERSION, APP_BUILD_ID),
         VitePWA({
             registerType: 'prompt',
             includeAssets: [
