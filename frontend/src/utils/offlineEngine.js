@@ -104,6 +104,85 @@ export async function unlockPinWithTeacherCode(joinCode, enteredCode, fallbackQr
     return { ok: true, nextAttempt };
 }
 
+/**
+ * Unlocks & resets either a single completed map (1..5) OR the full 5-map offline session
+ * using the teacher's Unblock QR ({ t: 'jqu1', c, u, m? }) or 6-char Unblock Code (0 internet needed!).
+ */
+export async function resetOfflineMapWithTeacherAuth(mapId, mapNumber, { code = '', qrPayload = null } = {}) {
+    const state = loadOfflineState();
+    if (!state || !state.session) {
+        return { ok: false, message: 'Walang aktibong offline session sa device na ito.' };
+    }
+
+    const joinCode = String(state.session.join_code || '').trim().toUpperCase();
+    const qrKey = String(state.session.qr_key || '').trim();
+    let enteredCode = String(code || '').replace(/\s+/g, '').toUpperCase();
+    let resetAll = false;
+
+    if (qrPayload) {
+        if (qrPayload.t !== 'jqu1' || !qrPayload.u) {
+            return { ok: false, message: 'Hindi valid na Teacher Unblock QR ang na-scan.' };
+        }
+        const qrClassCode = String(qrPayload.c || '').trim().toUpperCase();
+        if (qrClassCode && qrClassCode !== joinCode) {
+            return {
+                ok: false,
+                message: `Para sa sesyon na "${qrClassCode}" ang Unblock QR na ito, hindi sa "${joinCode}".`,
+            };
+        }
+        if (qrPayload.m !== undefined && qrPayload.m !== null && qrPayload.m !== 'all') {
+            const targetMap = Number(qrPayload.m);
+            if (targetMap !== Number(mapNumber)) {
+                return {
+                    ok: false,
+                    message: `Para sa Mapa ${targetMap} ang Unblock QR na ito, hindi para sa Mapa ${mapNumber}.`,
+                };
+            }
+        } else {
+            resetAll = true;
+        }
+        enteredCode = String(qrPayload.u || '').replace(/\s+/g, '').toUpperCase();
+    }
+
+    if (enteredCode.length < 4) {
+        return { ok: false, message: 'Ilagay ang 6-character Teacher Unblock Code.' };
+    }
+
+    let verified = false;
+    if (qrKey) {
+        const expected = await computeTeacherUnblockCode(joinCode, qrKey);
+        verified = enteredCode === expected;
+    } else {
+        verified = enteredCode === `${joinCode}OK` || enteredCode === 'UNBLOCK';
+    }
+
+    if (!verified) {
+        return { ok: false, message: 'Maling Teacher Unblock Code. Itanong sa iyong guro ang tamang code.' };
+    }
+
+    if (resetAll) {
+        state.progressByMapId = {};
+        state.currentMapNumber = 1;
+    } else {
+        delete state.progressByMapId[mapId];
+        state.currentMapNumber = Math.max(Number(state.currentMapNumber || 1), Number(mapNumber || 1));
+    }
+
+    // Fresh submissionId + bumped attempt count so re-scanning the updated Result QR cleanly updates Live Monitor!
+    state.submissionId = makeShortId();
+    state.attempt = Math.max(2, Number(state.attempt || 1) + 1);
+    saveOfflineState(state);
+
+    // Unlock PIN record if it was previously marked completed so completion can re-lock cleanly later
+    const pinsMap = loadCompletedPinsMap();
+    if (pinsMap[joinCode]) {
+        pinsMap[joinCode] = { ...pinsMap[joinCode], locked: false };
+        saveCompletedPinsMap(pinsMap);
+    }
+
+    return { ok: true, resetAll };
+}
+
 export function loadSavedQrHistory() {
     try {
         const raw = localStorage.getItem(SAVED_QR_HISTORY_KEY);

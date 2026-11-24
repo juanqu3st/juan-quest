@@ -1369,23 +1369,62 @@ export default function TeacherMonitorPage() {
                                 <div className="text-center space-y-4">
                                     {monitor.session.offline_unblock_code ? (
                                         <>
+                                            {/* Scope Selector: Full Game OR Specific Map M1..M5 */}
+                                            <div className="space-y-1.5 text-left">
+                                                <p className="text-[11px] font-bold text-slate-500">
+                                                    Piliin kung alin ang iu-unlock:
+                                                </p>
+                                                <div className="grid grid-cols-6 gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setRetakeMapChoice('all')}
+                                                        className={`py-1.5 px-1 rounded-lg border text-[11px] font-bold transition cursor-pointer ${
+                                                            retakeMapChoice === 'all'
+                                                                ? 'border-[#C2410C] bg-orange-50 text-[#C2410C]'
+                                                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
+                                                        }`}
+                                                    >
+                                                        Lahat
+                                                    </button>
+                                                    {[1, 2, 3, 4, 5].map((m) => (
+                                                        <button
+                                                            key={m}
+                                                            type="button"
+                                                            onClick={() => setRetakeMapChoice(m)}
+                                                            className={`py-1.5 px-1 rounded-lg border text-[11px] font-bold transition cursor-pointer ${
+                                                                retakeMapChoice === m
+                                                                    ? 'border-[#C2410C] bg-orange-50 text-[#C2410C]'
+                                                                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
+                                                            }`}
+                                                        >
+                                                            M{m}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
                                             <div className="inline-block bg-white p-3 rounded-2xl border-2 border-slate-900 shadow-xs">
                                                 <QrCodeImage
                                                     value={{
                                                         t: 'jqu1',
                                                         c: monitor.session.join_code,
                                                         u: monitor.session.offline_unblock_code,
+                                                        ...(retakeMapChoice !== 'all'
+                                                            ? { m: Number(retakeMapChoice) }
+                                                            : {}),
                                                     }}
-                                                    size={210}
+                                                    size={204}
                                                     errorCorrectionLevel="L"
                                                     alt="Teacher Unblock QR"
-                                                    className="w-[196px] h-[196px] sm:w-[210px] sm:h-[210px]"
+                                                    className="w-[192px] h-[192px] sm:w-[204px] sm:h-[204px]"
                                                 />
                                             </div>
 
-                                            <div className="rounded-xl bg-amber-50/75 border border-amber-200 p-3.5 space-y-1">
+                                            <div className="rounded-xl bg-amber-50/75 border border-amber-200 p-3 space-y-1">
                                                 <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                                                    6-Character Unblock Code
+                                                    {retakeMapChoice === 'all'
+                                                        ? 'Unblock Code · Buong Laro (M1–M5)'
+                                                        : `Unblock Code · Mapa ${retakeMapChoice} lang`}
                                                 </p>
                                                 <div className="flex items-center justify-center gap-2">
                                                     <span className="text-2xl font-extrabold font-mono tracking-widest text-slate-900">
@@ -1413,9 +1452,9 @@ export default function TeacherMonitorPage() {
                                             </div>
 
                                             <p className="text-xs text-slate-600 leading-relaxed">
-                                                Ipa-scan ang <strong>Unblock QR</strong> o i-type ang code sa phone ng
-                                                grupong ito (sa <strong>I-unblock ng Guro</strong>) upang makapag-retake
-                                                nang offline. I-scan lang ulit ang bago nilang Result QR pagkatapos.
+                                                {retakeMapChoice === 'all'
+                                                    ? 'Ipa-scan ang Unblock QR (o i-type ang code) sa phone ng grupo sa "I-unlock ng Guro" upang maulit ang buong laro.'
+                                                    : `Sa phone ng grupo, buksan ang Mapa ${retakeMapChoice} → pindutin ang "I-unlock ng Guro" → i-scan ang QR na ito (mananatili ang score nila sa ibang mapa!).`}
                                             </p>
                                         </>
                                     ) : (

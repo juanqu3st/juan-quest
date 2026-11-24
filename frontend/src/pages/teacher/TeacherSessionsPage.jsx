@@ -76,6 +76,7 @@ export default function TeacherSessionsPage() {
     const [copied, setCopied] = useState(false);
     const [showJoinQr, setShowJoinQr] = useState(false);
     const [showUnblockCode, setShowUnblockCode] = useState(false);
+    const [unblockMapScope, setUnblockMapScope] = useState('all');
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [showCreate, setShowCreate] = useState(false);
     const [editingGroupId, setEditingGroupId] = useState(null);
@@ -937,7 +938,7 @@ export default function TeacherSessionsPage() {
                     onClick={() => setShowJoinQr(false)}
                 >
                     <div
-                        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+                        className="w-full max-w-md max-h-[92dvh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
@@ -1021,10 +1022,10 @@ export default function TeacherSessionsPage() {
                                             <span>Ipakita ang Teacher Unblock Code</span>
                                         </button>
                                     ) : (
-                                        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-1">
+                                        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-3">
                                             <div className="flex items-center justify-between gap-2">
                                                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                                    Teacher Unblock Code
+                                                    Teacher Unblock QR & Code
                                                 </span>
                                                 <button
                                                     type="button"
@@ -1034,11 +1035,59 @@ export default function TeacherSessionsPage() {
                                                     Itago
                                                 </button>
                                             </div>
+
+                                            <div className="grid grid-cols-6 gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setUnblockMapScope('all')}
+                                                    className={`py-1 px-1 rounded-lg border text-[10px] font-bold cursor-pointer transition ${
+                                                        unblockMapScope === 'all'
+                                                            ? 'border-[#C2410C] bg-orange-50 text-[#C2410C]'
+                                                            : 'border-slate-200 bg-white text-slate-600'
+                                                    }`}
+                                                >
+                                                    Lahat
+                                                </button>
+                                                {[1, 2, 3, 4, 5].map((m) => (
+                                                    <button
+                                                        key={m}
+                                                        type="button"
+                                                        onClick={() => setUnblockMapScope(m)}
+                                                        className={`py-1 px-1 rounded-lg border text-[10px] font-bold cursor-pointer transition ${
+                                                            unblockMapScope === m
+                                                                ? 'border-[#C2410C] bg-orange-50 text-[#C2410C]'
+                                                                : 'border-slate-200 bg-white text-slate-600'
+                                                        }`}
+                                                    >
+                                                        M{m}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <div className="inline-block bg-white p-2 rounded-xl border border-slate-300">
+                                                <QrCodeImage
+                                                    value={{
+                                                        t: 'jqu1',
+                                                        c: lobby.join_code,
+                                                        u: lobby.offline_unblock_code,
+                                                        ...(unblockMapScope !== 'all'
+                                                            ? { m: Number(unblockMapScope) }
+                                                            : {}),
+                                                    }}
+                                                    size={156}
+                                                    errorCorrectionLevel="L"
+                                                    alt="Teacher Unblock QR"
+                                                    className="w-[150px] h-[150px]"
+                                                />
+                                            </div>
+
                                             <p className="text-lg font-extrabold font-mono tracking-widest text-slate-900">
                                                 {lobby.offline_unblock_code}
                                             </p>
-                                            <p className="text-[11px] text-slate-500">
-                                                Gamitin lang kung nag-hang ang phone ng grupo at kailangang payagang makasali ulit.
+                                            <p className="text-[11px] text-slate-500 leading-snug">
+                                                {unblockMapScope === 'all'
+                                                    ? 'Gamitin sa "I-unblock ng Guro" kung nag-hang ang device at kailangang ulitin ang buong laro.'
+                                                    : `Sa phone ng grupo, buksan ang Mapa ${unblockMapScope} → "I-unlock ng Guro" → i-scan ang QR na ito.`}
                                             </p>
                                         </div>
                                     )}

@@ -676,6 +676,14 @@ export default function StudentWorldPage() {
                     initialResume={resumePayload}
                     onClose={handleCloseStage}
                     onStageFinished={handleStageFinished}
+                    onOfflineMapReset={async (resetAll) => {
+                        clearStageResume(user?.id);
+                        await loadWorld().catch(() => {});
+                        if (resetAll) {
+                            setCharMapNumber(1);
+                            setTargetMapNumber(1);
+                        }
+                    }}
                 />
             )}
 

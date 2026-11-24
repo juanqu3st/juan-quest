@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, TimerOff, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, KeyRound, Keyboard, QrCode, TimerOff, Volume2, VolumeX } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
 import { studentApi } from '../../api/studentApi';
+import { resetOfflineMapWithTeacherAuth } from '../../utils/offlineEngine';
+import QrScannerBox from '../qr/QrScannerBox';
 import {
     isAudioMuted,
     pickPraiseHeadline,
@@ -91,6 +93,7 @@ export default function StageModal({
     initialResume,
     onClose,
     onStageFinished,
+    onOfflineMapReset,
 }) {
     const [step, setStep] = useState(() => resolveInitialStep(map, initialResume));
     const [sceneIdx, setSceneIdx] = useState(() =>
@@ -124,6 +127,10 @@ export default function StageModal({
     const [shakeTrigger, setShakeTrigger] = useState(0);
     const [summaryResult, setSummaryResult] = useState(null);
     const [lastDetails, setLastDetails] = useState(null);
+    const [showOfflineUnlock, setShowOfflineUnlock] = useState(false);
+    const [offlineUnlockScan, setOfflineUnlockScan] = useState(true);
+    const [offlineUnlockCode, setOfflineUnlockCode] = useState('');
+    const [offlineUnlockError, setOfflineUnlockError] = useState('');
 
     const timeoutFiredRef = useRef(false);
     const levelEndedRef = useRef(false);
@@ -468,6 +475,43 @@ export default function StageModal({
         else onClose();
     };
 
+    const handleOfflineTeacherUnlock = async ({ code = '', qrPayload = null }) => {
+        setOfflineUnlockError('');
+        const res = await resetOfflineMapWithTeacherAuth(map.id, map.map_number, { code, qrPayload });
+        if (!res.ok) {
+            setOfflineUnlockError(res.message);
+            return;
+        }
+        setShowOfflineUnlock(false);
+        setOfflineUnlockCode('');
+        setOfflineUnlockError('');
+        await onOfflineMapReset?.(res.resetAll);
+
+        if (res.resetAll) {
+            showToast('success', 'Na-reset ang buong laro! Maaari nang magsimula sa Mapa 1.', 'Na-unlock.');
+            onClose();
+            return;
+        }
+
+        // Immediately reopen this exact map from fresh Story / Panuto with full 3/3 hearts & timer!
+        levelEndedRef.current = false;
+        timeoutFiredRef.current = false;
+        totalElapsedRef.current = 0;
+        setHeartsRemaining(map.max_hearts ?? 3);
+        setProjectedScore(0);
+        setCompletedChallengeIds([]);
+        setResolvedChallengeIds([]);
+        setPendingLifeline(null);
+        setDrafts({});
+        setLastDetails(null);
+        setSummaryResult(null);
+        setTimeLimitUsed(map.time_limit_seconds ?? 60);
+        setSecondsLeft(map.time_limit_seconds ?? 60);
+        setSceneIdx(0);
+        setStep('scene_guide');
+        showToast('success', `Na-unlock ang Mapa ${map.map_number}! Maaari nang sagutan muli.`, 'Handa sa Retake.');
+    };
+
     if (!map) return null;
     const inGame = step === 'active_gameplay';
     const isFinalMap = map.map_number >= totalMaps;
@@ -598,6 +642,110 @@ export default function StageModal({
                                     >
                                         Bumalik sa Mapa
                                     </button>
+
+                                    {isOfflineMode && (
+                                        <div className="pt-2 border-t border-stone-100">
+                                            {!showOfflineUnlock ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setShowOfflineUnlock(true);
+                                                        setOfflineUnlockScan(true);
+                                                        setOfflineUnlockError('');
+                                                    }}
+                                                    className="inline-flex items-center gap-1.5 text-xs font-bold text-stone-400 hover:text-[#C2410C] cursor-pointer transition"
+                                                >
+                                                    <KeyRound className="w-3.5 h-3.5" />
+                                                    <span>I-unlock ng Guro</span>
+                                                </button>
+                                            ) : (
+                                                <div className="rounded-xl bg-stone-50 border border-stone-200 p-3.5 text-left space-y-2.5">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="text-[11px] font-bold text-stone-700">
+                                                            I-unlock ang Mapa {map.map_number} (Para sa Guro)
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setOfflineUnlockScan((v) => !v);
+                                                                setOfflineUnlockError('');
+                                                            }}
+                                                            className="inline-flex items-center gap-1 text-[11px] font-bold text-[#C2410C] cursor-pointer"
+                                                        >
+                                                            {offlineUnlockScan ? (
+                                                                <>
+                                                                    <Keyboard className="w-3 h-3" />
+                                                                    <span>I-type Code</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <QrCode className="w-3 h-3" />
+                                                                    <span>I-scan QR</span>
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </div>
+
+                                                    {offlineUnlockError && (
+                                                        <p className="text-[11px] font-semibold text-rose-600">
+                                                            {offlineUnlockError}
+                                                        </p>
+                                                    )}
+
+                                                    {offlineUnlockScan ? (
+                                                        <QrScannerBox
+                                                            active={showOfflineUnlock && offlineUnlockScan}
+                                                            onScan={(decoded) => {
+                                                                try {
+                                                                    const parsed = JSON.parse(decoded);
+                                                                    handleOfflineTeacherUnlock({ qrPayload: parsed });
+                                                                } catch {
+                                                                    setOfflineUnlockError(
+                                                                        'Hindi mabasa ang Teacher Unblock QR.'
+                                                                    );
+                                                                }
+                                                            }}
+                                                        />
+                                                    ) : (
+                                                        <div className="flex gap-2">
+                                                            <input
+                                                                type="text"
+                                                                maxLength={12}
+                                                                value={offlineUnlockCode}
+                                                                onChange={(e) => {
+                                                                    setOfflineUnlockCode(e.target.value.toUpperCase());
+                                                                    setOfflineUnlockError('');
+                                                                }}
+                                                                placeholder="6-char code"
+                                                                className="flex-1 min-w-0 h-9 rounded-lg border border-stone-200 bg-white px-3 text-xs font-mono font-bold tracking-widest uppercase text-stone-900 focus:border-[#C2410C] outline-none"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    handleOfflineTeacherUnlock({
+                                                                        code: offlineUnlockCode,
+                                                                    })
+                                                                }
+                                                                className="h-9 px-3.5 rounded-lg bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold cursor-pointer shrink-0"
+                                                            >
+                                                                I-unlock
+                                                            </button>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="text-right">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setShowOfflineUnlock(false)}
+                                                            className="text-[11px] font-semibold text-stone-400 hover:text-stone-700 cursor-pointer"
+                                                        >
+                                                            Kanselahin
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </motion.div>
                         )}
