@@ -32,7 +32,7 @@ class UpdateMapRequest extends FormRequest
      */
     public function rules(): array
     {
-        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/ogg,audio/mp4,audio/x-m4a,audio/aac,audio/webm,video/webm,application/ogg';
+        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/ogg,audio/mp4,video/mp4,audio/m4a,audio/x-m4a,audio/aac,audio/x-aac,audio/webm,video/webm,audio/3gpp,video/3gpp,application/ogg';
 
         return [
             'title' => ['required', 'string', 'max:150'],

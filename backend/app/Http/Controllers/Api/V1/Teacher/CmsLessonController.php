@@ -44,6 +44,7 @@ class CmsLessonController extends Controller
                     'story_video_path' => $map->story_video_path,
                     'voiceover_mode' => $map->voiceover_mode ?? 'default',
                     'whole_voiceover_path' => $map->whole_voiceover_path,
+                    'whole_voiceover_offset_sec' => (float) ($map->whole_voiceover_offset_sec ?? 0),
                     'scene_script' => $map->scene_script,
                     'youtube_start_sec' => $map->youtube_start_sec,
                     'youtube_end_sec' => $map->youtube_end_sec,

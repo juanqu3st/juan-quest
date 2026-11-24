@@ -96,6 +96,10 @@ export default function SyncedDubbingStudio({
     const countdownTimerRef = useRef(null);
     const recordRangeRef = useRef({ start: 0, end: 50, target: 'whole', sceneIdx: 0 });
     const previewRangeRef = useRef({ active: false, start: 0, end: 50, offset: 0, mode: 'whole' });
+    const onWholeFileSelectRef = useRef(onWholeFileSelect);
+    const onSceneAudioSelectRef = useRef(onSceneAudioSelect);
+    onWholeFileSelectRef.current = onWholeFileSelect;
+    onSceneAudioSelectRef.current = onSceneAudioSelect;
 
     const [selectedSceneIdx, setSelectedSceneIdx] = useState(0);
     const [videoDuration, setVideoDuration] = useState(50);
@@ -296,30 +300,43 @@ export default function SyncedDubbingStudio({
             countdownTimerRef.current = null;
             setCountdown(0);
 
-            const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : MediaRecorder.isTypeSupported('audio/webm')
-                  ? 'audio/webm'
-                  : '';
+            const preferredTypes = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+                'audio/ogg;codecs=opus',
+                'audio/ogg',
+            ];
+            const mime = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) || '';
             const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
             chunksRef.current = [];
             recorder.ondataavailable = (ev) => {
                 if (ev.data && ev.data.size > 0) chunksRef.current.push(ev.data);
             };
             recorder.onstop = () => {
-                const blobType = recorder.mimeType || 'audio/webm';
+                const blobType = recorder.mimeType || mime || 'audio/webm';
                 const blob = new Blob(chunksRef.current, { type: blobType });
-                const ext = blobType.includes('ogg') ? 'ogg' : 'webm';
+                const lower = blobType.toLowerCase();
+                const ext =
+                    lower.includes('mp4') || lower.includes('aac') || lower.includes('m4a')
+                        ? 'm4a'
+                        : lower.includes('ogg')
+                          ? 'ogg'
+                          : 'webm';
                 const { target, sceneIdx } = recordRangeRef.current;
-                const fileName =
-                    target === 'whole'
-                        ? `mapa${mapNumber}_whole_vo.${ext}`
-                        : `mapa${mapNumber}_scene${sceneIdx + 1}_vo.${ext}`;
-                const file = new File([blob], fileName, { type: blobType.split(';')[0] });
-                if (target === 'whole') {
-                    onWholeFileSelect(file);
+                if (blob.size > 0) {
+                    const fileName =
+                        target === 'whole'
+                            ? `mapa${mapNumber}_whole_vo_${Date.now()}.${ext}`
+                            : `mapa${mapNumber}_eksena${sceneIdx + 1}_vo_${Date.now()}.${ext}`;
+                    const file = new File([blob], fileName, { type: blobType.split(';')[0] });
+                    if (target === 'whole') {
+                        onWholeFileSelectRef.current?.(file);
+                    } else {
+                        onSceneAudioSelectRef.current?.(sceneIdx, file);
+                    }
                 } else {
-                    onSceneAudioSelect(sceneIdx, file);
+                    setMicError('Walang nakuhang tunog sa recording. Pakiulit at tiyaking nakabukas ang mic.');
                 }
                 if (streamRef.current) {
                     streamRef.current.getTracks().forEach((t) => t.stop());
@@ -331,7 +348,7 @@ export default function SyncedDubbingStudio({
             mediaRecorderRef.current = recorder;
             setRecordSeconds(0);
             setRecording(true);
-            recorder.start();
+            recorder.start(250);
 
             if (videoRef.current) {
                 videoRef.current.muted = true;
@@ -526,9 +543,8 @@ export default function SyncedDubbingStudio({
             {voiceoverMode === 'per_scene' && timedScenes.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
                     {timedScenes.map((sc, i) => {
-                        const hasAudio =
-                            Boolean(sceneAudioFiles?.[i]) ||
-                            (!removedSceneIndices?.includes(i) && Boolean(sc.audio_path));
+                        const hasPending = Boolean(sceneAudioFiles?.[i]);
+                        const hasSaved = !removedSceneIndices?.includes(i) && Boolean(sc.audio_path);
                         const isSel = i === selectedSceneIdx;
                         return (
                             <button
@@ -548,7 +564,13 @@ export default function SyncedDubbingStudio({
                             >
                                 <span
                                     className={`w-2 h-2 rounded-full ${
-                                        hasAudio ? 'bg-emerald-500' : isSel ? 'bg-slate-400' : 'bg-slate-300'
+                                        hasPending
+                                            ? 'bg-amber-400'
+                                            : hasSaved
+                                              ? 'bg-emerald-500'
+                                              : isSel
+                                                ? 'bg-slate-400'
+                                                : 'bg-slate-300'
                                     }`}
                                 />
                                 <span>Eksena {i + 1}</span>
@@ -559,7 +581,7 @@ export default function SyncedDubbingStudio({
                         );
                     })}
                     <span className="text-[11px] text-slate-500 ml-auto">
-                        Berdeng tuldok = may boses ng guro; bakante = boses ng video ang gagamitin.
+                        Berde = naka-save · Dilaw = nakahanda (pindutin ang I-save) · Abo = boses ng video.
                     </span>
                 </div>
             )}
@@ -650,13 +672,19 @@ export default function SyncedDubbingStudio({
                             </div>
                         )}
 
-                        {/* Live In-Video Subtitle Preview (same modern bottom-center style students see!) */}
+                        {/* Live In-Video Subtitle Preview (clean pure-white text matching Student Player!) */}
                         {videoSrc && countdown === 0 && activeStudioCue && (
-                            <div className="pointer-events-none absolute inset-x-3 bottom-11 z-10 flex justify-center">
-                                <div className="max-w-[90%] rounded-md bg-black/78 px-3 py-1 text-center">
-                                    <p className="text-[11px] sm:text-xs font-medium text-white leading-snug">
+                            <div className="pointer-events-none absolute inset-x-3 bottom-8 z-10 flex justify-center">
+                                <div className="max-w-[92%] text-center">
+                                    <p
+                                        className="text-xs sm:text-sm font-bold text-white leading-snug"
+                                        style={{
+                                            textShadow:
+                                                '0 1px 3px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.75), 0 0 1px rgba(0,0,0,0.9)',
+                                        }}
+                                    >
                                         {activeStudioCue.who && (
-                                            <span className="font-bold text-amber-300 mr-1">
+                                            <span className="font-extrabold text-[#FDE047] mr-1">
                                                 {activeStudioCue.who}:
                                             </span>
                                         )}
@@ -742,16 +770,22 @@ export default function SyncedDubbingStudio({
 
                                 <label className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-[#E5E7EB] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer">
                                     <Upload className="w-3.5 h-3.5" />
-                                    <span>Mag-upload Audio</span>
+                                    <span>
+                                        {voiceoverMode === 'per_scene'
+                                            ? `Mag-upload (Eksena ${selectedSceneIdx + 1})`
+                                            : 'Mag-upload Audio'}
+                                    </span>
                                     <input
                                         type="file"
-                                        accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/webm"
+                                        accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm,.aac"
                                         className="hidden"
                                         onChange={(e) => {
                                             const f = e.target.files?.[0];
+                                            e.target.value = '';
                                             if (!f) return;
-                                            if (voiceoverMode === 'whole') onWholeFileSelect(f);
-                                            else onSceneAudioSelect(selectedSceneIdx, f);
+                                            setMicError('');
+                                            if (voiceoverMode === 'whole') onWholeFileSelectRef.current?.(f);
+                                            else onSceneAudioSelectRef.current?.(selectedSceneIdx, f);
                                         }}
                                     />
                                 </label>
