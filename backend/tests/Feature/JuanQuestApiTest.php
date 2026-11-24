@@ -6,10 +6,13 @@ use App\Models\Challenge;
 use App\Models\GameSession;
 use App\Models\Map;
 use App\Models\User;
+use App\Services\MediaStorageService;
 use Database\Seeders\JuanOsongSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -953,5 +956,123 @@ class JuanQuestApiTest extends TestCase
             'email' => 'teacher@juanquest.ph',
             'password' => 'StrongPass2026!',
         ])->assertOk();
+    }
+
+    public function test_teacher_can_upload_audio_and_video_files_as_per_scene_voiceovers_and_preserve_all_scenes(): void
+    {
+        Storage::fake('public');
+        config(['services.cloudinary.driver' => 'local']);
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $cms = $this->withToken($teacherToken)
+            ->getJson('/api/v1/teacher/cms')
+            ->assertOk();
+
+        $map1 = $cms->json('lesson.maps.0');
+        $map1Id = $map1['id'];
+        $scenes = $map1['scene_script'];
+        $this->assertGreaterThanOrEqual(3, count($scenes));
+
+        // 1) Upload MP3 on Eksena 1 and MP4 video clip on Eksena 2 in one save
+        $firstSave = $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/maps/{$map1Id}", [
+                'title' => $map1['title'],
+                'strategy_label' => $map1['strategy_label'],
+                'pokus_na_kasanayan' => $map1['pokus_na_kasanayan'],
+                'panuto' => $map1['panuto'],
+                'youtube_start_sec' => $map1['youtube_start_sec'] ?? 0,
+                'youtube_end_sec' => $map1['youtube_end_sec'] ?? 50,
+                'max_hearts' => 3,
+                'time_limit_seconds' => 60,
+                'allow_user_time_choice' => 0,
+                'feedback_correct' => $map1['feedback_correct'],
+                'feedback_wrong' => $map1['feedback_wrong'],
+                'voiceover_mode' => 'per_scene',
+                'whole_voiceover_offset_sec' => 0,
+                'scene_script' => json_encode($scenes),
+                'scene_audios' => [
+                    0 => UploadedFile::fake()->create('eksena1.mp3', 120, 'audio/mpeg'),
+                    1 => UploadedFile::fake()->create('eksena2_phone_clip.mp4', 450, 'video/mp4'),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $savedScenes1 = $firstSave->json('map.scene_script');
+        $path0 = $savedScenes1[0]['audio_path'] ?? null;
+        $path1 = $savedScenes1[1]['audio_path'] ?? null;
+        $this->assertNotEmpty($path0);
+        $this->assertNotEmpty($path1);
+        Storage::disk('public')->assertExists($path0);
+        Storage::disk('public')->assertExists($path1);
+
+        // 2) Second save adds an iPhone .mov video on Eksena 3 -> Eksena 1 & 2 MUST stay intact!
+        $secondSave = $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/maps/{$map1Id}", [
+                'title' => $map1['title'],
+                'strategy_label' => $map1['strategy_label'],
+                'pokus_na_kasanayan' => $map1['pokus_na_kasanayan'],
+                'panuto' => $map1['panuto'],
+                'youtube_start_sec' => $map1['youtube_start_sec'] ?? 0,
+                'youtube_end_sec' => $map1['youtube_end_sec'] ?? 50,
+                'max_hearts' => 3,
+                'time_limit_seconds' => 60,
+                'allow_user_time_choice' => 0,
+                'feedback_correct' => $map1['feedback_correct'],
+                'feedback_wrong' => $map1['feedback_wrong'],
+                'voiceover_mode' => 'per_scene',
+                'whole_voiceover_offset_sec' => 0,
+                'scene_script' => json_encode($savedScenes1),
+                'scene_audios' => [
+                    2 => UploadedFile::fake()->create('eksena3_iphone.mov', 500, 'video/quicktime'),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $savedScenes2 = $secondSave->json('map.scene_script');
+        $this->assertSame($path0, $savedScenes2[0]['audio_path']);
+        $this->assertSame($path1, $savedScenes2[1]['audio_path']);
+        $this->assertNotEmpty($savedScenes2[2]['audio_path']);
+        Storage::disk('public')->assertExists($savedScenes2[2]['audio_path']);
+
+        // 3) Verify /api/v1/teacher/cms returns all 3 persisted scenes cleanly
+        $cmsAfter = $this->withToken($teacherToken)
+            ->getJson('/api/v1/teacher/cms')
+            ->assertOk();
+        $this->assertSame('per_scene', $cmsAfter->json('lesson.maps.0.voiceover_mode'));
+        $this->assertSame($path0, $cmsAfter->json('lesson.maps.0.scene_script.0.audio_path'));
+        $this->assertSame($path1, $cmsAfter->json('lesson.maps.0.scene_script.1.audio_path'));
+        $this->assertSame($savedScenes2[2]['audio_path'], $cmsAfter->json('lesson.maps.0.scene_script.2.audio_path'));
+
+        // 4) Verify Cloudinary signed audio upload requests format=mp3 extraction
+        config([
+            'services.cloudinary.driver' => 'cloudinary',
+            'services.cloudinary.cloud_name' => 'demo-cloud',
+            'services.cloudinary.api_key' => 'test-key',
+            'services.cloudinary.api_secret' => 'test-secret',
+        ]);
+
+        Http::fake([
+            'https://api.cloudinary.com/v1_1/demo-cloud/video/upload' => Http::response([
+                'secure_url' => 'https://res.cloudinary.com/demo-cloud/video/upload/v1/juanquest/audio/clip.mp3',
+            ], 200),
+        ]);
+
+        $cloudUrl = app(MediaStorageService::class)->storeAudio(
+            UploadedFile::fake()->create('clip.mov', 250, 'video/quicktime')
+        );
+        $this->assertSame('https://res.cloudinary.com/demo-cloud/video/upload/v1/juanquest/audio/clip.mp3', $cloudUrl);
+
+        Http::assertSent(function ($request) {
+            $fields = collect($request->data())->pluck('contents', 'name');
+
+            return $request->url() === 'https://api.cloudinary.com/v1_1/demo-cloud/video/upload'
+                && $fields->get('format') === 'mp3'
+                && $fields->get('folder') === 'juanquest/audio'
+                && ! empty($fields->get('signature'));
+        });
     }
 }

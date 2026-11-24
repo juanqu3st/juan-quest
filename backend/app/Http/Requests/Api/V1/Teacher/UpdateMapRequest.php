@@ -32,7 +32,7 @@ class UpdateMapRequest extends FormRequest
      */
     public function rules(): array
     {
-        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/ogg,audio/mp4,video/mp4,audio/m4a,audio/x-m4a,audio/aac,audio/x-aac,audio/webm,video/webm,audio/3gpp,video/3gpp,application/ogg';
+        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/ogg,audio/mp4,video/mp4,video/quicktime,video/x-m4v,video/x-matroska,video/x-msvideo,video/mpeg,audio/m4a,audio/x-m4a,audio/aac,audio/x-aac,audio/webm,video/webm,audio/3gpp,video/3gpp,audio/3gpp2,video/3gpp2,audio/amr,audio/flac,application/ogg';
 
         return [
             'title' => ['required', 'string', 'max:150'],
@@ -49,10 +49,10 @@ class UpdateMapRequest extends FormRequest
             'feedback_wrong' => ['required', 'string'],
             'voiceover_mode' => ['nullable', 'in:default,whole,per_scene'],
             'whole_voiceover_offset_sec' => ['nullable', 'numeric', 'min:-30', 'max:30'],
-            'story_video' => ['nullable', 'file', 'mimetypes:video/mp4,video/webm', 'max:102400'],
-            'whole_voiceover' => ['nullable', 'file', $audioMimeRule, 'max:20480'],
+            'story_video' => ['nullable', 'file', 'mimetypes:video/mp4,video/webm,video/quicktime,video/x-m4v', 'max:102400'],
+            'whole_voiceover' => ['nullable', 'file', $audioMimeRule, 'max:51200'],
             'scene_audios' => ['nullable', 'array'],
-            'scene_audios.*' => ['nullable', 'file', $audioMimeRule, 'max:20480'],
+            'scene_audios.*' => ['nullable', 'file', $audioMimeRule, 'max:51200'],
             'audio_prompt' => ['nullable', 'file', $audioMimeRule, 'max:20480'],
             'praise_audio' => ['nullable', 'file', $audioMimeRule, 'max:20480'],
             'wrong_audio' => ['nullable', 'file', $audioMimeRule, 'max:20480'],

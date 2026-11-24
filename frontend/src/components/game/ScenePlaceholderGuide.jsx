@@ -187,9 +187,17 @@ export default function ScenePlaceholderGuide({
             }
         };
 
+        const createVoicePlayer = (url) => {
+            const el = document.createElement('video');
+            el.src = url;
+            el.preload = 'auto';
+            el.playsInline = true;
+            el.setAttribute('playsinline', '');
+            return el;
+        };
+
         if (useWholeVoiceover && wholeVoiceoverUrl) {
-            const audio = new Audio(wholeVoiceoverUrl);
-            audio.preload = 'auto';
+            const audio = createVoicePlayer(wholeVoiceoverUrl);
             wholeAudioRef.current = audio;
             video.muted = true;
         } else {
@@ -240,8 +248,7 @@ export default function ScenePlaceholderGuide({
 
             if (activeSceneAudioIdxRef.current !== sceneIdx || !sceneAudioRef.current) {
                 stopSceneAudio();
-                const a = new Audio(customUrl);
-                a.preload = 'auto';
+                const a = createVoicePlayer(customUrl);
                 sceneAudioRef.current = a;
                 activeSceneAudioIdxRef.current = sceneIdx;
                 const seekAndPlay = () => {

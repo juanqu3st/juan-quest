@@ -11,12 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 
-# PHP production limits (supports teacher story videos & voice-over uploads cleanly on Render Free)
+# PHP production limits (supports teacher story videos & multi-scene audio/video VO uploads cleanly on Render Free)
 RUN { \
     echo "upload_max_filesize=64M"; \
-    echo "post_max_size=72M"; \
+    echo "post_max_size=160M"; \
     echo "memory_limit=256M"; \
-    echo "max_execution_time=120"; \
+    echo "max_execution_time=180"; \
     echo "opcache.enable=1"; \
     echo "opcache.validate_timestamps=0"; \
     echo "opcache.memory_consumption=96"; \

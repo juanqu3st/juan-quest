@@ -17,6 +17,21 @@ import {
 import { resolveMediaUrl } from '../../api/axiosClient';
 import { buildTimedCues } from '../../utils/subtitleCues';
 
+function createVoiceMediaElement(url) {
+    const el = document.createElement('video');
+    el.src = url;
+    el.preload = 'auto';
+    el.playsInline = true;
+    el.setAttribute('playsinline', '');
+    return el;
+}
+
+function isVideoLikeFile(file) {
+    if (!file) return false;
+    if (String(file.type || '').startsWith('video/')) return true;
+    return /\.(mp4|mov|m4v|webm|mkv|avi|3gp)$/i.test(String(file.name || ''));
+}
+
 function parseClockSec(str) {
     const m = String(str || '').trim().match(/^(\d+):(\d{1,2})$/);
     if (!m) return null;
@@ -95,11 +110,22 @@ export default function SyncedDubbingStudio({
     const chunksRef = useRef([]);
     const countdownTimerRef = useRef(null);
     const recordRangeRef = useRef({ start: 0, end: 50, target: 'whole', sceneIdx: 0 });
-    const previewRangeRef = useRef({ active: false, start: 0, end: 50, offset: 0, mode: 'whole' });
+    const previewRangeRef = useRef({
+        active: false,
+        seeking: false,
+        start: 0,
+        end: 50,
+        offset: 0,
+        mode: 'whole', // 'whole' | 'per_scene' | 'all_scenes'
+        activeSceneIdx: -1,
+    });
+    const previewTokenRef = useRef(0);
     const onWholeFileSelectRef = useRef(onWholeFileSelect);
     const onSceneAudioSelectRef = useRef(onSceneAudioSelect);
     onWholeFileSelectRef.current = onWholeFileSelect;
     onSceneAudioSelectRef.current = onSceneAudioSelect;
+    const timedScenesRef = useRef([]);
+    const sceneAudioMapRef = useRef({});
 
     const [selectedSceneIdx, setSelectedSceneIdx] = useState(0);
     const [videoDuration, setVideoDuration] = useState(50);
@@ -108,6 +134,7 @@ export default function SyncedDubbingStudio({
     const [recording, setRecording] = useState(false);
     const [recordSeconds, setRecordSeconds] = useState(0);
     const [previewing, setPreviewing] = useState(false);
+    const [previewMode, setPreviewMode] = useState('single'); // 'single' | 'all'
     const [micError, setMicError] = useState('');
     const [showAdvancedTiming, setShowAdvancedTiming] = useState(false);
 
@@ -151,9 +178,21 @@ export default function SyncedDubbingStudio({
 
     // Resolve active teacher audio source for preview (Whole OR Selected Per-Scene)
     const wholeAudioObj = useMemo(() => {
-        if (wholeVoiceoverFile) return { url: URL.createObjectURL(wholeVoiceoverFile), isBlob: true, label: wholeVoiceoverFile.name };
+        if (wholeVoiceoverFile) {
+            return {
+                url: URL.createObjectURL(wholeVoiceoverFile),
+                isBlob: true,
+                isVideo: isVideoLikeFile(wholeVoiceoverFile),
+                label: wholeVoiceoverFile.name,
+            };
+        }
         if (!removeWholeVoiceover && existingWholePath) {
-            return { url: resolveMediaUrl(existingWholePath), isBlob: false, label: 'Naka-save na Buong Voice-Over' };
+            return {
+                url: resolveMediaUrl(existingWholePath),
+                isBlob: false,
+                isVideo: false,
+                label: 'Naka-save na Buong Voice-Over',
+            };
         }
         return null;
     }, [wholeVoiceoverFile, removeWholeVoiceover, existingWholePath]);
@@ -164,22 +203,43 @@ export default function SyncedDubbingStudio({
         };
     }, [wholeAudioObj]);
 
-    const activeSceneAudioObj = useMemo(() => {
-        if (!activeScene) return null;
-        const idx = activeScene._idx;
-        const picked = sceneAudioFiles?.[idx];
-        if (picked) return { url: URL.createObjectURL(picked), isBlob: true, label: picked.name };
-        if (!removedSceneIndices?.includes(idx) && activeScene.audio_path) {
-            return { url: resolveMediaUrl(activeScene.audio_path), isBlob: false, label: `Naka-save (Eksena ${idx + 1})` };
-        }
-        return null;
-    }, [activeScene, sceneAudioFiles, removedSceneIndices]);
+    // Build preview URLs for ALL scenes so teacher can test single scene OR all scenes before saving!
+    const sceneAudioMap = useMemo(() => {
+        const mapObj = {};
+        (timedScenes || []).forEach((sc, idx) => {
+            const picked = sceneAudioFiles?.[idx];
+            if (picked) {
+                mapObj[idx] = {
+                    url: URL.createObjectURL(picked),
+                    isBlob: true,
+                    isVideo: isVideoLikeFile(picked),
+                    label: picked.name,
+                };
+            } else if (!removedSceneIndices?.includes(idx) && sc.audio_path) {
+                mapObj[idx] = {
+                    url: resolveMediaUrl(sc.audio_path),
+                    isBlob: false,
+                    isVideo: false,
+                    label: `Naka-save (Eksena ${idx + 1})`,
+                };
+            }
+        });
+        return mapObj;
+    }, [timedScenes, sceneAudioFiles, removedSceneIndices]);
 
     useEffect(() => {
         return () => {
-            if (activeSceneAudioObj?.isBlob) URL.revokeObjectURL(activeSceneAudioObj.url);
+            Object.values(sceneAudioMap).forEach((entry) => {
+                if (entry?.isBlob && entry.url) URL.revokeObjectURL(entry.url);
+            });
         };
-    }, [activeSceneAudioObj]);
+    }, [sceneAudioMap]);
+
+    timedScenesRef.current = timedScenes;
+    sceneAudioMapRef.current = sceneAudioMap;
+
+    const activeSceneAudioObj = activeScene ? sceneAudioMap[activeScene._idx] || null : null;
+    const anyPerSceneAudioCount = Object.keys(sceneAudioMap).length;
 
     const currentTargetAudio = voiceoverMode === 'whole' ? wholeAudioObj : voiceoverMode === 'per_scene' ? activeSceneAudioObj : null;
     const targetStart = voiceoverMode === 'per_scene' && activeScene ? activeScene._start : 0;
@@ -220,8 +280,12 @@ export default function SyncedDubbingStudio({
     }, [recording]);
 
     const stopSyncedPreview = () => {
+        previewTokenRef.current += 1;
         previewRangeRef.current.active = false;
+        previewRangeRef.current.seeking = false;
+        previewRangeRef.current.activeSceneIdx = -1;
         setPreviewing(false);
+        setPreviewMode('single');
         if (previewAudioRef.current) {
             previewAudioRef.current.pause();
             previewAudioRef.current = null;
@@ -254,7 +318,7 @@ export default function SyncedDubbingStudio({
         stopSyncedPreview();
 
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-            setMicError('Hindi suportado ng browser ang mic recording. Gumamit na lang ng Mag-upload ng Audio.');
+            setMicError('Hindi suportado ng browser ang mic recording. Gumamit na lang ng Mag-upload Audio/Video.');
             return;
         }
 
@@ -362,48 +426,232 @@ export default function SyncedDubbingStudio({
         }, 850);
     };
 
-    // Preview teacher's audio layered directly on top of the 3D video at exact offset!
+    // Seek 3D video safely without triggering a premature timeupdate stop on the previous timestamp
+    const seekVideoAndRun = (video, targetSec, token, onReady) => {
+        const needsSeek = Math.abs((video.currentTime || 0) - targetSec) > 0.15;
+        if (!needsSeek) {
+            previewRangeRef.current.seeking = false;
+            if (token === previewTokenRef.current && previewRangeRef.current.active) onReady();
+            return;
+        }
+
+        previewRangeRef.current.seeking = true;
+        let done = false;
+        const finishSeek = () => {
+            if (done) return;
+            done = true;
+            previewRangeRef.current.seeking = false;
+            if (token === previewTokenRef.current && previewRangeRef.current.active) {
+                onReady();
+            }
+        };
+        video.addEventListener('seeked', finishSeek, { once: true });
+        setTimeout(finishSeek, 350);
+        try {
+            video.currentTime = targetSec;
+        } catch {
+            finishSeek();
+        }
+    };
+
+    // Sync active scene voice-over during "I-preview Lahat" full-map per-scene test
+    const syncAllScenesAtTime = (t, video, token) => {
+        const scenesList = timedScenesRef.current || [];
+        const sc = scenesList.find((item) => t >= item._start && t < item._end) || null;
+
+        if (!sc) {
+            if (previewAudioRef.current) {
+                previewAudioRef.current.pause();
+                previewAudioRef.current = null;
+            }
+            previewRangeRef.current.activeSceneIdx = -1;
+            video.muted = false;
+            return;
+        }
+
+        if (sc._idx !== previewRangeRef.current.activeSceneIdx) {
+            previewRangeRef.current.activeSceneIdx = sc._idx;
+            setSelectedSceneIdx(sc._idx);
+
+            if (previewAudioRef.current) {
+                previewAudioRef.current.pause();
+                previewAudioRef.current = null;
+            }
+
+            const entry = sceneAudioMapRef.current?.[sc._idx] || null;
+            if (!entry) {
+                // Keep 3D video's built-in voice audible for scenes without custom audio
+                video.muted = false;
+                return;
+            }
+
+            video.muted = true;
+            const el = createVoiceMediaElement(entry.url);
+            el.addEventListener(
+                'error',
+                () => {
+                    if (token === previewTokenRef.current) {
+                        setMicError(
+                            `Hindi ma-play ang audio ng Eksena ${sc._idx + 1} sa browser na ito. Subukan ang MP4, MP3, WAV, o M4A.`
+                        );
+                    }
+                },
+                { once: true }
+            );
+            previewAudioRef.current = el;
+
+            let started = false;
+            const startSceneAudio = () => {
+                if (started) return;
+                started = true;
+                if (
+                    token !== previewTokenRef.current ||
+                    !previewRangeRef.current.active ||
+                    previewAudioRef.current !== el
+                ) {
+                    return;
+                }
+                const liveT = videoRef.current?.currentTime ?? t;
+                const liveDesired = liveT - sc._start - Number(sc._offset || 0);
+                if (liveDesired < 0) return;
+                if (!el.duration || liveDesired < el.duration) {
+                    try {
+                        el.currentTime = liveDesired;
+                    } catch {
+                        // ignore
+                    }
+                    if (!video.paused) el.play().catch(() => {});
+                }
+            };
+
+            if (el.readyState >= 1) {
+                startSceneAudio();
+            } else {
+                el.addEventListener('loadedmetadata', startSceneAudio, { once: true });
+                el.addEventListener('canplay', startSceneAudio, { once: true });
+                setTimeout(startSceneAudio, 350);
+            }
+            return;
+        }
+
+        const a = previewAudioRef.current;
+        if (!a) return;
+
+        const desired = t - sc._start - Number(sc._offset || 0);
+        if (desired < 0) {
+            if (!a.paused) a.pause();
+        } else if (!a.duration || desired < a.duration) {
+            if (Math.abs((a.currentTime || 0) - desired) > 0.35) {
+                try {
+                    a.currentTime = desired;
+                } catch {
+                    // ignore
+                }
+            }
+            if (a.paused && !video.paused) {
+                a.play().catch(() => {});
+            }
+        } else if (!a.paused) {
+            a.pause();
+        }
+    };
+
+    // Preview teacher's audio/video VO layered directly on top of the 3D video at exact offset!
     const startSyncedPreview = () => {
         if (!videoRef.current || !currentTargetAudio) return;
+        setMicError('');
         if (recording) stopRecording();
         stopSyncedPreview();
 
+        const token = ++previewTokenRef.current;
         const video = videoRef.current;
-        const audio = new Audio(currentTargetAudio.url);
-        audio.preload = 'auto';
+        const audio = createVoiceMediaElement(currentTargetAudio.url);
+        audio.addEventListener(
+            'error',
+            () => {
+                if (token === previewTokenRef.current) {
+                    setMicError(
+                        'Hindi ma-play ang audio ng napiling file sa browser na ito. Subukan ang MP4, MP3, WAV, o M4A.'
+                    );
+                    stopSyncedPreview();
+                }
+            },
+            { once: true }
+        );
         previewAudioRef.current = audio;
 
         previewRangeRef.current = {
             active: true,
+            seeking: false,
             start: targetStart,
             end: targetEnd,
             offset: currentOffset,
             mode: voiceoverMode,
+            activeSceneIdx: voiceoverMode === 'per_scene' ? selectedSceneIdx : -1,
         };
-
+        setPreviewMode('single');
         video.muted = true;
-        try {
-            video.currentTime = targetStart;
-        } catch {
-            // ignore
-        }
 
         const initialAudioTime = -currentOffset;
+        let audioReadyDone = false;
         const beginPlayback = () => {
-            setPreviewing(true);
-            video.play().catch(() => {});
-            if (initialAudioTime >= 0) {
-                try {
-                    audio.currentTime = initialAudioTime;
-                } catch {
-                    // ignore
+            if (audioReadyDone) return;
+            audioReadyDone = true;
+            if (token !== previewTokenRef.current || !previewRangeRef.current.active) return;
+
+            seekVideoAndRun(video, targetStart, token, () => {
+                setPreviewing(true);
+                video.play().catch(() => {});
+                if (initialAudioTime >= 0) {
+                    try {
+                        audio.currentTime = initialAudioTime;
+                    } catch {
+                        // ignore
+                    }
+                    audio.play().catch(() => {});
                 }
-                audio.play().catch(() => {});
-            }
+            });
         };
 
-        if (audio.readyState >= 1) beginPlayback();
-        else audio.addEventListener('loadedmetadata', beginPlayback, { once: true });
+        if (audio.readyState >= 1) {
+            beginPlayback();
+        } else {
+            audio.addEventListener('loadedmetadata', beginPlayback, { once: true });
+            audio.addEventListener('canplay', beginPlayback, { once: true });
+            setTimeout(beginPlayback, 350);
+        }
+    };
+
+    // Preview ALL scenes continuously from 0:00 to end before saving!
+    const startFullMapPreview = () => {
+        if (!videoRef.current || timedScenesRef.current.length === 0) return;
+        setMicError('');
+        if (recording) stopRecording();
+        stopSyncedPreview();
+
+        const token = ++previewTokenRef.current;
+        const video = videoRef.current;
+        const fullEnd = Math.max(
+            videoDuration || 50,
+            timedScenesRef.current[timedScenesRef.current.length - 1]?._end || 50
+        );
+
+        previewRangeRef.current = {
+            active: true,
+            seeking: false,
+            start: 0,
+            end: fullEnd,
+            offset: 0,
+            mode: 'all_scenes',
+            activeSceneIdx: -1,
+        };
+        setPreviewMode('all');
+
+        seekVideoAndRun(video, 0, token, () => {
+            setPreviewing(true);
+            video.play().catch(() => {});
+            syncAllScenesAtTime(0, video, token);
+        });
     };
 
     // Video timeupdate listener: auto-stops recording/preview at end & syncs teacher audio with offset!
@@ -427,8 +675,22 @@ export default function SyncedDubbingStudio({
                 return;
             }
 
-            // Keep preview audio tightly synced using offset formula identical to Student Player
-            if (previewRangeRef.current.active && previewAudioRef.current) {
+            if (!previewRangeRef.current.active || previewRangeRef.current.seeking) {
+                return;
+            }
+
+            // Full-map per-scene test mode ("I-preview Lahat")
+            if (previewRangeRef.current.mode === 'all_scenes') {
+                if (t >= previewRangeRef.current.end - 0.08) {
+                    stopSyncedPreview();
+                    return;
+                }
+                syncAllScenesAtTime(t, video, previewTokenRef.current);
+                return;
+            }
+
+            // Single scene / whole map synced preview
+            if (previewAudioRef.current) {
                 const { start, end, offset } = previewRangeRef.current;
                 if (t >= end - 0.08) {
                     stopSyncedPreview();
@@ -455,6 +717,12 @@ export default function SyncedDubbingStudio({
             }
         };
 
+        const onPause = () => {
+            if (previewRangeRef.current.active && previewAudioRef.current && !previewAudioRef.current.paused) {
+                previewAudioRef.current.pause();
+            }
+        };
+
         const onEnded = () => {
             if (recording) stopRecording();
             if (previewRangeRef.current.active) stopSyncedPreview();
@@ -462,10 +730,12 @@ export default function SyncedDubbingStudio({
 
         video.addEventListener('loadedmetadata', onLoadedMetadata);
         video.addEventListener('timeupdate', onTimeUpdate);
+        video.addEventListener('pause', onPause);
         video.addEventListener('ended', onEnded);
         return () => {
             video.removeEventListener('loadedmetadata', onLoadedMetadata);
             video.removeEventListener('timeupdate', onTimeUpdate);
+            video.removeEventListener('pause', onPause);
             video.removeEventListener('ended', onEnded);
         };
     }, [recording, videoSrc]);
@@ -494,9 +764,14 @@ export default function SyncedDubbingStudio({
         }
     };
 
+    const activeBarStart = previewing && previewMode === 'all' ? 0 : targetStart;
+    const activeBarEnd =
+        previewing && previewMode === 'all'
+            ? Math.max(videoDuration || 50, timedScenes[timedScenes.length - 1]?._end || 50)
+            : targetEnd;
     const recordingPct = Math.min(
         100,
-        Math.max(0, ((videoTime - targetStart) / Math.max(1, targetDuration)) * 100)
+        Math.max(0, ((videoTime - activeBarStart) / Math.max(1, activeBarEnd - activeBarStart)) * 100)
     );
 
     const activeTeleprompterIdx = timedScenes.findIndex((s) => videoTime >= s._start && videoTime < s._end);
@@ -606,10 +881,11 @@ export default function SyncedDubbingStudio({
                                 <span>{storyVideoFile ? storyVideoFile.name : 'Palitan MP4'}</span>
                                 <input
                                     type="file"
-                                    accept="video/mp4,video/webm"
+                                    accept="video/*,.mp4,.mov,.webm"
                                     className="hidden"
                                     onChange={(e) => {
                                         const f = e.target.files?.[0];
+                                        e.target.value = '';
                                         if (f) onStoryVideoSelect(f);
                                     }}
                                 />
@@ -668,7 +944,17 @@ export default function SyncedDubbingStudio({
                         {previewing && !recording && (
                             <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#C2410C] text-white text-xs font-bold">
                                 <Volume2 className="w-3.5 h-3.5" />
-                                <span>Preview: Boses ng Guro (Offset {currentOffset >= 0 ? `+${currentOffset}` : currentOffset}s)</span>
+                                <span>
+                                    {previewMode === 'all'
+                                        ? `Preview Lahat — Eksena ${selectedSceneIdx + 1} (${
+                                              activeSceneAudioObj ? 'Boses ng Guro' : 'Default ng Video'
+                                          })`
+                                        : `Preview: ${
+                                              voiceoverMode === 'per_scene'
+                                                  ? `Eksena ${selectedSceneIdx + 1}`
+                                                  : 'Buong Mapa'
+                                          } (Offset ${currentOffset >= 0 ? `+${currentOffset}` : currentOffset}s)`}
+                                </span>
                             </div>
                         )}
 
@@ -707,9 +993,9 @@ export default function SyncedDubbingStudio({
                                 />
                             </div>
                             <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                                <span>Simula: {formatClock(targetStart)}</span>
+                                <span>Simula: {formatClock(activeBarStart)}</span>
                                 <span>Kasalukuyan: {formatClock(videoTime)}</span>
-                                <span>Dulo: {formatClock(targetEnd)}</span>
+                                <span>Dulo: {formatClock(activeBarEnd)}</span>
                             </div>
                         </div>
                     )}
@@ -747,14 +1033,18 @@ export default function SyncedDubbingStudio({
                                 {currentTargetAudio && videoSrc && !recording && countdown === 0 && (
                                     <button
                                         type="button"
-                                        onClick={previewing ? stopSyncedPreview : startSyncedPreview}
+                                        onClick={
+                                            previewing && previewMode === 'single'
+                                                ? stopSyncedPreview
+                                                : startSyncedPreview
+                                        }
                                         className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                                            previewing
+                                            previewing && previewMode === 'single'
                                                 ? 'bg-slate-900 text-white border-slate-900'
                                                 : 'bg-white text-[#1E293B] border-[#E5E7EB] hover:border-slate-400'
                                         }`}
                                     >
-                                        {previewing ? (
+                                        {previewing && previewMode === 'single' ? (
                                             <>
                                                 <Square className="w-3 h-3 fill-current" />
                                                 <span>Ihinto Preview</span>
@@ -762,27 +1052,66 @@ export default function SyncedDubbingStudio({
                                         ) : (
                                             <>
                                                 <Play className="w-3.5 h-3.5 fill-current text-[#C2410C]" />
-                                                <span>I-preview kasabay ng Video</span>
+                                                <span>
+                                                    {voiceoverMode === 'per_scene'
+                                                        ? `I-preview Eksena ${selectedSceneIdx + 1}`
+                                                        : 'I-preview kasabay ng Video'}
+                                                </span>
                                             </>
                                         )}
                                     </button>
                                 )}
 
+                                {voiceoverMode === 'per_scene' &&
+                                    anyPerSceneAudioCount > 0 &&
+                                    videoSrc &&
+                                    !recording &&
+                                    countdown === 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={
+                                                previewing && previewMode === 'all'
+                                                    ? stopSyncedPreview
+                                                    : startFullMapPreview
+                                            }
+                                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                                                previewing && previewMode === 'all'
+                                                    ? 'bg-slate-900 text-white border-slate-900'
+                                                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                                            }`}
+                                        >
+                                            {previewing && previewMode === 'all' ? (
+                                                <>
+                                                    <Square className="w-3 h-3 fill-current" />
+                                                    <span>Ihinto Preview Lahat</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Play className="w-3.5 h-3.5 fill-current text-emerald-700" />
+                                                    <span>
+                                                        I-preview Lahat ({anyPerSceneAudioCount}/{timedScenes.length})
+                                                    </span>
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+
                                 <label className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-[#E5E7EB] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer">
                                     <Upload className="w-3.5 h-3.5" />
                                     <span>
                                         {voiceoverMode === 'per_scene'
-                                            ? `Mag-upload (Eksena ${selectedSceneIdx + 1})`
-                                            : 'Mag-upload Audio'}
+                                            ? `Mag-upload Audio/Video (Eksena ${selectedSceneIdx + 1})`
+                                            : 'Mag-upload Audio/Video'}
                                     </span>
                                     <input
                                         type="file"
-                                        accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm,.aac"
+                                        accept="audio/*,video/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.mp4,.mov,.mkv,.3gp"
                                         className="hidden"
                                         onChange={(e) => {
                                             const f = e.target.files?.[0];
                                             e.target.value = '';
                                             if (!f) return;
+                                            stopSyncedPreview();
                                             setMicError('');
                                             if (voiceoverMode === 'whole') onWholeFileSelectRef.current?.(f);
                                             else onSceneAudioSelectRef.current?.(selectedSceneIdx, f);
@@ -809,11 +1138,27 @@ export default function SyncedDubbingStudio({
                             {micError && <p className="text-[11px] text-rose-600 font-medium">{micError}</p>}
 
                             {currentTargetAudio && (
-                                <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-[11px] font-semibold text-emerald-700 truncate max-w-[200px]">
-                                        {currentTargetAudio.label}
-                                    </span>
-                                    <audio controls src={currentTargetAudio.url} className="h-8 flex-1 min-w-[180px]" />
+                                <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 space-y-1.5">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className="text-[11px] font-semibold text-emerald-700 truncate max-w-[240px]">
+                                            {currentTargetAudio.label}
+                                        </span>
+                                        <audio
+                                            key={currentTargetAudio.url}
+                                            controls
+                                            src={currentTargetAudio.url}
+                                            className="h-8 flex-1 min-w-[180px]"
+                                        />
+                                    </div>
+                                    {currentTargetAudio.isVideo && (
+                                        <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                            <Volume2 className="w-3.5 h-3.5 text-[#C2410C] shrink-0" />
+                                            <span>
+                                                Video file ang na-upload — awtomatikong boses/audio lang nito ang
+                                                tutugtog kasabay ng 3D story video.
+                                            </span>
+                                        </p>
+                                    )}
                                 </div>
                             )}
                         </div>

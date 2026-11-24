@@ -45,8 +45,8 @@ class MediaStorageService
     }
 
     /**
-     * Store teacher-uploaded feedback/prompt/BGM audio locally (default) or upload to Cloudinary
-     * (Cloudinary serves audio under the `video` resource type).
+     * Store teacher-uploaded feedback/prompt/VO audio (or extract audio track from uploaded
+     * video files like .mp4/.mov/.webm) locally or upload to Cloudinary as clean universal MP3.
      */
     public function storeAudio(UploadedFile $file, ?string $existingPath = null): string
     {
@@ -55,10 +55,46 @@ class MediaStorageService
         }
 
         if ($this->usesCloudinary()) {
-            return $this->uploadFileToCloudinary($file->getRealPath(), $file->getClientOriginalName(), 'video', 'juanquest/audio');
+            try {
+                $uploadedUrl = $this->uploadFileToCloudinary(
+                    $file->getRealPath(),
+                    $file->getClientOriginalName(),
+                    'video',
+                    'juanquest/audio',
+                    ['format' => 'mp3']
+                );
+
+                return $this->toCloudinaryMp3Url($uploadedUrl);
+            } catch (RuntimeException $e) {
+                Log::warning('Cloudinary direct MP3 transcoding fell back to on-the-fly MP3 delivery.', [
+                    'file' => $file->getClientOriginalName(),
+                    'error' => $e->getMessage(),
+                ]);
+
+                $rawUrl = $this->uploadFileToCloudinary(
+                    $file->getRealPath(),
+                    $file->getClientOriginalName(),
+                    'video',
+                    'juanquest/audio'
+                );
+
+                return $this->toCloudinaryMp3Url($rawUrl);
+            }
         }
 
         return $file->store('audio', 'public');
+    }
+
+    /**
+     * Rewrite a Cloudinary video/audio delivery URL to serve an on-the-fly extracted MP3 audio stream.
+     */
+    private function toCloudinaryMp3Url(string $url): string
+    {
+        if (! str_contains($url, '/video/upload/')) {
+            return $url;
+        }
+
+        return (string) preg_replace('/\.[^.?\/]+(\?.*)?$/', '.mp3$1', $url);
     }
 
     /**
@@ -194,7 +230,13 @@ class MediaStorageService
         }
     }
 
-    private function uploadFileToCloudinary(string $absolutePath, string $filename, string $resourceType, string $folder): string
+    private function uploadFileToCloudinary(
+        string $absolutePath,
+        string $filename,
+        string $resourceType,
+        string $folder,
+        array $extraParams = []
+    ): string
     {
         $cloudName = (string) config('services.cloudinary.cloud_name', '');
         $uploadPreset = (string) config('services.cloudinary.upload_preset', '');
@@ -203,8 +245,9 @@ class MediaStorageService
 
         $params = ['folder' => $folder];
 
-        // Prefer signed API uploads when API key & secret are configured (supports auto-delete & secure presets)
+        // Prefer signed API uploads when API key & secret are configured (supports auto-delete, mp3 transcoding & secure presets)
         if ($apiKey !== '' && $apiSecret !== '') {
+            $params = array_merge($params, $extraParams);
             $timestamp = (string) time();
             $params['timestamp'] = $timestamp;
             ksort($params);
