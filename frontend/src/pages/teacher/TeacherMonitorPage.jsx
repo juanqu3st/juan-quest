@@ -717,12 +717,12 @@ export default function TeacherMonitorPage() {
                     : 'Subaybayan nang live ang kasalukuyang mapa, puso, at puntos (/50) ng mga aktibong pangkat o mag-aaral.'
             }
             toolbarRight={
-                <div className="w-full sm:w-auto flex flex-wrap items-center gap-2">
+                <div className="w-full sm:w-auto flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
                     {visibleSessions.length > 0 && (
                         <select
                             value={selectedId || ''}
                             onChange={(e) => setSelectedId(Number(e.target.value))}
-                            className="flex-1 sm:flex-initial min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:border-slate-400"
+                            className="w-full sm:w-auto sm:max-w-[280px] h-10 sm:h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:border-slate-400"
                         >
                             {visibleSessions.map((s) => (
                                 <option key={s.id} value={s.id}>
@@ -734,18 +734,46 @@ export default function TeacherMonitorPage() {
                     )}
 
                     {selectedId && monitor && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setScannerError('');
-                                setManualConfirmPayload(null);
-                                setScannerOpen(true);
-                            }}
-                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#C2410C] text-white text-xs font-semibold hover:bg-[#9A3412] transition cursor-pointer shrink-0"
+                        <div
+                            className={`grid ${
+                                rows.length > 0 ? 'grid-cols-3' : 'grid-cols-2'
+                            } sm:flex sm:items-center gap-1.5 sm:gap-2`}
                         >
-                            <QrCode className="w-3.5 h-3.5" />
-                            <span>I-scan Result QR</span>
-                        </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setScannerError('');
+                                    setManualConfirmPayload(null);
+                                    setScannerOpen(true);
+                                }}
+                                className="h-10 sm:h-9 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 rounded-lg bg-[#C2410C] text-white text-[11px] sm:text-xs font-semibold hover:bg-[#9A3412] transition cursor-pointer shrink-0"
+                            >
+                                <QrCode className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate sm:hidden">I-scan QR</span>
+                                <span className="hidden sm:inline">I-scan Result QR</span>
+                            </button>
+
+                            {rows.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setPodiumOpen(true)}
+                                    className="h-10 sm:h-9 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] sm:text-xs font-bold transition cursor-pointer shrink-0"
+                                >
+                                    <Trophy className="w-3.5 h-3.5 text-[#C2410C] shrink-0" />
+                                    <span className="truncate sm:hidden">Podium</span>
+                                    <span className="hidden sm:inline">Top 3 Podium</span>
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleExport}
+                                className="h-10 sm:h-9 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 rounded-lg bg-slate-900 text-white text-[11px] sm:text-xs font-semibold hover:bg-slate-800 transition cursor-pointer shrink-0"
+                            >
+                                <Download className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">Export CSV</span>
+                            </button>
+                        </div>
                     )}
 
                     {selectedId && pendingQueue.length > 0 && (
@@ -753,32 +781,10 @@ export default function TeacherMonitorPage() {
                             type="button"
                             disabled={syncingQueue}
                             onClick={handleSyncPendingQueue}
-                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-60 transition cursor-pointer shrink-0"
+                            className="w-full sm:w-auto h-10 sm:h-9 inline-flex items-center justify-center gap-1.5 px-3 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-60 transition cursor-pointer shrink-0"
                         >
-                            <CloudUpload className="w-3.5 h-3.5" />
+                            <CloudUpload className="w-3.5 h-3.5 shrink-0" />
                             <span>{syncingQueue ? 'Sini-sync...' : `I-sync (${pendingQueue.length})`}</span>
-                        </button>
-                    )}
-
-                    {selectedId && monitor && rows.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setPodiumOpen(true)}
-                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition cursor-pointer shrink-0"
-                        >
-                            <Trophy className="w-3.5 h-3.5 text-[#C2410C]" />
-                            <span>Top 3 Podium</span>
-                        </button>
-                    )}
-
-                    {selectedId && monitor && (
-                        <button
-                            type="button"
-                            onClick={handleExport}
-                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer shrink-0"
-                        >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Export CSV</span>
                         </button>
                     )}
                 </div>
@@ -786,17 +792,17 @@ export default function TeacherMonitorPage() {
         >
             {/* Clean 2-Tab Switcher: Live Monitor (Active/Waiting) vs Mga Record (Finished) */}
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200/80">
+                <div className="w-full sm:w-auto grid grid-cols-2 sm:inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200/80">
                     <button
                         type="button"
                         onClick={() => handleSwitchTab('live')}
-                        className={`h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                        className={`h-9 sm:h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer ${
                             viewTab === 'live'
                                 ? 'bg-white text-slate-900 shadow-xs'
                                 : 'text-slate-500 hover:text-slate-800'
                         }`}
                     >
-                        <Activity className={`w-3.5 h-3.5 ${viewTab === 'live' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                        <Activity className={`w-3.5 h-3.5 shrink-0 ${viewTab === 'live' ? 'text-emerald-600' : 'text-slate-400'}`} />
                         <span>Live Monitor</span>
                         <span
                             className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${
@@ -811,13 +817,13 @@ export default function TeacherMonitorPage() {
                     <button
                         type="button"
                         onClick={() => handleSwitchTab('records')}
-                        className={`h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                        className={`h-9 sm:h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer ${
                             viewTab === 'records'
                                 ? 'bg-white text-slate-900 shadow-xs'
                                 : 'text-slate-500 hover:text-slate-800'
                         }`}
                     >
-                        <Archive className={`w-3.5 h-3.5 ${viewTab === 'records' ? 'text-[#C2410C]' : 'text-slate-400'}`} />
+                        <Archive className={`w-3.5 h-3.5 shrink-0 ${viewTab === 'records' ? 'text-[#C2410C]' : 'text-slate-400'}`} />
                         <span>Mga Record</span>
                         <span
                             className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${

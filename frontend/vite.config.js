@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const APP_VERSION = '1.3.4';
+const APP_VERSION = '1.3.5';
 const APP_BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
 
 function emitVersionJsonPlugin(version, buildId) {
