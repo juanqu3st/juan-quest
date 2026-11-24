@@ -109,6 +109,7 @@ export default function SyncedDubbingStudio({
     onRemoveScene,
 }) {
     const videoRef = useRef(null);
+    const voFileInputRef = useRef(null);
     const previewAudioRef = useRef(null);
     const mediaRecorderRef = useRef(null);
     const streamRef = useRef(null);
@@ -909,6 +910,12 @@ export default function SyncedDubbingStudio({
     const activeTeleprompterIdx = timedScenes.findIndex((s) => videoTime >= s._start && videoTime < s._end);
     const liveStudioCues = useMemo(() => buildTimedCues(timedScenes), [timedScenes]);
     const activeStudioCue = liveStudioCues.find((c) => videoTime >= c.start && videoTime <= c.end) || null;
+    const hasCurrentAudio = Boolean(currentTargetAudio);
+    const hasSavedAudioOnCurrentScene =
+        voiceoverMode === 'per_scene' &&
+        Boolean(activeScene?.audio_path) &&
+        !removedSceneIndices.includes(selectedSceneIdx) &&
+        !sceneAudioFiles?.[selectedSceneIdx];
     const isCurrentSceneDirty =
         voiceoverMode === 'per_scene' &&
         (dirtySceneIndices.includes(selectedSceneIdx) ||
@@ -918,13 +925,13 @@ export default function SyncedDubbingStudio({
 
     return (
         <div className="space-y-3.5">
-            {/* Compact Voice-Over Mode Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Compact Voice-Over Mode Bar (Full-width iOS-style segmented control on mobile) */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div className="flex items-center gap-2">
-                    <Mic className="w-4 h-4 text-[#C2410C]" />
+                    <Mic className="w-4 h-4 text-[#C2410C] shrink-0" />
                     <h4 className="text-xs font-bold text-[#1E293B]">Voice-Over Mode</h4>
                 </div>
-                <div className="inline-flex rounded-lg bg-[#F3F4F6] p-0.5 border border-[#E5E7EB]">
+                <div className="grid grid-cols-3 sm:inline-flex rounded-xl bg-[#F3F4F6] p-1 border border-[#E5E7EB] w-full sm:w-auto">
                     {[
                         { id: 'default', label: 'Default' },
                         { id: 'whole', label: 'Whole' },
@@ -938,9 +945,9 @@ export default function SyncedDubbingStudio({
                                 if (recording) stopRecording();
                                 onModeChange(opt.id);
                             }}
-                            className={`px-3 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                            className={`h-8 sm:h-7 px-3 rounded-lg text-xs sm:text-[11px] font-semibold transition cursor-pointer ${
                                 voiceoverMode === opt.id
-                                    ? 'bg-white text-[#1E293B] shadow-2xs'
+                                    ? 'bg-white text-[#1E293B] shadow-xs'
                                     : 'text-slate-600 hover:text-[#1E293B]'
                             }`}
                         >
@@ -950,48 +957,78 @@ export default function SyncedDubbingStudio({
                 </div>
             </div>
 
-            {/* Per-Scene Selector Strip + Compact 3-Dot Legend */}
+            {/* Symmetric Per-Scene Selector Strip + Clean 3-Dot Legend */}
             {voiceoverMode === 'per_scene' && timedScenes.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                    {timedScenes.map((sc, i) => {
-                        const hasPending = Boolean(sceneAudioFiles?.[i]) || dirtySceneIndices.includes(i);
-                        const hasSaved = !removedSceneIndices?.includes(i) && Boolean(sc.audio_path);
-                        const isSel = i === selectedSceneIdx;
-                        return (
-                            <button
-                                key={i}
-                                type="button"
-                                onClick={() => {
-                                    stopSyncedPreview();
-                                    if (recording) stopRecording();
-                                    setSelectedSceneIdx(i);
-                                    jumpVideoTo(sc._start);
-                                }}
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                                    isSel
-                                        ? 'bg-[#1E293B] text-white border-[#1E293B] shadow-2xs'
-                                        : 'bg-white text-slate-700 border-[#E5E7EB] hover:border-slate-400'
-                                }`}
-                            >
-                                <span
-                                    className={`w-2 h-2 rounded-full ${
-                                        hasPending
-                                            ? 'bg-amber-400'
-                                            : hasSaved
-                                              ? 'bg-emerald-500'
-                                              : isSel
-                                                ? 'bg-slate-400'
-                                                : 'bg-slate-300'
+                <div className="space-y-2">
+                    <div
+                        className={
+                            timedScenes.length <= 3
+                                ? 'grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center'
+                                : 'flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5 sm:flex-wrap'
+                        }
+                    >
+                        {timedScenes.map((sc, i) => {
+                            const hasPending = Boolean(sceneAudioFiles?.[i]) || dirtySceneIndices.includes(i);
+                            const hasSaved = !removedSceneIndices?.includes(i) && Boolean(sc.audio_path);
+                            const isSel = i === selectedSceneIdx;
+                            return (
+                                <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => {
+                                        stopSyncedPreview();
+                                        if (recording) stopRecording();
+                                        setSelectedSceneIdx(i);
+                                        jumpVideoTo(sc._start);
+                                    }}
+                                    className={`shrink-0 flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-0.5 sm:gap-1.5 px-2.5 sm:px-3 py-2 sm:py-1.5 rounded-xl sm:rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                                        isSel
+                                            ? 'bg-[#1E293B] text-white border-[#1E293B] shadow-2xs'
+                                            : 'bg-white text-slate-700 border-[#E5E7EB] hover:border-slate-400'
                                     }`}
-                                />
-                                <span>Eksena {i + 1}</span>
-                                <span className={`text-[10px] font-mono ${isSel ? 'text-slate-300' : 'text-slate-400'}`}>
-                                    {formatClock(sc._start)}–{formatClock(sc._end)}
-                                </span>
-                            </button>
-                        );
-                    })}
-                    <div className="inline-flex items-center gap-3 text-[11px] text-slate-500 ml-auto">
+                                >
+                                    <span className="inline-flex items-center gap-1.5">
+                                        <span
+                                            className={`w-2 h-2 rounded-full shrink-0 ${
+                                                hasPending
+                                                    ? 'bg-amber-400'
+                                                    : hasSaved
+                                                      ? 'bg-emerald-500'
+                                                      : isSel
+                                                        ? 'bg-slate-400'
+                                                        : 'bg-slate-300'
+                                            }`}
+                                        />
+                                        <span>Eksena {i + 1}</span>
+                                    </span>
+                                    <span
+                                        className={`text-[10px] font-mono leading-tight ${
+                                            isSel ? 'text-slate-300' : 'text-slate-400'
+                                        }`}
+                                    >
+                                        {formatClock(sc._start)}–{formatClock(sc._end)}
+                                    </span>
+                                </button>
+                            );
+                        })}
+
+                        <div className="hidden sm:inline-flex items-center gap-3 text-[11px] text-slate-500 ml-auto">
+                            <span className="inline-flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                Naka-save
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                                Di pa na-save
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-slate-300" />
+                                Default
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex sm:hidden items-center justify-center gap-4 text-[10px] text-slate-500">
                         <span className="inline-flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500" />
                             Naka-save
@@ -1010,23 +1047,23 @@ export default function SyncedDubbingStudio({
 
             {/* Main 2-Column Synced Dubbing Deck */}
             <div className="grid lg:grid-cols-12 gap-4 items-start">
-                {/* LEFT COLUMN: 3D Video Monitor + Clean 2-Row Controls */}
-                <div className="lg:col-span-7 rounded-xl border border-[#E5E7EB] bg-[#FAFAFA] p-3.5 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-[11px] font-bold text-slate-700 inline-flex items-center gap-1.5">
-                            <Video className="w-3.5 h-3.5 text-[#C2410C]" />
-                            <span>3D Story Video</span>
+                {/* LEFT COLUMN: 3D Video Monitor + Balanced Edge-to-Edge Studio Controls */}
+                <div className="lg:col-span-7 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-3 sm:p-3.5 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-slate-700 inline-flex items-center gap-1.5 min-w-0">
+                            <Video className="w-3.5 h-3.5 text-[#C2410C] shrink-0" />
+                            <span className="truncate">3D Story Video</span>
                             {videoSrc && (
-                                <span className="font-mono text-slate-400 font-normal">
-                                    ({formatClock(videoTime)} / {formatClock(videoDuration)})
+                                <span className="font-mono text-slate-400 font-normal shrink-0">
+                                    ({formatClock(videoTime)}/{formatClock(videoDuration)})
                                 </span>
                             )}
                         </span>
-                        <div className="flex items-center gap-2">
-                            <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[#E5E7EB] bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 cursor-pointer">
+                        <div className="flex items-center gap-2 shrink-0">
+                            <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[#E5E7EB] bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 cursor-pointer">
                                 <Upload className="w-3 h-3" />
-                                <span className="truncate max-w-[140px]">
-                                    {storyVideoFile ? storyVideoFile.name : 'Palitan Video'}
+                                <span className="truncate max-w-[96px] sm:max-w-[140px]">
+                                    {storyVideoFile ? storyVideoFile.name : 'Palitan'}
                                 </span>
                                 <input
                                     type="file"
@@ -1052,7 +1089,7 @@ export default function SyncedDubbingStudio({
                     </div>
 
                     {/* Video Viewport + Live Status Overlays */}
-                    <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-slate-950 border border-[#E5E7EB]">
+                    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-950 border border-[#E5E7EB]">
                         {videoSrc ? (
                             <video
                                 ref={videoRef}
@@ -1081,7 +1118,7 @@ export default function SyncedDubbingStudio({
 
                         {/* Live Recording Pill */}
                         {recording && (
-                            <div className="absolute top-3 left-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-600 text-white text-xs font-bold">
+                            <div className="absolute top-2.5 left-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-600 text-white text-[11px] sm:text-xs font-bold">
                                 <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                                 <span className="tabular-nums">
                                     REC {formatClock(recordSeconds)} / {formatClock(targetDuration)}
@@ -1091,9 +1128,9 @@ export default function SyncedDubbingStudio({
 
                         {/* Live Synced Preview Pill */}
                         {previewing && !recording && (
-                            <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#C2410C] text-white text-xs font-bold">
-                                <Volume2 className="w-3.5 h-3.5" />
-                                <span>
+                            <div className="absolute top-2 left-2 sm:top-3 sm:left-3 inline-flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full bg-[#C2410C]/95 text-white text-[10px] sm:text-xs font-bold max-w-[90%] truncate">
+                                <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                                <span className="truncate">
                                     {previewMode === 'all'
                                         ? `Preview Whole — Eksena ${selectedSceneIdx + 1} (${
                                               activeSceneAudioObj ? 'Boses ng Guro' : 'Default'
@@ -1102,17 +1139,17 @@ export default function SyncedDubbingStudio({
                                               voiceoverMode === 'per_scene'
                                                   ? `Eksena ${selectedSceneIdx + 1}`
                                                   : 'Whole'
-                                          } (Offset ${currentOffset >= 0 ? `+${currentOffset}` : currentOffset}s)`}
+                                          } (${currentOffset >= 0 ? `+${currentOffset}` : currentOffset}s)`}
                                 </span>
                             </div>
                         )}
 
-                        {/* Live In-Video Subtitle Preview (clean pure-white text positioned cleanly above video controls) */}
+                        {/* Live In-Video Subtitle Preview (responsive clearance above controls without blocking center) */}
                         {videoSrc && countdown === 0 && activeStudioCue && (
-                            <div className="pointer-events-none absolute inset-x-4 bottom-14 z-10 flex justify-center">
-                                <div className="max-w-[92%] text-center">
+                            <div className="pointer-events-none absolute inset-x-3 sm:inset-x-4 bottom-8 sm:bottom-14 z-10 flex justify-center">
+                                <div className="max-w-[94%] text-center">
                                     <p
-                                        className="text-xs sm:text-sm font-bold text-white leading-snug"
+                                        className="text-[11px] sm:text-sm font-bold text-white leading-snug"
                                         style={{
                                             textShadow:
                                                 '0 1px 3px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.75), 0 0 1px rgba(0,0,0,0.9)',
@@ -1149,100 +1186,47 @@ export default function SyncedDubbingStudio({
                         </div>
                     )}
 
-                    {/* Clean 2-Row Studio Controls Deck (Record/Upload/Save + Aligned Preview Pair) */}
+                    {/* Balanced Edge-to-Edge Studio Control Deck (Mobile-First 2-Col Grid + Native Disabled Locks) */}
                     {voiceoverMode !== 'default' && (
                         <div className="space-y-2.5 pt-2 border-t border-[#E5E7EB]">
-                            {/* ROW 1: Input Actions (Record + Upload) & Per-Scene Save */}
-                            <div className="flex flex-wrap items-center gap-2">
-                                {!recording && countdown === 0 ? (
-                                    <button
-                                        type="button"
-                                        onClick={startSyncedRecording}
-                                        className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition cursor-pointer"
-                                    >
-                                        <Mic className="w-3.5 h-3.5 text-orange-400" />
-                                        <span>
-                                            {voiceoverMode === 'per_scene'
-                                                ? `I-record Eksena ${selectedSceneIdx + 1}`
-                                                : 'I-record Whole'}
-                                        </span>
-                                    </button>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        onClick={stopRecording}
-                                        className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition cursor-pointer"
-                                    >
-                                        <Square className="w-3.5 h-3.5 fill-current" />
-                                        <span>Ihinto ({formatClock(recordSeconds)})</span>
-                                    </button>
-                                )}
+                            {/* Hidden native file input controlled by disabled-aware button */}
+                            <input
+                                ref={voFileInputRef}
+                                type="file"
+                                disabled={hasCurrentAudio || recording || countdown > 0}
+                                accept="audio/*,video/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.mp4,.mov,.mkv,.3gp"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (!f || hasCurrentAudio) return;
+                                    stopSyncedPreview();
+                                    setMicError('');
+                                    if (voiceoverMode === 'whole') onWholeFileSelectRef.current?.(f);
+                                    else onSceneAudioSelectRef.current?.(selectedSceneIdx, f);
+                                }}
+                            />
 
-                                <label className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[#E5E7EB] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer transition">
-                                    <Upload className="w-3.5 h-3.5 text-slate-500" />
-                                    <span>Mag-upload Audio/Video</span>
-                                    <input
-                                        type="file"
-                                        accept="audio/*,video/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.mp4,.mov,.mkv,.3gp"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                            const f = e.target.files?.[0];
-                                            e.target.value = '';
-                                            if (!f) return;
-                                            stopSyncedPreview();
-                                            setMicError('');
-                                            if (voiceoverMode === 'whole') onWholeFileSelectRef.current?.(f);
-                                            else onSceneAudioSelectRef.current?.(selectedSceneIdx, f);
-                                        }}
-                                    />
-                                </label>
-
-                                {voiceoverMode === 'per_scene' && onSaveScene && (
-                                    <button
-                                        type="button"
-                                        disabled={isSavingCurrentScene || recording || countdown > 0}
-                                        onClick={() => {
-                                            stopSyncedPreview();
-                                            onSaveScene(selectedSceneIdx);
-                                        }}
-                                        className={`h-9 sm:ml-auto inline-flex items-center gap-1.5 px-3.5 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-60 ${
-                                            isCurrentSceneDirty
-                                                ? 'bg-[#C2410C] hover:bg-[#9A3412] text-white shadow-xs'
-                                                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                        }`}
-                                    >
-                                        {isCurrentSceneDirty || isSavingCurrentScene ? (
-                                            <Save className="w-3.5 h-3.5" />
-                                        ) : (
-                                            <Check className="w-3.5 h-3.5" />
-                                        )}
-                                        <span>
-                                            {isSavingCurrentScene
-                                                ? `Sine-save Eksena ${selectedSceneIdx + 1}...`
-                                                : isCurrentSceneDirty
-                                                  ? `I-save Eksena ${selectedSceneIdx + 1}`
-                                                  : `Na-save Eksena ${selectedSceneIdx + 1}`}
-                                        </span>
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* ROW 2: Aligned Preview Pair (I-preview Eksena X + I-preview Whole) + Alisin Audio */}
+                            {/* ROW 1: Symmetric Preview Pair (I-preview Eksena X | I-preview Whole) */}
                             {videoSrc && !recording && countdown === 0 && (
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div
+                                    className={
+                                        voiceoverMode === 'per_scene' ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-1'
+                                    }
+                                >
                                     {voiceoverMode === 'per_scene' ? (
-                                        <div className="inline-flex flex-wrap items-center gap-2">
+                                        <>
                                             <button
                                                 type="button"
-                                                disabled={!currentTargetAudio}
+                                                disabled={!hasCurrentAudio}
                                                 onClick={
                                                     previewing && previewMode === 'single'
                                                         ? stopSyncedPreview
                                                         : startSyncedPreview
                                                 }
-                                                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg border text-xs font-semibold transition ${
-                                                    !currentTargetAudio
-                                                        ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed'
+                                                className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
+                                                    !hasCurrentAudio
+                                                        ? 'bg-slate-100/80 text-slate-400 border-slate-200 cursor-not-allowed'
                                                         : previewing && previewMode === 'single'
                                                           ? 'bg-slate-900 text-white border-slate-900 cursor-pointer'
                                                           : 'bg-white text-[#1E293B] border-[#E5E7EB] hover:border-slate-400 cursor-pointer'
@@ -1250,13 +1234,17 @@ export default function SyncedDubbingStudio({
                                             >
                                                 {previewing && previewMode === 'single' ? (
                                                     <>
-                                                        <Square className="w-3 h-3 fill-current" />
-                                                        <span>Ihinto Eksena {selectedSceneIdx + 1}</span>
+                                                        <Square className="w-3 h-3 fill-current shrink-0" />
+                                                        <span className="truncate">Ihinto Eksena {selectedSceneIdx + 1}</span>
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <Play className="w-3.5 h-3.5 fill-current text-[#C2410C]" />
-                                                        <span>I-preview Eksena {selectedSceneIdx + 1}</span>
+                                                        <Play
+                                                            className={`w-3.5 h-3.5 fill-current shrink-0 ${
+                                                                hasCurrentAudio ? 'text-[#C2410C]' : 'text-slate-300'
+                                                            }`}
+                                                        />
+                                                        <span className="truncate">I-preview Eksena {selectedSceneIdx + 1}</span>
                                                     </>
                                                 )}
                                             </button>
@@ -1268,7 +1256,7 @@ export default function SyncedDubbingStudio({
                                                         ? stopSyncedPreview
                                                         : startFullMapPreview
                                                 }
-                                                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                                                className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
                                                     previewing && previewMode === 'all'
                                                         ? 'bg-slate-900 text-white border-slate-900'
                                                         : 'bg-white text-[#1E293B] border-[#E5E7EB] hover:border-slate-400'
@@ -1276,72 +1264,131 @@ export default function SyncedDubbingStudio({
                                             >
                                                 {previewing && previewMode === 'all' ? (
                                                     <>
-                                                        <Square className="w-3 h-3 fill-current" />
-                                                        <span>Ihinto Whole</span>
+                                                        <Square className="w-3 h-3 fill-current shrink-0" />
+                                                        <span className="truncate">Ihinto Whole</span>
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <Play className="w-3.5 h-3.5 fill-current text-emerald-600" />
-                                                        <span>I-preview Whole</span>
+                                                        <Play className="w-3.5 h-3.5 fill-current text-emerald-600 shrink-0" />
+                                                        <span className="truncate">I-preview Whole</span>
                                                     </>
                                                 )}
                                             </button>
-                                        </div>
+                                        </>
                                     ) : (
-                                        currentTargetAudio && (
-                                            <button
-                                                type="button"
-                                                onClick={
-                                                    previewing && previewMode === 'single'
-                                                        ? stopSyncedPreview
-                                                        : startSyncedPreview
-                                                }
-                                                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                                                    previewing && previewMode === 'single'
-                                                        ? 'bg-slate-900 text-white border-slate-900'
-                                                        : 'bg-white text-[#1E293B] border-[#E5E7EB] hover:border-slate-400'
-                                                }`}
-                                            >
-                                                {previewing && previewMode === 'single' ? (
-                                                    <>
-                                                        <Square className="w-3 h-3 fill-current" />
-                                                        <span>Ihinto Whole</span>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Play className="w-3.5 h-3.5 fill-current text-[#C2410C]" />
-                                                        <span>I-preview Whole</span>
-                                                    </>
-                                                )}
-                                            </button>
-                                        )
-                                    )}
-
-                                    {currentTargetAudio && (
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                stopSyncedPreview();
-                                                if (voiceoverMode === 'whole') onWholeRemove();
-                                                else onSceneAudioRemove(selectedSceneIdx);
-                                            }}
-                                            className="h-9 ml-auto inline-flex items-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                                            disabled={!hasCurrentAudio}
+                                            onClick={
+                                                previewing && previewMode === 'single'
+                                                    ? stopSyncedPreview
+                                                    : startSyncedPreview
+                                            }
+                                            className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
+                                                !hasCurrentAudio
+                                                    ? 'bg-slate-100/80 text-slate-400 border-slate-200 cursor-not-allowed'
+                                                    : previewing && previewMode === 'single'
+                                                      ? 'bg-slate-900 text-white border-slate-900 cursor-pointer'
+                                                      : 'bg-white text-[#1E293B] border-[#E5E7EB] hover:border-slate-400 cursor-pointer'
+                                            }`}
                                         >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                            <span>Alisin Audio</span>
+                                            {previewing && previewMode === 'single' ? (
+                                                <>
+                                                    <Square className="w-3 h-3 fill-current shrink-0" />
+                                                    <span>Ihinto Whole</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Play
+                                                        className={`w-3.5 h-3.5 fill-current shrink-0 ${
+                                                            hasCurrentAudio ? 'text-[#C2410C]' : 'text-slate-300'
+                                                        }`}
+                                                    />
+                                                    <span>I-preview Whole</span>
+                                                </>
+                                            )}
                                         </button>
                                     )}
                                 </div>
                             )}
 
+                            {/* ROW 2: Symmetric Input Pair (I-record | Mag-upload) — Strictly DISABLED if audio already exists! */}
+                            {!recording && countdown === 0 ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        disabled={hasCurrentAudio}
+                                        title={
+                                            hasCurrentAudio
+                                                ? 'Alisin muna ang kasalukuyang audio bago mag-record ng bago.'
+                                                : undefined
+                                        }
+                                        onClick={startSyncedRecording}
+                                        className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl text-xs font-semibold transition ${
+                                            hasCurrentAudio
+                                                ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                                                : 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
+                                        }`}
+                                    >
+                                        <Mic
+                                            className={`w-3.5 h-3.5 shrink-0 ${
+                                                hasCurrentAudio ? 'text-slate-400' : 'text-orange-400'
+                                            }`}
+                                        />
+                                        <span className="truncate">
+                                            {voiceoverMode === 'per_scene'
+                                                ? `I-record Eksena ${selectedSceneIdx + 1}`
+                                                : 'I-record Whole'}
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        disabled={hasCurrentAudio}
+                                        title={
+                                            hasCurrentAudio
+                                                ? 'May naka-upload nang audio. Pindutin muna ang "Alisin" bago mag-upload ng bago.'
+                                                : undefined
+                                        }
+                                        onClick={() => {
+                                            if (!hasCurrentAudio) voFileInputRef.current?.click();
+                                        }}
+                                        className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
+                                            hasCurrentAudio
+                                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                                                : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E5E7EB] hover:border-slate-400 cursor-pointer'
+                                        }`}
+                                    >
+                                        {hasCurrentAudio ? (
+                                            <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                        ) : (
+                                            <Upload className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                        )}
+                                        <span className="truncate">
+                                            {hasCurrentAudio ? 'May Audio na' : 'Mag-upload Audio/Video'}
+                                        </span>
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={stopRecording}
+                                    className="h-10 w-full inline-flex items-center justify-center gap-1.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition cursor-pointer"
+                                >
+                                    <Square className="w-3.5 h-3.5 fill-current" />
+                                    <span>Ihinto Recording ({formatClock(recordSeconds)})</span>
+                                </button>
+                            )}
+
                             {micError && <p className="text-[11px] text-rose-600 font-medium">{micError}</p>}
 
+                            {/* ROW 3: Active Audio Card + Integrated Alisin Action (unlocks Upload/Record) */}
                             {currentTargetAudio && (
-                                <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 space-y-1.5">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0 max-w-[260px]">
+                                <div className="rounded-xl border border-[#E5E7EB] bg-white p-3 space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
                                             <span
-                                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                                className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold ${
                                                     currentTargetAudio.isBlob
                                                         ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                                         : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -1353,23 +1400,78 @@ export default function SyncedDubbingStudio({
                                                 {currentTargetAudio.label}
                                             </span>
                                         </div>
-                                        <audio
-                                            key={currentTargetAudio.url}
-                                            controls
-                                            src={currentTargetAudio.url}
-                                            className="h-8 flex-1 min-w-[180px]"
-                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                stopSyncedPreview();
+                                                if (voiceoverMode === 'whole') onWholeRemove();
+                                                else onSceneAudioRemove(selectedSceneIdx);
+                                            }}
+                                            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-[11px] font-semibold text-rose-600 transition cursor-pointer"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                            <span>Alisin</span>
+                                        </button>
                                     </div>
-                                    {currentTargetAudio.isVideo && (
+                                    <audio
+                                        key={currentTargetAudio.url}
+                                        controls
+                                        src={currentTargetAudio.url}
+                                        className="w-full h-9"
+                                    />
+                                    {currentTargetAudio.isVideo ? (
                                         <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
                                             <Volume2 className="w-3.5 h-3.5 text-[#C2410C] shrink-0" />
                                             <span>
-                                                Video file ang na-upload — boses/audio lang nito ang tutugtog kasabay ng
-                                                3D story video.
+                                                Boses/audio lang ng video ang tutugtog kasabay ng 3D story video. Pindutin
+                                                ang Alisin kung papalitan.
                                             </span>
+                                        </p>
+                                    ) : (
+                                        <p className="text-[10px] text-slate-400">
+                                            Naka-lock ang Record/Upload habang may audio pa. Pindutin ang Alisin para
+                                            magpalit.
                                         </p>
                                     )}
                                 </div>
+                            )}
+
+                            {/* ROW 4: Dedicated Full-Width Per-Scene Save CTA (Honest 4-state button!) */}
+                            {voiceoverMode === 'per_scene' && onSaveScene && (
+                                <button
+                                    type="button"
+                                    disabled={isSavingCurrentScene || !isCurrentSceneDirty || recording || countdown > 0}
+                                    onClick={() => {
+                                        stopSyncedPreview();
+                                        onSaveScene(selectedSceneIdx);
+                                    }}
+                                    className={`h-10 w-full inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-xs font-semibold transition ${
+                                        isSavingCurrentScene
+                                            ? 'bg-[#C2410C]/80 text-white cursor-wait'
+                                            : isCurrentSceneDirty
+                                              ? 'bg-[#C2410C] hover:bg-[#9A3412] text-white shadow-xs cursor-pointer'
+                                              : hasSavedAudioOnCurrentScene
+                                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                                                : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {isCurrentSceneDirty || isSavingCurrentScene ? (
+                                        <Save className="w-3.5 h-3.5" />
+                                    ) : hasSavedAudioOnCurrentScene ? (
+                                        <Check className="w-3.5 h-3.5" />
+                                    ) : (
+                                        <Save className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>
+                                        {isSavingCurrentScene
+                                            ? `Sine-save Eksena ${selectedSceneIdx + 1}...`
+                                            : isCurrentSceneDirty
+                                              ? `I-save Eksena ${selectedSceneIdx + 1}`
+                                              : hasSavedAudioOnCurrentScene
+                                                ? `Naka-save na ang Eksena ${selectedSceneIdx + 1}`
+                                                : `I-save Eksena ${selectedSceneIdx + 1}`}
+                                    </span>
+                                </button>
                             )}
                         </div>
                     )}
