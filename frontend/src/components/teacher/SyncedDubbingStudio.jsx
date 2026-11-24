@@ -131,6 +131,11 @@ export default function SyncedDubbingStudio({
     onSceneAudioSelectRef.current = onSceneAudioSelect;
     const timedScenesRef = useRef([]);
     const sceneAudioMapRef = useRef({});
+    const voiceoverModeRef = useRef(voiceoverMode);
+    const wholeAudioObjRef = useRef(null);
+    const wholeOffsetSecRef = useRef(wholeOffsetSec);
+    voiceoverModeRef.current = voiceoverMode;
+    wholeOffsetSecRef.current = wholeOffsetSec;
 
     const [selectedSceneIdx, setSelectedSceneIdx] = useState(0);
     const [videoDuration, setVideoDuration] = useState(50);
@@ -242,6 +247,7 @@ export default function SyncedDubbingStudio({
 
     timedScenesRef.current = timedScenes;
     sceneAudioMapRef.current = sceneAudioMap;
+    wholeAudioObjRef.current = wholeAudioObj;
 
     const activeSceneAudioObj = activeScene ? sceneAudioMap[activeScene._idx] || null : null;
     const anyPerSceneAudioCount = Object.keys(sceneAudioMap).length;
@@ -722,6 +728,121 @@ export default function SyncedDubbingStudio({
             }
         };
 
+        const onPlay = () => {
+            if (recording) return;
+
+            // If user pressed the native <video> Play button directly while in Per-Scene or Whole mode,
+            // automatically layer the teacher's saved/uploaded voice-over instead of playing the built-in AI voice!
+            if (!previewRangeRef.current.active) {
+                const modeNow = voiceoverModeRef.current;
+                const fullEnd = Math.max(
+                    video.duration && Number.isFinite(video.duration) ? video.duration : 50,
+                    timedScenesRef.current[timedScenesRef.current.length - 1]?._end || 50
+                );
+
+                if (modeNow === 'per_scene' && Object.keys(sceneAudioMapRef.current || {}).length > 0) {
+                    const token = ++previewTokenRef.current;
+                    previewRangeRef.current = {
+                        active: true,
+                        seeking: false,
+                        start: 0,
+                        end: fullEnd,
+                        offset: 0,
+                        mode: 'all_scenes',
+                        activeSceneIdx: -1,
+                    };
+                    setPreviewMode('all');
+                    setPreviewing(true);
+                    syncAllScenesAtTime(video.currentTime, video, token);
+                    return;
+                }
+
+                if (modeNow === 'whole' && wholeAudioObjRef.current) {
+                    const token = ++previewTokenRef.current;
+                    const offsetNow = Number(wholeOffsetSecRef.current || 0);
+                    const a = createVoiceMediaElement(wholeAudioObjRef.current.url);
+                    previewAudioRef.current = a;
+                    previewRangeRef.current = {
+                        active: true,
+                        seeking: false,
+                        start: 0,
+                        end: fullEnd,
+                        offset: offsetNow,
+                        mode: 'whole',
+                        activeSceneIdx: -1,
+                    };
+                    setPreviewMode('single');
+                    setPreviewing(true);
+                    video.muted = true;
+                    const startWhole = () => {
+                        if (token !== previewTokenRef.current || !previewRangeRef.current.active) return;
+                        const desired = video.currentTime - offsetNow;
+                        if (desired >= 0 && (!a.duration || desired < a.duration)) {
+                            try {
+                                a.currentTime = desired;
+                            } catch {
+                                // ignore
+                            }
+                            if (!video.paused) a.play().catch(() => {});
+                        }
+                    };
+                    if (a.readyState >= 1) startWhole();
+                    else a.addEventListener('loadedmetadata', startWhole, { once: true });
+                    return;
+                }
+                return;
+            }
+
+            // Resuming an already-active synced preview after native pause
+            if (previewRangeRef.current.mode === 'all_scenes') {
+                syncAllScenesAtTime(video.currentTime, video, previewTokenRef.current);
+            } else if (previewAudioRef.current && previewAudioRef.current.paused) {
+                const { start, offset } = previewRangeRef.current;
+                const desired = video.currentTime - start - offset;
+                if (desired >= 0 && (!previewAudioRef.current.duration || desired < previewAudioRef.current.duration)) {
+                    try {
+                        previewAudioRef.current.currentTime = desired;
+                    } catch {
+                        // ignore
+                    }
+                    previewAudioRef.current.play().catch(() => {});
+                }
+            }
+        };
+
+        const onSeeked = () => {
+            if (!previewRangeRef.current.active || previewRangeRef.current.seeking) return;
+            const t = video.currentTime;
+            setVideoTime(t);
+            if (previewRangeRef.current.mode === 'all_scenes') {
+                syncAllScenesAtTime(t, video, previewTokenRef.current);
+            } else if (previewAudioRef.current) {
+                const { start, offset } = previewRangeRef.current;
+                const desired = t - start - offset;
+                if (desired < 0 || (previewAudioRef.current.duration && desired >= previewAudioRef.current.duration)) {
+                    if (!previewAudioRef.current.paused) previewAudioRef.current.pause();
+                } else {
+                    try {
+                        previewAudioRef.current.currentTime = desired;
+                    } catch {
+                        // ignore
+                    }
+                    if (!video.paused && previewAudioRef.current.paused) {
+                        previewAudioRef.current.play().catch(() => {});
+                    }
+                }
+            }
+        };
+
+        const onVolumeChange = () => {
+            if (previewAudioRef.current) {
+                previewAudioRef.current.volume = video.volume;
+            }
+            if (previewRangeRef.current.active && previewAudioRef.current && !video.muted) {
+                video.muted = true;
+            }
+        };
+
         const onPause = () => {
             if (previewRangeRef.current.active && previewAudioRef.current && !previewAudioRef.current.paused) {
                 previewAudioRef.current.pause();
@@ -734,11 +855,17 @@ export default function SyncedDubbingStudio({
         };
 
         video.addEventListener('loadedmetadata', onLoadedMetadata);
+        video.addEventListener('play', onPlay);
+        video.addEventListener('seeked', onSeeked);
+        video.addEventListener('volumechange', onVolumeChange);
         video.addEventListener('timeupdate', onTimeUpdate);
         video.addEventListener('pause', onPause);
         video.addEventListener('ended', onEnded);
         return () => {
             video.removeEventListener('loadedmetadata', onLoadedMetadata);
+            video.removeEventListener('play', onPlay);
+            video.removeEventListener('seeked', onSeeked);
+            video.removeEventListener('volumechange', onVolumeChange);
             video.removeEventListener('timeupdate', onTimeUpdate);
             video.removeEventListener('pause', onPause);
             video.removeEventListener('ended', onEnded);

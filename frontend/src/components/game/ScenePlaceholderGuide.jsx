@@ -13,8 +13,16 @@ function parseClockSec(str) {
 
 function normalizeScenesTiming(scenes, mapStartSec = 0) {
     return (scenes || []).map((scene, idx) => {
-        let start = typeof scene.start_sec === 'number' ? scene.start_sec : null;
-        let end = typeof scene.end_sec === 'number' ? scene.end_sec : null;
+        let start =
+            scene.start_sec !== undefined && scene.start_sec !== null && scene.start_sec !== ''
+                ? Number(scene.start_sec)
+                : null;
+        let end =
+            scene.end_sec !== undefined && scene.end_sec !== null && scene.end_sec !== ''
+                ? Number(scene.end_sec)
+                : null;
+        if (start !== null && Number.isNaN(start)) start = null;
+        if (end !== null && Number.isNaN(end)) end = null;
 
         if ((start === null || end === null) && scene.timestamp) {
             const parts = String(scene.timestamp).split(/[–\-]/);
@@ -56,8 +64,10 @@ export default function ScenePlaceholderGuide({
 }) {
     const videoRef = useRef(null);
     const wholeAudioRef = useRef(null);
-    const sceneAudioRef = useRef(null);
+    const scenePlayersRef = useRef({});
     const activeSceneAudioIdxRef = useRef(-1);
+    const customAudioActiveRef = useRef(false);
+    const unlockedPlayersRef = useRef(false);
 
     const sourceType = lesson?.video_source_type || 'placeholder';
     const rawMapVideoUrl = resolveMediaUrl(map?.story_video_path);
@@ -142,6 +152,12 @@ export default function ScenePlaceholderGuide({
                 if (isObjectUrl) URL.revokeObjectURL(url);
                 return;
             }
+            // Avoid interrupting active playback if student already pressed Play before Cache API resolved
+            if (videoRef.current && !videoRef.current.paused && !offline) {
+                if (isObjectUrl) URL.revokeObjectURL(url);
+                setResolvingOfflineVideo(false);
+                return;
+            }
             if (isObjectUrl) objUrlToRevoke = url;
             setCachedVideoSrc(url);
             setResolvingOfflineVideo(false);
@@ -173,20 +189,6 @@ export default function ScenePlaceholderGuide({
         const video = videoRef.current;
         if (!video || !hasMapVideo) return undefined;
 
-        const stopSceneAudio = () => {
-            if (sceneAudioRef.current) {
-                sceneAudioRef.current.pause();
-                sceneAudioRef.current = null;
-            }
-            activeSceneAudioIdxRef.current = -1;
-        };
-
-        const stopWholeAudio = () => {
-            if (wholeAudioRef.current) {
-                wholeAudioRef.current.pause();
-            }
-        };
-
         const createVoicePlayer = (url) => {
             const el = document.createElement('video');
             el.src = url;
@@ -196,21 +198,84 @@ export default function ScenePlaceholderGuide({
             return el;
         };
 
+        const pauseAllScenePlayers = (exceptIdx = -1) => {
+            Object.entries(scenePlayersRef.current).forEach(([k, el]) => {
+                if (Number(k) !== exceptIdx && el && !el.paused) {
+                    el.pause();
+                }
+            });
+            if (exceptIdx === -1) {
+                activeSceneAudioIdxRef.current = -1;
+            }
+        };
+
+        const stopWholeAudio = () => {
+            if (wholeAudioRef.current) {
+                wholeAudioRef.current.pause();
+            }
+        };
+
+        // Preload per-scene audio players so student Play tap unlocks every scene cleanly on iOS/Android/Desktop
+        const preloadedScenes = {};
+        if (usePerSceneVoiceover) {
+            timedScenes.forEach((sc, i) => {
+                if (sc.audio_path) {
+                    preloadedScenes[i] = createVoicePlayer(resolveMediaUrl(sc.audio_path));
+                }
+            });
+        }
+        scenePlayersRef.current = preloadedScenes;
+        activeSceneAudioIdxRef.current = -1;
+        unlockedPlayersRef.current = false;
+
         if (useWholeVoiceover && wholeVoiceoverUrl) {
-            const audio = createVoicePlayer(wholeVoiceoverUrl);
-            wholeAudioRef.current = audio;
+            wholeAudioRef.current = createVoicePlayer(wholeVoiceoverUrl);
+            customAudioActiveRef.current = true;
             video.muted = true;
         } else {
             wholeAudioRef.current = null;
-            if (!usePerSceneVoiceover) {
-                video.muted = false;
-            }
+            const startsWithCustomScene =
+                usePerSceneVoiceover &&
+                Boolean(
+                    timedScenes.find((s) => (video.currentTime || 0) >= s._start && (video.currentTime || 0) < s._end)
+                        ?.audio_path
+                );
+            customAudioActiveRef.current = startsWithCustomScene;
+            video.muted = startsWithCustomScene;
         }
+
+        const unlockUpcomingScenePlayers = (activeIdx) => {
+            if (unlockedPlayersRef.current) return;
+            unlockedPlayersRef.current = true;
+            Object.entries(scenePlayersRef.current).forEach(([k, el]) => {
+                if (Number(k) === activeIdx || !el) return;
+                const prevMuted = el.muted;
+                el.muted = true;
+                const p = el.play();
+                if (p && typeof p.then === 'function') {
+                    p.then(() => {
+                        el.pause();
+                        try {
+                            el.currentTime = 0;
+                        } catch {
+                            // ignore
+                        }
+                        el.muted = prevMuted;
+                    }).catch(() => {
+                        el.muted = prevMuted;
+                    });
+                } else {
+                    el.muted = prevMuted;
+                }
+            });
+        };
 
         const syncWhole = (t, shouldPlay) => {
             const a = wholeAudioRef.current;
             if (!a) return;
+            customAudioActiveRef.current = true;
             video.muted = true;
+            a.volume = video.volume;
             const desired = t - wholeVoiceoverOffset;
             if (desired < 0) {
                 if (!a.paused) a.pause();
@@ -232,56 +297,59 @@ export default function ScenePlaceholderGuide({
             }
         };
 
-        const syncPerScene = (t, shouldPlay) => {
+        const syncPerScene = (t, shouldPlay, fromPlayGesture = false) => {
             const sceneIdx = timedScenes.findIndex((s) => t >= s._start && t < s._end);
             const activeScene = sceneIdx >= 0 ? timedScenes[sceneIdx] : null;
-            const customUrl = activeScene?.audio_path ? resolveMediaUrl(activeScene.audio_path) : null;
+            const player = sceneIdx >= 0 ? scenePlayersRef.current[sceneIdx] || null : null;
 
-            if (!customUrl) {
-                stopSceneAudio();
+            if (!activeScene || !player) {
+                customAudioActiveRef.current = false;
+                pauseAllScenePlayers(-1);
                 video.muted = false;
+                if (fromPlayGesture) unlockUpcomingScenePlayers(-1);
                 return;
             }
 
+            customAudioActiveRef.current = true;
             video.muted = true;
-            const desired = t - activeScene._start - (activeScene._offset || 0);
+            pauseAllScenePlayers(sceneIdx);
+            activeSceneAudioIdxRef.current = sceneIdx;
+            player.muted = false;
+            player.volume = video.volume;
 
-            if (activeSceneAudioIdxRef.current !== sceneIdx || !sceneAudioRef.current) {
-                stopSceneAudio();
-                const a = createVoicePlayer(customUrl);
-                sceneAudioRef.current = a;
-                activeSceneAudioIdxRef.current = sceneIdx;
-                const seekAndPlay = () => {
-                    if (desired < 0) return;
-                    if (desired > 0.15 && (!a.duration || desired < a.duration)) {
-                        try {
-                            a.currentTime = desired;
-                        } catch {
-                            // ignore seek error before metadata
-                        }
-                    }
-                    if (shouldPlay && !video.paused && (!a.duration || desired < a.duration)) {
-                        a.play().catch(() => {});
-                    }
-                };
-                if (a.readyState >= 1) seekAndPlay();
-                else a.addEventListener('loadedmetadata', seekAndPlay, { once: true });
-            } else {
-                const a = sceneAudioRef.current;
-                if (desired < 0 || (a.duration && desired >= a.duration)) {
-                    if (!a.paused) a.pause();
-                    return;
-                }
-                if (Math.abs((a.currentTime || 0) - desired) > 0.35) {
+            if (fromPlayGesture) unlockUpcomingScenePlayers(sceneIdx);
+
+            const desired = t - activeScene._start - (activeScene._offset || 0);
+            if (desired < 0 || (player.duration && desired >= player.duration)) {
+                if (!player.paused) player.pause();
+                return;
+            }
+
+            const applySeekAndPlay = () => {
+                if (activeSceneAudioIdxRef.current !== sceneIdx) return;
+                const liveT = video.currentTime;
+                const liveDesired = liveT - activeScene._start - (activeScene._offset || 0);
+                if (liveDesired < 0 || (player.duration && liveDesired >= player.duration)) return;
+                if (Math.abs((player.currentTime || 0) - liveDesired) > 0.35) {
                     try {
-                        a.currentTime = desired;
+                        player.currentTime = liveDesired;
                     } catch {
                         // ignore
                     }
                 }
-                if (shouldPlay && !video.paused && a.paused) {
-                    a.play().catch(() => {});
+                if (shouldPlay && !video.paused && player.paused) {
+                    player.play().catch(() => {});
                 }
+            };
+
+            if (player.readyState >= 1) {
+                applySeekAndPlay();
+            } else {
+                if (shouldPlay && !video.paused && player.paused) {
+                    // Trigger play synchronously inside user gesture on mobile Safari/Chrome
+                    player.play().catch(() => {});
+                }
+                player.addEventListener('loadedmetadata', applySeekAndPlay, { once: true });
             }
         };
 
@@ -289,13 +357,13 @@ export default function ScenePlaceholderGuide({
             if (useWholeVoiceover && wholeAudioRef.current) {
                 syncWhole(video.currentTime, true);
             } else if (usePerSceneVoiceover) {
-                syncPerScene(video.currentTime, true);
+                syncPerScene(video.currentTime, true, true);
             }
         };
 
         const onPause = () => {
             stopWholeAudio();
-            if (sceneAudioRef.current) sceneAudioRef.current.pause();
+            pauseAllScenePlayers(-1);
         };
 
         const onSeeked = () => {
@@ -303,7 +371,7 @@ export default function ScenePlaceholderGuide({
             if (useWholeVoiceover && wholeAudioRef.current) {
                 syncWhole(video.currentTime, !video.paused);
             } else if (usePerSceneVoiceover) {
-                syncPerScene(video.currentTime, !video.paused);
+                syncPerScene(video.currentTime, !video.paused, false);
             }
         };
 
@@ -313,19 +381,32 @@ export default function ScenePlaceholderGuide({
             if (useWholeVoiceover && wholeAudioRef.current && !video.paused) {
                 syncWhole(t, true);
             } else if (usePerSceneVoiceover && !video.paused) {
-                syncPerScene(t, true);
+                syncPerScene(t, true, false);
+            }
+        };
+
+        const onVolumeChange = () => {
+            const vol = video.volume;
+            if (wholeAudioRef.current) wholeAudioRef.current.volume = vol;
+            Object.values(scenePlayersRef.current).forEach((el) => {
+                if (el) el.volume = vol;
+            });
+            // Prevent old AI voice from bleeding through if student clicks native unmute while Teacher VO is active
+            if (customAudioActiveRef.current && !video.muted) {
+                video.muted = true;
             }
         };
 
         const onEnded = () => {
             stopWholeAudio();
-            stopSceneAudio();
+            pauseAllScenePlayers(-1);
         };
 
         video.addEventListener('play', onPlay);
         video.addEventListener('pause', onPause);
         video.addEventListener('seeked', onSeeked);
         video.addEventListener('timeupdate', onTimeUpdate);
+        video.addEventListener('volumechange', onVolumeChange);
         video.addEventListener('ended', onEnded);
 
         return () => {
@@ -333,11 +414,23 @@ export default function ScenePlaceholderGuide({
             video.removeEventListener('pause', onPause);
             video.removeEventListener('seeked', onSeeked);
             video.removeEventListener('timeupdate', onTimeUpdate);
+            video.removeEventListener('volumechange', onVolumeChange);
             video.removeEventListener('ended', onEnded);
             stopWholeAudio();
-            stopSceneAudio();
+            pauseAllScenePlayers(-1);
+            scenePlayersRef.current = {};
+            customAudioActiveRef.current = false;
         };
-    }, [hasMapVideo, resolvingOfflineVideo, useWholeVoiceover, usePerSceneVoiceover, wholeVoiceoverUrl, wholeVoiceoverOffset, timedScenes]);
+    }, [
+        hasMapVideo,
+        resolvingOfflineVideo,
+        cachedVideoSrc,
+        useWholeVoiceover,
+        usePerSceneVoiceover,
+        wholeVoiceoverUrl,
+        wholeVoiceoverOffset,
+        timedScenes,
+    ]);
 
     // Legacy global lesson MP4 start/end clamp
     useEffect(() => {
@@ -422,7 +515,7 @@ export default function ScenePlaceholderGuide({
                             </div>
                         ) : (
                         <video
-                            key={cachedVideoSrc || rawMapVideoUrl}
+                            key={rawMapVideoUrl || 'map-video'}
                             ref={videoRef}
                             src={cachedVideoSrc || rawMapVideoUrl}
                             controls
