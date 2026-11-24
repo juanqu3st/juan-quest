@@ -68,6 +68,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
 
             Route::get('/sessions/{session}/monitor', [MonitorRankingController::class, 'show']);
             Route::post('/sessions/{session}/offline-import', [MonitorRankingController::class, 'importOfflineResult']);
+            Route::post('/sessions/{session}/participants/{student}/reset', [MonitorRankingController::class, 'resetParticipant']);
             Route::get('/sessions/{session}/export', [MonitorRankingController::class, 'export']);
 
             Route::get('/cms', [CmsLessonController::class, 'index']);

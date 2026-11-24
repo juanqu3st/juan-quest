@@ -60,6 +60,7 @@ export default function LoginPage() {
     const [downloadedSavedQr, setDownloadedSavedQr] = useState(false);
     const [blockedPinInfo, setBlockedPinInfo] = useState(null);
     const [showUnblockForm, setShowUnblockForm] = useState(false);
+    const [unblockScanMode, setUnblockScanMode] = useState(false);
     const [unblockCodeInput, setUnblockCodeInput] = useState('');
     const [unblockError, setUnblockError] = useState('');
 
@@ -329,52 +330,113 @@ export default function LoginPage() {
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="space-y-2 rounded-xl bg-stone-50 border border-stone-200 p-3">
-                                            <p className="text-[11px] font-bold text-stone-700">
-                                                Teacher Unblock Code (Para sa Guro)
-                                            </p>
+                                        <div className="space-y-2.5 rounded-xl bg-stone-50 border border-stone-200 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <p className="text-[11px] font-bold text-stone-700">
+                                                    Teacher Unblock (Para sa Guro)
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setUnblockScanMode((v) => !v);
+                                                        setUnblockError('');
+                                                    }}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[#C2410C] cursor-pointer"
+                                                >
+                                                    {unblockScanMode ? (
+                                                        <>
+                                                            <Keyboard className="w-3 h-3" />
+                                                            <span>I-type Code</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <QrCode className="w-3 h-3" />
+                                                            <span>I-scan Unblock QR</span>
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+
                                             {unblockError && (
                                                 <p className="text-[11px] font-semibold text-rose-600">
                                                     {unblockError}
                                                 </p>
                                             )}
-                                            <div className="flex gap-2">
-                                                <input
-                                                    type="text"
-                                                    maxLength={12}
-                                                    value={unblockCodeInput}
-                                                    onChange={(e) => {
-                                                        setUnblockCodeInput(e.target.value.toUpperCase());
-                                                        setUnblockError('');
+
+                                            {unblockScanMode ? (
+                                                <QrScannerBox
+                                                    active={unblockScanMode}
+                                                    onScan={async (decoded) => {
+                                                        try {
+                                                            const parsed = JSON.parse(decoded);
+                                                            if (parsed?.t !== 'jqu1' || !parsed?.u) {
+                                                                setUnblockError(
+                                                                    'Hindi valid na Teacher Unblock QR ito.'
+                                                                );
+                                                                return;
+                                                            }
+                                                            const res = await unlockPinWithTeacherCode(
+                                                                blockedPinInfo.join_code,
+                                                                parsed.u,
+                                                                blockedPinInfo.pendingSession?.qrKey || ''
+                                                            );
+                                                            if (!res.ok) {
+                                                                setUnblockError(res.message);
+                                                                return;
+                                                            }
+                                                            const nextSess = blockedPinInfo.pendingSession;
+                                                            setBlockedPinInfo(null);
+                                                            setShowUnblockForm(false);
+                                                            setUnblockScanMode(false);
+                                                            setUnblockCodeInput('');
+                                                            if (nextSess && !nextSess.manualEntry) {
+                                                                setScannedSession(nextSess);
+                                                            }
+                                                        } catch {
+                                                            setUnblockError('Hindi mabasa ang Teacher Unblock QR.');
+                                                        }
                                                     }}
-                                                    placeholder="6-char code"
-                                                    className="flex-1 min-w-0 h-9 rounded-lg border border-stone-200 bg-white px-3 text-xs font-mono font-bold tracking-widest uppercase text-stone-900 focus:border-[#C2410C] outline-none"
                                                 />
-                                                <button
-                                                    type="button"
-                                                    onClick={async () => {
-                                                        const res = await unlockPinWithTeacherCode(
-                                                            blockedPinInfo.join_code,
-                                                            unblockCodeInput,
-                                                            blockedPinInfo.pendingSession?.qrKey || ''
-                                                        );
-                                                        if (!res.ok) {
-                                                            setUnblockError(res.message);
-                                                            return;
-                                                        }
-                                                        const nextSess = blockedPinInfo.pendingSession;
-                                                        setBlockedPinInfo(null);
-                                                        setShowUnblockForm(false);
-                                                        setUnblockCodeInput('');
-                                                        if (nextSess && !nextSess.manualEntry) {
-                                                            setScannedSession(nextSess);
-                                                        }
-                                                    }}
-                                                    className="h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold cursor-pointer shrink-0"
-                                                >
-                                                    I-unblock
-                                                </button>
-                                            </div>
+                                            ) : (
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        maxLength={12}
+                                                        value={unblockCodeInput}
+                                                        onChange={(e) => {
+                                                            setUnblockCodeInput(e.target.value.toUpperCase());
+                                                            setUnblockError('');
+                                                        }}
+                                                        placeholder="6-char code"
+                                                        className="flex-1 min-w-0 h-9 rounded-lg border border-stone-200 bg-white px-3 text-xs font-mono font-bold tracking-widest uppercase text-stone-900 focus:border-[#C2410C] outline-none"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={async () => {
+                                                            const res = await unlockPinWithTeacherCode(
+                                                                blockedPinInfo.join_code,
+                                                                unblockCodeInput,
+                                                                blockedPinInfo.pendingSession?.qrKey || ''
+                                                            );
+                                                            if (!res.ok) {
+                                                                setUnblockError(res.message);
+                                                                return;
+                                                            }
+                                                            const nextSess = blockedPinInfo.pendingSession;
+                                                            setBlockedPinInfo(null);
+                                                            setShowUnblockForm(false);
+                                                            setUnblockScanMode(false);
+                                                            setUnblockCodeInput('');
+                                                            if (nextSess && !nextSess.manualEntry) {
+                                                                setScannedSession(nextSess);
+                                                            }
+                                                        }}
+                                                        className="h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold cursor-pointer shrink-0"
+                                                    >
+                                                        I-unblock
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

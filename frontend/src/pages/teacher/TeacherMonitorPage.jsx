@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Award,
+    Check,
     CheckCircle2,
     CloudUpload,
+    Copy,
     Download,
     Heart,
     ImageUp,
+    KeyRound,
     QrCode,
     RefreshCw,
+    RotateCcw,
     ShieldAlert,
     ShieldCheck,
     Trophy,
@@ -22,6 +26,7 @@ import { usePwa } from '../../context/PwaContext';
 import { verifyOfflineResultSignature } from '../../utils/offlineEngine';
 import { decodeQrFromImageFile } from '../../utils/qrImageDecode';
 import { playFeedbackAudio } from '../../utils/gameAudio';
+import QrCodeImage from '../../components/qr/QrCodeImage';
 import QrScannerBox from '../../components/qr/QrScannerBox';
 import ProjectorPodiumModal from '../../components/teacher/ProjectorPodiumModal';
 import TeacherLayout from './TeacherLayout';
@@ -191,9 +196,14 @@ export default function TeacherMonitorPage() {
     const [pendingQueue, setPendingQueue] = useState([]);
     const [syncingQueue, setSyncingQueue] = useState(false);
 
-    // Result QR Scanner & Podium Modal state
+    // Result QR Scanner, Podium & Unified Retake/Unblock Modal state
     const [podiumOpen, setPodiumOpen] = useState(false);
     const [scannerOpen, setScannerOpen] = useState(false);
+    const [retakeRow, setRetakeRow] = useState(null);
+    const [retakeTab, setRetakeTab] = useState('online'); // 'online' | 'offline'
+    const [retakeMapChoice, setRetakeMapChoice] = useState('all'); // 'all' | 1..5
+    const [retakeBusy, setRetakeBusy] = useState(false);
+    const [copiedUnblockCode, setCopiedUnblockCode] = useState(false);
     const [scannerBusy, setScannerBusy] = useState(false);
     const [decodingImage, setDecodingImage] = useState(false);
     const [scannerError, setScannerError] = useState('');
@@ -562,6 +572,46 @@ export default function TeacherMonitorPage() {
         handleRawQrText(manualCodeInput);
     };
 
+    const openRetakeModal = (row) => {
+        setRetakeRow(row);
+        setRetakeTab(row.source === 'offline_qr' ? 'offline' : 'online');
+        setRetakeMapChoice('all');
+        setCopiedUnblockCode(false);
+    };
+
+    const handleConfirmOnlineRetake = async () => {
+        if (!selectedId || !retakeRow || retakeBusy) return;
+        const targetUserId = isGroupMode ? retakeRow.leader_user_id : retakeRow.user_id;
+        if (!targetUserId || String(targetUserId).startsWith('pending-')) return;
+
+        const mapNumber = retakeMapChoice === 'all' ? null : Number(retakeMapChoice);
+        setRetakeBusy(true);
+        try {
+            const res = await teacherApi.resetParticipant(selectedId, targetUserId, mapNumber);
+            if (res.monitor) {
+                setMonitor(res.monitor);
+                writeJsonStorage(monitorCacheKey(selectedId), res.monitor);
+            }
+            const label = isGroupMode ? retakeRow.group_name : retakeRow.name;
+            showToast(
+                'success',
+                mapNumber
+                    ? `Maaari nang ulitin ng "${label}" ang Mapa ${mapNumber}.`
+                    : `Na-reset na ang buong laro ng "${label}" para makapag-retake.`,
+                'Handa na sa Retake.'
+            );
+            setRetakeRow(null);
+        } catch (err) {
+            showToast(
+                'error',
+                err?.response?.data?.message || 'Hindi ma-reset ang progreso. Pakisubukan muli.',
+                'May Error.'
+            );
+        } finally {
+            setRetakeBusy(false);
+        }
+    };
+
     return (
         <TeacherLayout
             title="Live Monitor & Rankings"
@@ -868,6 +918,21 @@ export default function TeacherMonitorPage() {
                                                     </div>
                                                 ))}
                                             </div>
+
+                                            <div className="pt-2 border-t border-slate-100 flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openRetakeModal(row)}
+                                                    className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition"
+                                                >
+                                                    {isOfflineQr ? (
+                                                        <KeyRound className="w-3.5 h-3.5 text-[#C2410C]" />
+                                                    ) : (
+                                                        <RotateCcw className="w-3.5 h-3.5 text-[#C2410C]" />
+                                                    )}
+                                                    <span>{isOfflineQr ? 'Unblock / Retake' : 'Retake'}</span>
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -892,6 +957,7 @@ export default function TeacherMonitorPage() {
                                             <th className="px-3 font-bold text-center">Hearts</th>
                                             <th className="px-3 font-bold text-right">Oras</th>
                                             <th className="px-4 font-bold text-right">Kabuuan</th>
+                                            <th className="px-3 font-bold text-right">Aksyon</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 tabular-nums">
@@ -1015,6 +1081,25 @@ export default function TeacherMonitorPage() {
                                                         <span className="font-normal text-slate-400">
                                                             / {maxTotalScore}
                                                         </span>
+                                                    </td>
+                                                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openRetakeModal(row)}
+                                                            title={
+                                                                isOfflineQr
+                                                                    ? 'Ipakita ang Unblock QR / Code para makapag-retake'
+                                                                    : 'Payagang mag-retake ng mapa o buong laro'
+                                                            }
+                                                            className="h-7 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-orange-50 hover:border-orange-200 hover:text-[#C2410C] text-slate-600 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition"
+                                                        >
+                                                            {isOfflineQr ? (
+                                                                <KeyRound className="w-3 h-3" />
+                                                            ) : (
+                                                                <RotateCcw className="w-3 h-3" />
+                                                            )}
+                                                            <span>Retake</span>
+                                                        </button>
                                                     </td>
                                                 </tr>
                                             );
@@ -1212,6 +1297,230 @@ export default function TeacherMonitorPage() {
                     </div>
                 </div>
             )}
+            {/* Unified Retake / Unblock Modal (Online Reset OR Offline Unblock QR + 6-Char Code!) */}
+            {retakeRow && monitor?.session && (
+                <div
+                    className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-center justify-center p-4"
+                    onClick={() => !retakeBusy && setRetakeRow(null)}
+                >
+                    <div
+                        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    {retakeTab === 'offline' ? (
+                                        <KeyRound className="w-4 h-4 text-[#C2410C] shrink-0" />
+                                    ) : (
+                                        <RotateCcw className="w-4 h-4 text-[#C2410C] shrink-0" />
+                                    )}
+                                    <h3 className="text-sm font-extrabold text-slate-900 truncate">
+                                        {retakeTab === 'offline'
+                                            ? 'Offline Unblock & Retake'
+                                            : 'Payagan Mag-Retake (Online)'}
+                                    </h3>
+                                </div>
+                                <p className="text-xs text-slate-500 truncate mt-0.5">
+                                    {isGroupMode ? retakeRow.group_name : retakeRow.name}
+                                    {isGroupMode && retakeRow.leader_name ? ` · ${retakeRow.leader_name}` : ''}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={retakeBusy}
+                                onClick={() => setRetakeRow(null)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer shrink-0"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        <div className="p-5 space-y-4">
+                            {/* Disconnected online players can either reset online OR show offline unblock QR */}
+                            {retakeRow.connection_status === 'disconnected' && (
+                                <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-bold">
+                                    <button
+                                        type="button"
+                                        onClick={() => setRetakeTab('online')}
+                                        className={`py-1.5 rounded-lg transition cursor-pointer ${
+                                            retakeTab === 'online'
+                                                ? 'bg-white text-slate-900 shadow-2xs'
+                                                : 'text-slate-500 hover:text-slate-800'
+                                        }`}
+                                    >
+                                        Online Reset
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setRetakeTab('offline')}
+                                        className={`py-1.5 rounded-lg transition cursor-pointer ${
+                                            retakeTab === 'offline'
+                                                ? 'bg-white text-[#C2410C] shadow-2xs'
+                                                : 'text-slate-500 hover:text-slate-800'
+                                        }`}
+                                    >
+                                        Offline Unblock QR
+                                    </button>
+                                </div>
+                            )}
+
+                            {retakeTab === 'offline' ? (
+                                <div className="text-center space-y-4">
+                                    {monitor.session.offline_unblock_code ? (
+                                        <>
+                                            <div className="inline-block bg-white p-3 rounded-2xl border-2 border-slate-900 shadow-xs">
+                                                <QrCodeImage
+                                                    value={{
+                                                        t: 'jqu1',
+                                                        c: monitor.session.join_code,
+                                                        u: monitor.session.offline_unblock_code,
+                                                    }}
+                                                    size={210}
+                                                    errorCorrectionLevel="L"
+                                                    alt="Teacher Unblock QR"
+                                                    className="w-[196px] h-[196px] sm:w-[210px] sm:h-[210px]"
+                                                />
+                                            </div>
+
+                                            <div className="rounded-xl bg-amber-50/75 border border-amber-200 p-3.5 space-y-1">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                                                    6-Character Unblock Code
+                                                </p>
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <span className="text-2xl font-extrabold font-mono tracking-widest text-slate-900">
+                                                        {monitor.session.offline_unblock_code}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            navigator.clipboard
+                                                                ?.writeText(monitor.session.offline_unblock_code)
+                                                                .catch(() => {});
+                                                            setCopiedUnblockCode(true);
+                                                            setTimeout(() => setCopiedUnblockCode(false), 1600);
+                                                        }}
+                                                        className="h-7 px-2 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 text-amber-900 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                                    >
+                                                        {copiedUnblockCode ? (
+                                                            <Check className="w-3 h-3 text-emerald-600" />
+                                                        ) : (
+                                                            <Copy className="w-3 h-3" />
+                                                        )}
+                                                        <span>{copiedUnblockCode ? 'Nakopya' : 'Kopyahin'}</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <p className="text-xs text-slate-600 leading-relaxed">
+                                                Ipa-scan ang <strong>Unblock QR</strong> o i-type ang code sa phone ng
+                                                grupong ito (sa <strong>I-unblock ng Guro</strong>) upang makapag-retake
+                                                nang offline. I-scan lang ulit ang bago nilang Result QR pagkatapos.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p className="text-xs text-slate-500">
+                                            Hindi mahanap ang Unblock Code ng sesyong ito.
+                                        </p>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setRetakeRow(null)}
+                                        className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer transition"
+                                    >
+                                        Isara
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <p className="text-xs text-slate-600 leading-relaxed">
+                                        Piliin kung aling mapa ang bubuksan ulit para sa{' '}
+                                        <strong>{isGroupMode ? retakeRow.group_name : retakeRow.name}</strong>. Walang
+                                        code na kailangan — kusang bubukas agad ang mapa sa device nila.
+                                    </p>
+
+                                    <div className="space-y-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setRetakeMapChoice('all')}
+                                            className={`w-full p-3 rounded-xl border text-left transition cursor-pointer flex items-center justify-between gap-2 ${
+                                                retakeMapChoice === 'all'
+                                                    ? 'border-[#C2410C] bg-orange-50/70'
+                                                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            <div>
+                                                <p className="text-xs font-bold text-slate-900">
+                                                    Buong Laro (Lahat ng 5 Mapa)
+                                                </p>
+                                                <p className="text-[11px] text-slate-500">
+                                                    Ibabalik sa Mapa 1 ang buong progreso ng grupong ito.
+                                                </p>
+                                            </div>
+                                            <span
+                                                className={`w-4 h-4 rounded-full border-2 shrink-0 ${
+                                                    retakeMapChoice === 'all'
+                                                        ? 'border-[#C2410C] bg-[#C2410C]'
+                                                        : 'border-slate-300'
+                                                }`}
+                                            />
+                                        </button>
+
+                                        <div className="grid grid-cols-5 gap-1.5">
+                                            {[1, 2, 3, 4, 5].map((m) => {
+                                                const active = retakeMapChoice === m;
+                                                const score = retakeRow.map_scores?.[m];
+                                                return (
+                                                    <button
+                                                        key={m}
+                                                        type="button"
+                                                        onClick={() => setRetakeMapChoice(m)}
+                                                        className={`py-2 px-1 rounded-xl border text-center transition cursor-pointer ${
+                                                            active
+                                                                ? 'border-[#C2410C] bg-orange-50 text-[#C2410C]'
+                                                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                                                        }`}
+                                                    >
+                                                        <p className="text-[11px] font-extrabold">M{m}</p>
+                                                        <p className="text-[10px] text-slate-400 tabular-nums mt-0.5">
+                                                            {score ?? '—'}
+                                                        </p>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 pt-1">
+                                        <button
+                                            type="button"
+                                            disabled={retakeBusy}
+                                            onClick={() => setRetakeRow(null)}
+                                            className="h-10 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer transition"
+                                        >
+                                            Kanselahin
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={retakeBusy}
+                                            onClick={handleConfirmOnlineRetake}
+                                            className="h-10 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold disabled:opacity-60 cursor-pointer transition"
+                                        >
+                                            {retakeBusy
+                                                ? 'Nire-reset...'
+                                                : retakeMapChoice === 'all'
+                                                  ? 'I-reset Buong Laro'
+                                                  : `I-retake ang Mapa ${retakeMapChoice}`}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Projector Fullscreen Top 3 Podium Modal */}
             <ProjectorPodiumModal
                 open={podiumOpen}

@@ -833,4 +833,75 @@ class JuanQuestApiTest extends TestCase
             ->assertJsonPath('monitor.per_group.0.source', 'offline_qr')
             ->assertJsonPath('monitor.per_group.0.connection_status', 'offline_qr');
     }
+
+    public function test_teacher_can_reset_single_map_or_full_progress_for_online_student_retake(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $lessonId = \App\Models\Lesson::value('id');
+        $sessionId = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'class_name' => 'Grade 7 - Retake',
+                'lesson_id' => $lessonId,
+                'play_mode' => 'group',
+                'join_code' => 'RTK7E',
+            ])
+            ->assertCreated()
+            ->json('session.id');
+
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/status", ['status' => 'active'])
+            ->assertOk();
+
+        $join = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'RTK7E',
+            'full_name' => 'Nina Torres',
+        ])->assertOk();
+
+        $studentToken = $join->json('token');
+        $studentId = $join->json('user.id');
+
+        $map1 = Map::where('map_number', 1)->firstOrFail();
+        $map2 = Map::where('map_number', 2)->firstOrFail();
+
+        // Timeout Mapa 1 (2 pts) and Mapa 2 (2 pts) -> both locked non-replayable
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map1->id}/start")->assertOk();
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map1->id}/timeout")->assertOk();
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map2->id}/start")->assertOk();
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map2->id}/timeout")->assertOk();
+
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map1->id}/start")->assertStatus(422);
+
+        // 1) Teacher resets ONLY Mapa 1 -> Mapa 1 becomes replayable while Mapa 2 keeps its 2 pts!
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/participants/{$studentId}/reset", [
+                'map_number' => 1,
+            ])
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('reset_map_number', 1)
+            ->assertJsonPath('monitor.per_group.0.total_score', 2)
+            ->assertJsonPath('monitor.per_group.0.map_scores.1', null)
+            ->assertJsonPath('monitor.per_group.0.map_scores.2', 2);
+
+        $asToken($studentToken)->postJson("/api/v1/student/maps/{$map1->id}/start")->assertOk();
+
+        // 2) Teacher resets FULL game (map_number = null) -> score becomes 0 and current_map_number resets to 1
+        $asToken($teacherToken)
+            ->postJson("/api/v1/teacher/sessions/{$sessionId}/participants/{$studentId}/reset", [
+                'map_number' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('monitor.per_group.0.total_score', 0)
+            ->assertJsonPath('monitor.per_group.0.current_map_number', 1);
+    }
 }

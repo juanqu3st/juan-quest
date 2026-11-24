@@ -18,6 +18,10 @@ export const teacherApi = {
         axiosClient
             .post(`/teacher/sessions/${sessionId}/offline-import`, { qr_payload, allow_manual })
             .then((r) => r.data),
+    resetParticipant: (sessionId, studentId, map_number = null) =>
+        axiosClient
+            .post(`/teacher/sessions/${sessionId}/participants/${studentId}/reset`, { map_number })
+            .then((r) => r.data),
     exportCsv: (sessionId) =>
         axiosClient
             .get(`/teacher/sessions/${sessionId}/export`, { responseType: 'blob' })
