@@ -17,7 +17,7 @@ const NAV_GROUPS = [
         heading: 'Klase',
         subHeading: 'Classroom',
         items: [
-            { label: 'Live Monitor', sub: 'Rankings at progreso', to: '/teacher/monitor', icon: Activity },
+            { label: 'Monitor & Records', sub: 'Live laro at tala ng marka', to: '/teacher/monitor', icon: Activity },
             { label: 'Sessions & Lobby', sub: 'Class PIN, Mode at Status', to: '/teacher/sessions', icon: Users },
         ],
     },

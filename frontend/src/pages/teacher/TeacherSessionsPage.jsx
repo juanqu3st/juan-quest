@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
+    Archive,
+    ArrowRight,
     Check,
     Copy,
     KeyRound,
@@ -45,9 +48,9 @@ const STATUS_META = {
         dotClass: 'bg-slate-500',
         activePill: 'bg-white text-slate-800 shadow-xs',
         hintGroup:
-            'Tapos na ang sesyon — sarado na ang mga mapa at maaari nang i-export ang resulta sa Live Monitor.',
+            'Tapos na ang sesyon — inilipat na ito sa Mga Record kung saan maaaring mag-Podium, mag-Export CSV, o mag-scan ng humabol na Offline QR.',
         hintIndividual:
-            'Tapos na ang sesyon — sarado na ang mga mapa at maaari nang i-export ang resulta sa Live Monitor.',
+            'Tapos na ang sesyon — inilipat na ito sa Mga Record kung saan maaaring mag-Podium, mag-Export CSV, o mag-scan ng humabol na Offline QR.',
     },
 };
 
@@ -68,6 +71,7 @@ function parseMemberList(memberNames) {
 
 export default function TeacherSessionsPage() {
     const { showToast } = useToast();
+    const navigate = useNavigate();
     const [sessions, setSessions] = useState([]);
     const [lessons, setLessons] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
@@ -91,12 +95,22 @@ export default function TeacherSessionsPage() {
         join_code: '',
     });
 
+    const syncSessionsCache = (list) => {
+        try {
+            localStorage.setItem('juanquest_teacher_sessions_cache_v1', JSON.stringify(list));
+        } catch {
+            // ignore storage quota
+        }
+    };
+
     const loadIndex = async () => {
         const res = await teacherApi.listSessions();
-        setSessions(res.sessions || []);
+        const list = res.sessions || [];
+        setSessions(list);
+        syncSessionsCache(list);
         setLessons(res.lessons || []);
-        if (!selectedId && res.sessions?.length > 0) {
-            setSelectedId(res.sessions[0].id);
+        if (!selectedId && list.length > 0) {
+            setSelectedId(list[0].id);
         }
         if (res.lessons?.length > 0 && !createForm.lesson_id) {
             setCreateForm((f) => ({ ...f, lesson_id: res.lessons[0].id }));
@@ -194,9 +208,13 @@ export default function TeacherSessionsPage() {
         try {
             const res = await teacherApi.updateSessionStatus(lobby.id, status);
             setLobby(res.session);
-            setSessions((prev) =>
-                prev.map((s) => (s.id === lobby.id ? { ...s, status: res.session.status } : s))
-            );
+            setSessions((prev) => {
+                const next = prev.map((s) =>
+                    s.id === lobby.id ? { ...s, status: res.session.status } : s
+                );
+                syncSessionsCache(next);
+                return next;
+            });
             if (status === 'active') {
                 showToast(
                     'success',
@@ -212,7 +230,7 @@ export default function TeacherSessionsPage() {
             } else {
                 showToast(
                     'info',
-                    'Sarado na ang sesyon at naitala na ang huling resulta.',
+                    'Sarado na ang laro at inilipat na sa Mga Record. Pindutin ang "Tingnan ang Record" upang makita ang opisyal na tala ng marka.',
                     'Tapos na ang Laro.'
                 );
             }
@@ -286,6 +304,7 @@ export default function TeacherSessionsPage() {
             }
             const remaining = sessions.filter((s) => s.id !== deletingId);
             setSessions(remaining);
+            syncSessionsCache(remaining);
             if (remaining.length > 0) {
                 setSelectedId(remaining[0].id);
             } else {
@@ -636,15 +655,26 @@ export default function TeacherSessionsPage() {
                                     </button>
                                 )}
                                 {lobby.status === 'finished' && (
-                                    <button
-                                        type="button"
-                                        disabled={busy}
-                                        onClick={() => handleStatus('waiting')}
-                                        className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
-                                    >
-                                        <RotateCcw className="w-3.5 h-3.5" />
-                                        <span>Ibalik sa Waiting</span>
-                                    </button>
+                                    <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => navigate(`/teacher/monitor?session=${lobby.id}`)}
+                                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-4 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                                        >
+                                            <Archive className="w-3.5 h-3.5" />
+                                            <span>Tingnan ang Record</span>
+                                            <ArrowRight className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => handleStatus('waiting')}
+                                            className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer"
+                                        >
+                                            <RotateCcw className="w-3.5 h-3.5" />
+                                            <span>Ibalik sa Waiting</span>
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </section>

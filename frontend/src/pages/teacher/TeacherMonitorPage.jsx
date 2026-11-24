@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+    Activity,
+    Archive,
+    ArrowRight,
     Award,
     Check,
     CheckCircle2,
@@ -9,6 +13,7 @@ import {
     Heart,
     ImageUp,
     KeyRound,
+    Plus,
     QrCode,
     RefreshCw,
     RotateCcw,
@@ -192,10 +197,31 @@ function buildLocalCsv(rows, isGroupMode, maxTotalScore = 50, maxTotalHearts = 1
 export default function TeacherMonitorPage() {
     const { showToast } = useToast();
     const { isOnline } = usePwa();
+    const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const requestedSessionId = Number(searchParams.get('session') || 0) || null;
+    const requestedTab = searchParams.get('tab') === 'records' ? 'records' : null;
+
     const [sessions, setSessions] = useState(() => readJsonStorage(SESSIONS_CACHE_KEY, []));
+    const [viewTab, setViewTab] = useState(() => {
+        const cached = readJsonStorage(SESSIONS_CACHE_KEY, []);
+        if (requestedSessionId) {
+            const match = cached.find((s) => s.id === requestedSessionId);
+            if (match) return match.status === 'finished' ? 'records' : 'live';
+        }
+        if (requestedTab === 'records') return 'records';
+        return 'live';
+    });
     const [selectedId, setSelectedId] = useState(() => {
         const cached = readJsonStorage(SESSIONS_CACHE_KEY, []);
-        return cached[0]?.id || null;
+        if (requestedSessionId) {
+            const match = cached.find((s) => s.id === requestedSessionId);
+            if (match) return match.id;
+        }
+        if (requestedTab === 'records') {
+            return cached.find((s) => s.status === 'finished')?.id || null;
+        }
+        return cached.find((s) => s.status !== 'finished')?.id || null;
     });
     const [monitor, setMonitor] = useState(null);
     const [polling, setPolling] = useState(true);
@@ -218,6 +244,52 @@ export default function TeacherMonitorPage() {
     const [recentScans, setRecentScans] = useState([]);
     const qrFileInputRef = useRef(null);
 
+    const liveSessions = useMemo(
+        () => sessions.filter((s) => s.status !== 'finished'),
+        [sessions]
+    );
+    const recordSessions = useMemo(
+        () => sessions.filter((s) => s.status === 'finished'),
+        [sessions]
+    );
+    const visibleSessions = viewTab === 'records' ? recordSessions : liveSessions;
+    const selectedSessionMeta = useMemo(
+        () => sessions.find((s) => s.id === selectedId) || null,
+        [sessions, selectedId]
+    );
+    const isFinishedSession =
+        viewTab === 'records' ||
+        selectedSessionMeta?.status === 'finished' ||
+        monitor?.session?.status === 'finished';
+
+    const syncSelectionFromList = (list) => {
+        const live = list.filter((s) => s.status !== 'finished');
+        const records = list.filter((s) => s.status === 'finished');
+
+        if (requestedSessionId) {
+            const match = list.find((s) => s.id === requestedSessionId);
+            if (match) {
+                setViewTab(match.status === 'finished' ? 'records' : 'live');
+                setSelectedId(match.id);
+                return;
+            }
+        }
+
+        if (requestedTab === 'records') {
+            setViewTab('records');
+            setSelectedId((prev) =>
+                records.some((s) => s.id === prev) ? prev : records[0]?.id || null
+            );
+            return;
+        }
+
+        setSelectedId((prev) => {
+            const activePool = viewTab === 'records' ? records : live;
+            if (activePool.some((s) => s.id === prev)) return prev;
+            return activePool[0]?.id || null;
+        });
+    };
+
     useEffect(() => {
         teacherApi
             .listSessions()
@@ -225,25 +297,43 @@ export default function TeacherMonitorPage() {
                 const list = res.sessions || [];
                 setSessions(list);
                 writeJsonStorage(SESSIONS_CACHE_KEY, list);
-                if (list.length > 0) {
-                    setSelectedId((prev) => prev || list[0].id);
-                }
+                syncSelectionFromList(list);
             })
             .catch(() => {
                 const cached = readJsonStorage(SESSIONS_CACHE_KEY, []);
                 if (cached.length > 0) {
                     setSessions(cached);
-                    setSelectedId((prev) => prev || cached[0].id);
+                    syncSelectionFromList(cached);
                 }
             });
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [requestedSessionId, requestedTab]);
+
+    const handleSwitchTab = (nextTab) => {
+        if (nextTab === viewTab) return;
+        setViewTab(nextTab);
+        const pool = nextTab === 'records' ? recordSessions : liveSessions;
+        const nextId = pool[0]?.id || null;
+        setSelectedId(nextId);
+        if (!nextId) {
+            setMonitor(null);
+            setPendingQueue([]);
+        }
+        setSearchParams(nextTab === 'records' ? { tab: 'records' } : {}, { replace: true });
+    };
 
     useEffect(() => {
-        if (!selectedId) return;
+        if (!selectedId) {
+            setMonitor(null);
+            setPendingQueue([]);
+            return;
+        }
         setPendingQueue(readJsonStorage(queueStorageKey(selectedId), []));
         const cachedMonitor = readJsonStorage(monitorCacheKey(selectedId), null);
         if (cachedMonitor) {
             setMonitor(cachedMonitor);
+        } else {
+            setMonitor(null);
         }
     }, [selectedId]);
 
@@ -262,10 +352,10 @@ export default function TeacherMonitorPage() {
     useEffect(() => {
         if (!selectedId) return;
         fetchMonitor(selectedId);
-        if (!polling || !isOnline) return;
+        if (!polling || !isOnline || isFinishedSession) return;
         const timer = setInterval(() => fetchMonitor(selectedId), 5000);
         return () => clearInterval(timer);
-    }, [selectedId, polling, isOnline]);
+    }, [selectedId, polling, isOnline, isFinishedSession]);
 
     const savePendingQueue = (sessionId, nextQueue) => {
         setPendingQueue(nextQueue);
@@ -620,23 +710,30 @@ export default function TeacherMonitorPage() {
 
     return (
         <TeacherLayout
-            title="Live Monitor & Rankings"
-            subtitle="Subaybayan nang live ang kasalukuyang mapa, puso, at puntos (/50) ng bawat pangkat o mag-aaral."
+            title={viewTab === 'records' ? 'Mga Record ng Klase' : 'Live Monitor & Rankings'}
+            subtitle={
+                viewTab === 'records'
+                    ? 'Opisyal na tala ng marka ng mga natapos na sesyon — buksan ang Podium, mag-Export CSV, o mag-scan ng humabol na Offline QR.'
+                    : 'Subaybayan nang live ang kasalukuyang mapa, puso, at puntos (/50) ng mga aktibong pangkat o mag-aaral.'
+            }
             toolbarRight={
                 <div className="w-full sm:w-auto flex flex-wrap items-center gap-2">
-                    <select
-                        value={selectedId || ''}
-                        onChange={(e) => setSelectedId(Number(e.target.value))}
-                        className="flex-1 sm:flex-initial min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:border-slate-400"
-                    >
-                        {sessions.map((s) => (
-                            <option key={s.id} value={s.id}>
-                                {s.class_name} ({s.join_code}) · {s.play_mode === 'individual' ? 'Solo' : 'Grupo'}
-                            </option>
-                        ))}
-                    </select>
+                    {visibleSessions.length > 0 && (
+                        <select
+                            value={selectedId || ''}
+                            onChange={(e) => setSelectedId(Number(e.target.value))}
+                            className="flex-1 sm:flex-initial min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:border-slate-400"
+                        >
+                            {visibleSessions.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                    {s.class_name} ({s.join_code}) · {s.play_mode === 'individual' ? 'Solo' : 'Grupo'} ·{' '}
+                                    {s.status === 'finished' ? 'Tapos na' : s.status === 'active' ? 'Active' : 'Waiting'}
+                                </option>
+                            ))}
+                        </select>
+                    )}
 
-                    {monitor && (
+                    {selectedId && monitor && (
                         <button
                             type="button"
                             onClick={() => {
@@ -651,7 +748,7 @@ export default function TeacherMonitorPage() {
                         </button>
                     )}
 
-                    {pendingQueue.length > 0 && (
+                    {selectedId && pendingQueue.length > 0 && (
                         <button
                             type="button"
                             disabled={syncingQueue}
@@ -663,7 +760,7 @@ export default function TeacherMonitorPage() {
                         </button>
                     )}
 
-                    {monitor && rows.length > 0 && (
+                    {selectedId && monitor && rows.length > 0 && (
                         <button
                             type="button"
                             onClick={() => setPodiumOpen(true)}
@@ -674,20 +771,116 @@ export default function TeacherMonitorPage() {
                         </button>
                     )}
 
-                    <button
-                        type="button"
-                        onClick={handleExport}
-                        className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer shrink-0"
-                    >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Export CSV</span>
-                    </button>
+                    {selectedId && monitor && (
+                        <button
+                            type="button"
+                            onClick={handleExport}
+                            className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer shrink-0"
+                        >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Export CSV</span>
+                        </button>
+                    )}
                 </div>
             }
         >
-            {!monitor ? (
+            {/* Clean 2-Tab Switcher: Live Monitor (Active/Waiting) vs Mga Record (Finished) */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200/80">
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchTab('live')}
+                        className={`h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                            viewTab === 'live'
+                                ? 'bg-white text-slate-900 shadow-xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                    >
+                        <Activity className={`w-3.5 h-3.5 ${viewTab === 'live' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                        <span>Live Monitor</span>
+                        <span
+                            className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${
+                                viewTab === 'live'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-slate-200/70 text-slate-600'
+                            }`}
+                        >
+                            {liveSessions.length}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchTab('records')}
+                        className={`h-8 px-3.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                            viewTab === 'records'
+                                ? 'bg-white text-slate-900 shadow-xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                    >
+                        <Archive className={`w-3.5 h-3.5 ${viewTab === 'records' ? 'text-[#C2410C]' : 'text-slate-400'}`} />
+                        <span>Mga Record</span>
+                        <span
+                            className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${
+                                viewTab === 'records'
+                                    ? 'bg-orange-50 text-[#C2410C]'
+                                    : 'bg-slate-200/70 text-slate-600'
+                            }`}
+                        >
+                            {recordSessions.length}
+                        </span>
+                    </button>
+                </div>
+
+                {viewTab === 'records' && selectedSessionMeta && (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <Archive className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Sarado na ang laro — nakatago ang Retake upang mapanatili ang opisyal na tala ng marka.</span>
+                    </span>
+                )}
+            </div>
+
+            {visibleSessions.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200/90 bg-white p-8 sm:p-12 text-center space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                        {viewTab === 'records' ? <Archive className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+                    </div>
+                    <div className="max-w-md mx-auto space-y-1.5">
+                        <h2 className="text-sm font-bold text-slate-900">
+                            {viewTab === 'records'
+                                ? 'Wala pang natapos na record ng klase'
+                                : 'Walang kasalukuyang live na laro'}
+                        </h2>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                            {viewTab === 'records'
+                                ? 'Kapag pinindot mo ang "Tapusin ang Laro" sa Sessions & Lobby, awtomatikong inililipat dito ang sesyon bilang opisyal na class record.'
+                                : 'Lahat ng natapos na sesyon ay awtomatikong inililipat sa Mga Record upang manatiling malinis ang Live Monitor para sa susunod na klase.'}
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                        {viewTab === 'live' && recordSessions.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => handleSwitchTab('records')}
+                                className="h-9 px-4 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
+                            >
+                                <Archive className="w-3.5 h-3.5" />
+                                <span>Tingnan ang Mga Record ({recordSessions.length})</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => navigate('/teacher/sessions')}
+                            className="h-9 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Pumunta sa Sessions &amp; Lobby</span>
+                        </button>
+                    </div>
+                </div>
+            ) : !monitor ? (
                 <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-                    Walang aktibong sesyon.
+                    Kinukuha ang tala ng sesyon...
                 </div>
             ) : (
                 <div className="space-y-5">
@@ -762,28 +955,41 @@ export default function TeacherMonitorPage() {
                                 Updated {monitor.updated_at}
                             </span>
 
-                            <button
-                                type="button"
-                                onClick={() => setPolling(!polling)}
-                                className={`h-8 px-2.5 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
-                                    polling && isOnline
-                                        ? 'bg-emerald-50 border-emerald-200 text-[#15803D]'
-                                        : 'bg-white border-slate-200 text-slate-600'
-                                }`}
-                            >
-                                <span
-                                    className={`w-1.5 h-1.5 rounded-full ${
-                                        polling && isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                            {isFinishedSession ? (
+                                <span className="h-8 px-2.5 rounded-lg border border-slate-200 bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5">
+                                    <Archive className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>Tapos na · Record</span>
+                                </span>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setPolling(!polling)}
+                                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                                        polling && isOnline
+                                            ? 'bg-emerald-50 border-emerald-200 text-[#15803D]'
+                                            : 'bg-white border-slate-200 text-slate-600'
                                     }`}
-                                />
-                                <span>{!isOnline ? 'Offline' : polling ? 'Live 5s' : 'Paused'}</span>
-                            </button>
+                                >
+                                    <span
+                                        className={`w-1.5 h-1.5 rounded-full ${
+                                            polling && isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                                        }`}
+                                    />
+                                    <span>{!isOnline ? 'Offline' : polling ? 'Live 5s' : 'Paused'}</span>
+                                </button>
+                            )}
 
                             <button
                                 type="button"
                                 onClick={async () => {
                                     await fetchMonitor(selectedId);
-                                    showToast('info', 'Na-refresh ang Live Monitor data.', 'Updated.');
+                                    showToast(
+                                        'info',
+                                        isFinishedSession
+                                            ? 'Na-refresh ang record ng klase.'
+                                            : 'Na-refresh ang Live Monitor data.',
+                                        'Updated.'
+                                    );
                                 }}
                                 className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 inline-flex items-center justify-center cursor-pointer"
                                 title="I-refresh"
@@ -925,20 +1131,22 @@ export default function TeacherMonitorPage() {
                                                 ))}
                                             </div>
 
-                                            <div className="pt-2 border-t border-slate-100 flex justify-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => openRetakeModal(row)}
-                                                    className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition"
-                                                >
-                                                    {isOfflineQr ? (
-                                                        <KeyRound className="w-3.5 h-3.5 text-[#C2410C]" />
-                                                    ) : (
-                                                        <RotateCcw className="w-3.5 h-3.5 text-[#C2410C]" />
-                                                    )}
-                                                    <span>{isOfflineQr ? 'Unblock / Retake' : 'Retake'}</span>
-                                                </button>
-                                            </div>
+                                            {!isFinishedSession && (
+                                                <div className="pt-2 border-t border-slate-100 flex justify-end">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openRetakeModal(row)}
+                                                        className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition"
+                                                    >
+                                                        {isOfflineQr ? (
+                                                            <KeyRound className="w-3.5 h-3.5 text-[#C2410C]" />
+                                                        ) : (
+                                                            <RotateCcw className="w-3.5 h-3.5 text-[#C2410C]" />
+                                                        )}
+                                                        <span>{isOfflineQr ? 'Unblock / Retake' : 'Retake'}</span>
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -963,7 +1171,9 @@ export default function TeacherMonitorPage() {
                                             <th className="px-3 font-bold text-center">Hearts</th>
                                             <th className="px-3 font-bold text-right">Oras</th>
                                             <th className="px-4 font-bold text-right">Kabuuan</th>
-                                            <th className="px-3 font-bold text-right">Aksyon</th>
+                                            {!isFinishedSession && (
+                                                <th className="px-3 font-bold text-right">Aksyon</th>
+                                            )}
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 tabular-nums">
@@ -1088,25 +1298,27 @@ export default function TeacherMonitorPage() {
                                                             / {maxTotalScore}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-3 text-right whitespace-nowrap">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => openRetakeModal(row)}
-                                                            title={
-                                                                isOfflineQr
-                                                                    ? 'Ipakita ang Unblock QR / Code para makapag-retake'
-                                                                    : 'Payagang mag-retake ng mapa o buong laro'
-                                                            }
-                                                            className="h-7 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-orange-50 hover:border-orange-200 hover:text-[#C2410C] text-slate-600 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition"
-                                                        >
-                                                            {isOfflineQr ? (
-                                                                <KeyRound className="w-3 h-3" />
-                                                            ) : (
-                                                                <RotateCcw className="w-3 h-3" />
-                                                            )}
-                                                            <span>Retake</span>
-                                                        </button>
-                                                    </td>
+                                                    {!isFinishedSession && (
+                                                        <td className="px-3 py-3 text-right whitespace-nowrap">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openRetakeModal(row)}
+                                                                title={
+                                                                    isOfflineQr
+                                                                        ? 'Ipakita ang Unblock QR / Code para makapag-retake'
+                                                                        : 'Payagang mag-retake ng mapa o buong laro'
+                                                                }
+                                                                className="h-7 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-orange-50 hover:border-orange-200 hover:text-[#C2410C] text-slate-600 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition"
+                                                            >
+                                                                {isOfflineQr ? (
+                                                                    <KeyRound className="w-3 h-3" />
+                                                                ) : (
+                                                                    <RotateCcw className="w-3 h-3" />
+                                                                )}
+                                                                <span>Retake</span>
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })}
