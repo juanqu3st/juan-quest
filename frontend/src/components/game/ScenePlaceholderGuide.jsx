@@ -435,9 +435,9 @@ export default function ScenePlaceholderGuide({
                         </video>
                         )}
 
-                        {/* Modern YouTube-style bottom-center in-video subtitle pill (auto-hides in native fullscreen) */}
+                        {/* Modern bottom-center in-video subtitle (Pure white text, zero black box) */}
                         {showCaptions && !isFullscreen && (
-                            <div className="pointer-events-none absolute inset-x-2.5 sm:inset-x-6 bottom-10 sm:bottom-14 z-10 flex justify-center">
+                            <div className="pointer-events-none absolute inset-x-2.5 sm:inset-x-6 bottom-7 sm:bottom-10 z-10 flex justify-center">
                                 <AnimatePresence mode="wait">
                                     {activeCue && (
                                         <motion.div
@@ -446,11 +446,17 @@ export default function ScenePlaceholderGuide({
                                             animate={{ opacity: 1, y: 0 }}
                                             exit={{ opacity: 0, y: -2 }}
                                             transition={{ duration: 0.14 }}
-                                            className="max-w-[94%] sm:max-w-[84%] rounded-lg bg-black/80 backdrop-blur-xs px-3 py-1.5 sm:px-4 sm:py-2 text-center shadow-sm"
+                                            className="max-w-[94%] sm:max-w-[84%] bg-transparent p-0 text-center select-none"
                                         >
-                                            <p className="text-[11px] sm:text-[15px] font-medium text-white leading-snug tracking-normal">
+                                            <p
+                                                className="text-xs sm:text-[17px] font-bold text-white leading-relaxed tracking-normal"
+                                                style={{
+                                                    textShadow:
+                                                        '0 1px 3px rgba(0, 0, 0, 0.9), 0 2px 8px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9)',
+                                                }}
+                                            >
                                                 {activeCue.who && (
-                                                    <span className="font-bold text-amber-300 mr-1.5">
+                                                    <span className="font-extrabold text-[#FDE047] mr-1.5">
                                                         {activeCue.who}:
                                                     </span>
                                                 )}

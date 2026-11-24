@@ -134,3 +134,13 @@
 .jq-ring-3 { animation: jq-ring-expand 1060ms cubic-bezier(0.16, 1, 0.3, 1) 170ms forwards; will-change: transform, opacity; }
 .jq-core-flash { animation: jq-core-flash 580ms ease-out forwards; will-change: transform, opacity; }
 .jq-lock-dissolve { animation: jq-lock-dissolve 360ms ease-in forwards; will-change: transform, opacity; }
+
+/* Clean native Fullscreen Video Subtitles (Zero black background box, crisp white text) */
+video::cue {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    font-family: inherit !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 2px 8px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9) !important;
+}
