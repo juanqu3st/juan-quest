@@ -82,6 +82,7 @@ export default function TeacherSessionsPage() {
     const [showUnblockCode, setShowUnblockCode] = useState(false);
     const [unblockMapScope, setUnblockMapScope] = useState('all');
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [statusConfirm, setStatusConfirm] = useState(null);
     const [showCreate, setShowCreate] = useState(false);
     const [editingGroupId, setEditingGroupId] = useState(null);
     const [editingGroupName, setEditingGroupName] = useState('');
@@ -200,6 +201,26 @@ export default function TeacherSessionsPage() {
         } finally {
             setBusy(false);
         }
+    };
+
+    const requestStatusChange = (nextStatus) => {
+        if (!lobby?.id || lobby.status === nextStatus || busy) return;
+        if (nextStatus === 'finished') {
+            setStatusConfirm({ mode: 'finish', targetStatus: 'finished' });
+            return;
+        }
+        if (lobby.status === 'finished') {
+            setStatusConfirm({ mode: 'reopen', targetStatus: nextStatus });
+            return;
+        }
+        handleStatus(nextStatus);
+    };
+
+    const handleConfirmStatusChange = async () => {
+        if (!statusConfirm) return;
+        const target = statusConfirm.targetStatus;
+        setStatusConfirm(null);
+        await handleStatus(target);
     };
 
     const handleStatus = async (status) => {
@@ -607,7 +628,7 @@ export default function TeacherSessionsPage() {
                                                     key={st}
                                                     type="button"
                                                     disabled={busy}
-                                                    onClick={() => handleStatus(st)}
+                                                    onClick={() => requestStatusChange(st)}
                                                     className={`min-h-[38px] sm:min-h-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
                                                         isSelected
                                                             ? meta.activePill
@@ -647,7 +668,7 @@ export default function TeacherSessionsPage() {
                                     <button
                                         type="button"
                                         disabled={busy}
-                                        onClick={() => handleStatus('finished')}
+                                        onClick={() => requestStatusChange('finished')}
                                         className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
                                     >
                                         <Square className="w-3 h-3 fill-current" />
@@ -668,11 +689,11 @@ export default function TeacherSessionsPage() {
                                         <button
                                             type="button"
                                             disabled={busy}
-                                            onClick={() => handleStatus('waiting')}
+                                            onClick={() => requestStatusChange('active')}
                                             className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer"
                                         >
                                             <RotateCcw className="w-3.5 h-3.5" />
-                                            <span>Ibalik sa Waiting</span>
+                                            <span>Buksan Ulit</span>
                                         </button>
                                     </div>
                                 )}
@@ -1127,6 +1148,80 @@ export default function TeacherSessionsPage() {
                     </div>
                 </div>
             )}
+            {/* Finish / Reopen Session Confirmation Modal */}
+            {statusConfirm && lobby && (
+                <div
+                    className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-center justify-center p-4"
+                    onClick={() => !busy && setStatusConfirm(null)}
+                >
+                    <div
+                        className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl p-6 text-center space-y-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div
+                            className={`w-11 h-11 rounded-2xl mx-auto flex items-center justify-center border ${
+                                statusConfirm.mode === 'finish'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-800'
+                                    : 'bg-orange-50 border-orange-200 text-[#C2410C]'
+                            }`}
+                        >
+                            {statusConfirm.mode === 'finish' ? (
+                                <Archive className="w-5 h-5" />
+                            ) : (
+                                <RotateCcw className="w-5 h-5" />
+                            )}
+                        </div>
+                        <div className="space-y-1.5">
+                            <h3 className="text-base font-extrabold text-slate-900">
+                                {statusConfirm.mode === 'finish'
+                                    ? 'Tapusin ang Laro?'
+                                    : 'Buksan Ulit ang Laro?'}
+                            </h3>
+                            {statusConfirm.mode === 'finish' ? (
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                    Isasara na ang mga mapa para sa mga online na mag-aaral at ililipat ang{' '}
+                                    <strong>{lobby.class_name}</strong> sa <strong>Mga Record</strong>. Maaari ka pa
+                                    ring mag-Podium, mag-Export CSV, at mag-scan ng humabol na Offline QR doon.
+                                </p>
+                            ) : (
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                    Bubuksan muli ang <strong>{lobby.class_name}</strong> nang{' '}
+                                    <strong>hindi nabubura ang mga naunang puntos</strong> — gamitin lamang kung may
+                                    hindi pa tapos o aksidenteng naisara. Para sa ibang seksyon o bagong klase, gumawa
+                                    ng <strong>Bagong Sesyon</strong>.
+                                </p>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => setStatusConfirm(null)}
+                                className="min-h-[42px] px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer transition"
+                            >
+                                Kanselahin
+                            </button>
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={handleConfirmStatusChange}
+                                className={`min-h-[42px] px-4 py-2 rounded-xl text-white text-xs font-bold disabled:opacity-60 cursor-pointer transition ${
+                                    statusConfirm.mode === 'finish'
+                                        ? 'bg-slate-900 hover:bg-slate-800'
+                                        : 'bg-[#C2410C] hover:bg-[#9A3412]'
+                                }`}
+                            >
+                                {busy
+                                    ? 'Pinoproseso...'
+                                    : statusConfirm.mode === 'finish'
+                                      ? 'Oo, Tapusin'
+                                      : 'Oo, Buksan Ulit'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Delete Session Confirmation Modal */}
             {deleteConfirmOpen && lobby && (
                 <div
