@@ -20,5 +20,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(180)->by($request->user()?->id ?: $request->ip());
         });
+
+        // Strict brute-force protection on email/password login (teacher portal)
+        RateLimiter::for('login', function (Request $request) {
+            $key = strtolower(trim((string) $request->input('email'))).'|'.$request->ip();
+
+            return Limit::perMinute(10)->by($key);
+        });
     }
 }

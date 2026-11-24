@@ -141,7 +141,13 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
 }
 
 function buildLocalCsv(rows, isGroupMode, maxTotalScore = 50, maxTotalHearts = 15) {
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const esc = (v) => {
+        let s = String(v ?? '');
+        if (s !== '' && s !== '-' && /^[=+\-@\t\r]/.test(s)) {
+            s = `'${s}`;
+        }
+        return `"${s.replace(/"/g, '""')}"`;
+    };
     const headers = isGroupMode
         ? ['Rank', 'Pangkat', 'Kinatawan', 'Mga Miyembro', 'Pinagmulan', 'M1', 'M2', 'M3', 'M4', 'M5', `Hearts (/${maxTotalHearts})`, 'Oras (s)', `Kabuuan (/${maxTotalScore})`]
         : ['Rank', 'Mag-aaral', 'Pinagmulan', 'M1', 'M2', 'M3', 'M4', 'M5', `Hearts (/${maxTotalHearts})`, 'Oras (s)', `Kabuuan (/${maxTotalScore})`];

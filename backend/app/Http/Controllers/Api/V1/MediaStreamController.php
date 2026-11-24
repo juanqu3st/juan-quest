@@ -13,7 +13,7 @@ class MediaStreamController extends Controller
         $clean = ltrim(str_replace(['..', '\\'], ['', '/'], $path), '/');
         $full = $base ? realpath($base . DIRECTORY_SEPARATOR . $clean) : false;
 
-        if (! $base || ! $full || ! str_starts_with($full, $base) || ! is_file($full)) {
+        if (! $base || ! $full || ! str_starts_with($full, $base . DIRECTORY_SEPARATOR) || ! is_file($full)) {
             abort(404);
         }
 

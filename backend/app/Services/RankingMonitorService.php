@@ -213,6 +213,15 @@ class RankingMonitorService
             $handle = fopen('php://output', 'w');
             fwrite($handle, "\xEF\xBB\xBF");
 
+            $safe = static function (mixed $val): string {
+                $str = (string) ($val ?? '');
+                if ($str !== '' && $str !== '-' && preg_match('/^[=+\-@\t\r]/', $str) === 1) {
+                    return "'{$str}";
+                }
+
+                return $str;
+            };
+
             if ($playMode === 'group') {
                 fputcsv($handle, [
                     'Rank',
@@ -235,9 +244,9 @@ class RankingMonitorService
                     $maxHearts = $row['max_total_hearts'] ?? 15;
                     fputcsv($handle, [
                         $row['rank'],
-                        $row['group_name'],
-                        $row['leader_name'],
-                        $row['member_names'] ?? '-',
+                        $safe($row['group_name']),
+                        $safe($row['leader_name']),
+                        $safe($row['member_names'] ?? '-'),
                         "Mapa {$row['current_map_number']}",
                         $row['activity_status'],
                         $row['map_scores'][1] ?? '-',
@@ -270,7 +279,7 @@ class RankingMonitorService
                     $maxHearts = $row['max_total_hearts'] ?? 15;
                     fputcsv($handle, [
                         $row['rank'],
-                        $row['name'],
+                        $safe($row['name']),
                         "Mapa {$row['current_map_number']}",
                         $row['activity_status'],
                         $row['map_scores'][1] ?? '-',

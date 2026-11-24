@@ -904,4 +904,54 @@ class JuanQuestApiTest extends TestCase
             ->assertJsonPath('monitor.per_group.0.total_score', 0)
             ->assertJsonPath('monitor.per_group.0.current_map_number', 1);
     }
+
+    public function test_security_hardening_role_guard_csv_formula_sanitization_and_teacher_password_command(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        // 1) Student cannot access Teacher endpoints (403 Forbidden)
+        $studentJoin = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'JUAN7A',
+            'full_name' => '=SUM(1,2)',
+        ])->assertOk();
+
+        $studentToken = $studentJoin->json('token');
+        $asToken($studentToken)
+            ->getJson('/api/v1/teacher/sessions')
+            ->assertStatus(403);
+
+        // 2) Export CSV neutralizes Excel/Sheets formula injection ('=SUM(1,2))
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $sessionId = GameSession::where('join_code', 'JUAN7A')->value('id');
+        $csvRes = $asToken($teacherToken)
+            ->get("/api/v1/teacher/sessions/{$sessionId}/export")
+            ->assertOk();
+
+        $csvBody = $csvRes->streamedContent();
+        $this->assertStringContainsString("'=SUM(1,2)", $csvBody);
+
+        // 3) Artisan teacher-password command updates password & revokes old tokens
+        $this->artisan('juanquest:teacher-password', [
+            '--email' => 'teacher@juanquest.ph',
+            '--password' => 'StrongPass2026!',
+        ])->assertSuccessful();
+
+        $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertStatus(422);
+
+        $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'StrongPass2026!',
+        ])->assertOk();
+    }
 }
