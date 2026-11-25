@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Auth\JoinByCodeRequest;
 use App\Http\Requests\Api\V1\Auth\LoginRequest;
-use App\Http\Requests\Api\V1\Auth\RegisterStudentRequest;
 use App\Http\Resources\V1\UserResource;
 use App\Models\SessionParticipant;
 use App\Models\User;
@@ -121,28 +120,6 @@ class AuthController extends Controller
             'token' => $token,
             'user' => new UserResource($user),
         ]);
-    }
-
-    public function register(RegisterStudentRequest $request): JsonResponse
-    {
-        $student = User::create([
-            'name' => $request->validated('name'),
-            'email' => $request->validated('email'),
-            'password' => Hash::make($request->validated('password')),
-            'role' => 'student',
-            'section' => $request->validated('section'),
-            'selected_character' => 'juan',
-            'current_map_number' => 1,
-            'activity_status' => 'exploring_world',
-            'last_seen_at' => now(),
-        ]);
-
-        $token = $student->createToken('juanquest-spa')->plainTextToken;
-
-        return response()->json([
-            'token' => $token,
-            'user' => new UserResource($student),
-        ], 201);
     }
 
     public function me(Request $request): JsonResponse

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { getTerrainHeight } from './worldConfig';
+import { FINISH_ARCH_T, getTerrainHeight } from './worldConfig';
 import { getPbrTextures } from './pbrTextures';
 
 /**
@@ -79,8 +79,8 @@ export default function SteppingStonePath({ curve, maps = [], lowQuality = false
     useEffect(() => () => roadGeo.dispose(), [roadGeo]);
 
     const finishTransform = useMemo(() => {
-        const p = curve.getPointAt(1);
-        const tan = curve.getTangentAt(0.99);
+        const p = curve.getPointAt(FINISH_ARCH_T);
+        const tan = curve.getTangentAt(Math.min(0.99, FINISH_ARCH_T));
         const yaw = Math.atan2(tan.x, tan.z);
         return {
             position: [p.x, getTerrainHeight(p.x, p.z), p.z],

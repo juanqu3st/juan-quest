@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, CheckCircle2, ChevronDown, HelpCircle, LogOut, Pencil, QrCode, Star, Trophy, Users, WifiOff } from 'lucide-react';
+import { Award, CheckCircle2, ChevronDown, HelpCircle, Home, LogOut, Pencil, QrCode, Sparkles, Star, Trophy, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
@@ -9,6 +9,7 @@ import { clearStageResume, loadStageResume } from '../../utils/stageResume';
 import { activateMidGameOfflineFailover } from '../../utils/offlineEngine';
 import { unlockAudio } from '../../utils/gameAudio';
 import { getCharacterMeta, normalizeCharacterKey } from '../../utils/characters';
+import { PAHINGAHAN_STOP } from '../../components/three/worldConfig';
 import WorldMapCanvas from '../../components/three/WorldMapCanvas';
 import StageModal from '../../components/game/StageModal';
 import PadlockUnlockOverlay from '../../components/game/PadlockUnlockOverlay';
@@ -68,6 +69,7 @@ export default function StudentWorldPage() {
     const [openedMapIds, setOpenedMapIds] = useState(() => new Set());
     const [resumePayload, setResumePayload] = useState(null);
     const [outroOpen, setOutroOpen] = useState(false);
+    const [outroReplayMode, setOutroReplayMode] = useState(false);
     const [completionOpen, setCompletionOpen] = useState(false);
     const [groupModalOpen, setGroupModalOpen] = useState(false);
     const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
@@ -136,8 +138,15 @@ export default function StudentWorldPage() {
 
             if (firstLoadRef.current) {
                 firstLoadRef.current = false;
-                setCharMapNumber(current);
-                setTargetMapNumber(current);
+                const allDoneOnLoad =
+                    (data.maps || []).length > 0 && (data.completed_count || 0) >= (data.maps || []).length;
+                if (allDoneOnLoad) {
+                    setTourActive(false);
+                    setGuideOpen(false);
+                }
+                const initialStop = allDoneOnLoad ? PAHINGAHAN_STOP : current;
+                setCharMapNumber(initialStop);
+                setTargetMapNumber(initialStop);
 
                 const canPlaySession = !nextStatus || nextStatus === 'active';
                 const saved = loadStageResume(user?.id);
@@ -262,7 +271,45 @@ export default function StudentWorldPage() {
     };
 
     const finishOutro = () => {
+        const wasReplay = outroReplayMode;
         setOutroOpen(false);
+        setOutroReplayMode(false);
+        if (!wasReplay) {
+            setCompletionOpen(true);
+        }
+    };
+
+    const handleCloseCompletion = () => {
+        setCompletionOpen(false);
+        const totalMapsCount = (world?.maps || []).length;
+        const doneAll = totalMapsCount > 0 && (world?.completed_count || 0) >= totalMapsCount;
+        if (doneAll && charMapNumber !== PAHINGAHAN_STOP && !isWalking) {
+            walkTo(PAHINGAHAN_STOP, false);
+        }
+    };
+
+    const handleSelectPahingahan = () => {
+        if (tourActive || guideOpen || outroOpen || activeStageMapId || unlockingStage || completionOpen || groupModalOpen) return;
+        const totalMapsCount = (world?.maps || []).length;
+        const doneAll = totalMapsCount > 0 && (world?.completed_count || 0) >= totalMapsCount;
+        if (!doneAll) {
+            showToast(
+                'info',
+                `Tapusin muna ang lahat ng 5 mapa upang makapagpahinga si ${activeCharMeta.shortName} sa bagong kubo at duyan.`,
+                'Pahingahan.'
+            );
+            return;
+        }
+        if (isWalking) {
+            if (targetMapNumber !== PAHINGAHAN_STOP) {
+                walkTo(PAHINGAHAN_STOP, false);
+            }
+            return;
+        }
+        if (charMapNumber !== PAHINGAHAN_STOP) {
+            walkTo(PAHINGAHAN_STOP, false);
+            return;
+        }
         setCompletionOpen(true);
     };
 
@@ -339,7 +386,7 @@ export default function StudentWorldPage() {
             );
             return;
         }
-        if (sessionStatus === 'finished') {
+        if (sessionStatus === 'finished' && !map.progress?.is_completed) {
             showToast(
                 'locked',
                 'Tapos na ang sesyon ng klase at sarado na ang mga mapa.',
@@ -390,6 +437,7 @@ export default function StudentWorldPage() {
         const totalMapsCount = (data.maps || []).length;
         const allDone = totalMapsCount > 0 && (data.completed_count || 0) >= totalMapsCount;
         if (allDone || (totalMapsCount > 0 && finishedMapNumber >= totalMapsCount)) {
+            setOutroReplayMode(false);
             setOutroOpen(true);
             return;
         }
@@ -429,6 +477,7 @@ export default function StudentWorldPage() {
     const maps = world.maps || [];
     const activeStageMap = activeStageMapId ? maps.find((m) => m.id === activeStageMapId) || null : null;
     const allMapsCompleted = maps.length > 0 && (world.completed_count || 0) >= maps.length;
+    const isRestingAtPahingahan = allMapsCompleted && charMapNumber === PAHINGAHAN_STOP && !isWalking;
     const isOfflineMode = Boolean(world.offline_mode);
     const sessionStatus = world.session?.status || null;
     const isGroupMode = world.session?.play_mode === 'group';
@@ -444,6 +493,8 @@ export default function StudentWorldPage() {
                 startMapNumber={charMapNumber}
                 targetMapNumber={targetMapNumber}
                 isWalking={isWalking}
+                isResting={isRestingAtPahingahan}
+                allMapsCompleted={allMapsCompleted}
                 tourActive={tourActive}
                 guideStep={guideStep}
                 isSessionWaiting={isWaitingSession}
@@ -453,6 +504,7 @@ export default function StudentWorldPage() {
                 lockScreenProjectorRef={lockScreenProjectorRef}
                 paused={Boolean(activeStageMap || canvasPausedForUnlock || completionOpen || groupModalOpen)}
                 onEnterMap={handleEnterMap}
+                onSelectPahingahan={handleSelectPahingahan}
                 onArrived={handleArrived}
                 onTourCardChange={setTourMapIndex}
                 onTourFinish={finishTour}
@@ -676,39 +728,90 @@ export default function StudentWorldPage() {
                     </button>
                 ) : (
                     !isWalking && !completionOpen && !guideOpen && !outroOpen && (
-                        <div className="pointer-events-auto w-full max-w-md sm:w-auto sm:max-w-xl bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-md rounded-2xl px-3.5 py-2 flex items-center justify-between sm:justify-center gap-3 text-xs">
-                            <span className="inline-flex items-center gap-2 font-semibold text-stone-700 min-w-0">
-                                {isWaitingSession && (
-                                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-                                )}
-                                <span className="truncate">
-                                    {isWaitingSession
-                                        ? 'Naghihintay sa go-signal ng guro'
-                                        : isFinishedSession
-                                            ? 'Tapos na ang sesyon · Tingnan ang Rankings'
-                                            : allMapsCompleted
-                                                ? isOfflineMode
-                                                    ? 'Tapos na! Pindutin ang Result QR sa itaas'
-                                                    : 'Natapos mo na lahat ng mapa'
-                                                : 'Pindutin ang mapa upang magsimula'}
-                                </span>
-                            </span>
+                        allMapsCompleted ? (
+                            <div className="pointer-events-auto w-full max-w-md sm:w-auto sm:max-w-2xl bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-md rounded-2xl px-2.5 sm:px-3 py-2 flex items-center justify-between sm:justify-center gap-2 text-xs">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                    {charMapNumber !== PAHINGAHAN_STOP && (
+                                        <button
+                                            type="button"
+                                            onClick={() => walkTo(PAHINGAHAN_STOP, false)}
+                                            className="min-h-[36px] px-3 py-1.5 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white font-bold inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                                        >
+                                            <Home className="w-3.5 h-3.5 shrink-0" />
+                                            <span>Balik sa Duyan</span>
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setOutroReplayMode(true);
+                                            setOutroOpen(true);
+                                        }}
+                                        className="min-h-[36px] px-3 py-1.5 rounded-xl bg-[#FAF5EB] hover:bg-orange-50 border border-stone-200/90 text-stone-800 hover:text-[#C2410C] font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5 text-[#C2410C] shrink-0" />
+                                        <span>Outro</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCompletionOpen(true)}
+                                        className="min-h-[36px] px-3 py-1.5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                                    >
+                                        {isOfflineMode ? (
+                                            <QrCode className="w-3.5 h-3.5 shrink-0" />
+                                        ) : (
+                                            <Award className="w-3.5 h-3.5 shrink-0" />
+                                        )}
+                                        <span>{isOfflineMode ? 'Result QR' : 'Resulta'}</span>
+                                    </button>
+                                </div>
 
-                            {/* Mobile Thumb-Zone Character Picker Trigger (Hidden on sm+ where it's in top-right) */}
-                            <button
-                                type="button"
-                                onClick={() => setCharacterPickerOpen(true)}
-                                className="sm:hidden min-h-[36px] pl-1.5 pr-2.5 py-1 rounded-xl bg-[#FAF5EB] border border-stone-200 text-stone-800 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
-                            >
-                                <img
-                                    src={activeCharMeta.portraitUrl}
-                                    alt={activeCharMeta.name}
-                                    className="w-6 h-6 rounded-lg object-contain bg-[#F2E6D0] shrink-0"
-                                />
-                                <span>{activeCharMeta.shortName}</span>
-                                <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
-                            </button>
-                        </div>
+                                {/* Mobile Thumb-Zone Character Picker Trigger */}
+                                <button
+                                    type="button"
+                                    onClick={() => setCharacterPickerOpen(true)}
+                                    className="sm:hidden min-h-[36px] pl-1.5 pr-2.5 py-1 rounded-xl bg-[#FAF5EB] border border-stone-200 text-stone-800 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                                >
+                                    <img
+                                        src={activeCharMeta.portraitUrl}
+                                        alt={activeCharMeta.name}
+                                        className="w-6 h-6 rounded-lg object-contain bg-[#F2E6D0] shrink-0"
+                                    />
+                                    <span>{activeCharMeta.shortName}</span>
+                                    <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="pointer-events-auto w-full max-w-md sm:w-auto sm:max-w-xl bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-md rounded-2xl px-3.5 py-2 flex items-center justify-between sm:justify-center gap-3 text-xs">
+                                <span className="inline-flex items-center gap-2 font-semibold text-stone-700 min-w-0">
+                                    {isWaitingSession && (
+                                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                                    )}
+                                    <span className="truncate">
+                                        {isWaitingSession
+                                            ? 'Naghihintay sa go-signal ng guro'
+                                            : isFinishedSession
+                                                ? 'Tapos na ang sesyon · Tingnan ang Rankings'
+                                                : 'Pindutin ang mapa upang magsimula'}
+                                    </span>
+                                </span>
+
+                                {/* Mobile Thumb-Zone Character Picker Trigger (Hidden on sm+ where it's in top-right) */}
+                                <button
+                                    type="button"
+                                    onClick={() => setCharacterPickerOpen(true)}
+                                    className="sm:hidden min-h-[36px] pl-1.5 pr-2.5 py-1 rounded-xl bg-[#FAF5EB] border border-stone-200 text-stone-800 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                                >
+                                    <img
+                                        src={activeCharMeta.portraitUrl}
+                                        alt={activeCharMeta.name}
+                                        className="w-6 h-6 rounded-lg object-contain bg-[#F2E6D0] shrink-0"
+                                    />
+                                    <span>{activeCharMeta.shortName}</span>
+                                    <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+                                </button>
+                            </div>
+                        )
                     )
                 )}
             </div>
@@ -747,7 +850,7 @@ export default function StudentWorldPage() {
                 open={completionOpen}
                 user={user}
                 world={world}
-                onClose={() => setCompletionOpen(false)}
+                onClose={handleCloseCompletion}
                 onOpenRankings={() => {
                     setLeaderboardOpen(true);
                     studentApi

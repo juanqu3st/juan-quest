@@ -2,7 +2,14 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { cameraOffset, getTerrainHeight, getWalkHeight, MAP_NODE_STOPS, WORLD_SCALE } from './worldConfig';
+import {
+    cameraOffset,
+    getTerrainHeight,
+    getWalkHeight,
+    MAP_NODE_STOPS,
+    PAHINGAHAN_STOP,
+    WORLD_SCALE,
+} from './worldConfig';
 
 const S = WORLD_SCALE;
 
@@ -43,7 +50,18 @@ function buildFlythroughWaypoints(aspect) {
 
 function standPoint(mapNumber) {
     const stop = MAP_NODE_STOPS[mapNumber] || MAP_NODE_STOPS[1];
+    if (mapNumber === PAHINGAHAN_STOP) {
+        return new THREE.Vector3(stop.x + 0.85, getWalkHeight(stop.x, stop.z) + 2.25, stop.z - 1.65);
+    }
     return new THREE.Vector3(stop.x, getWalkHeight(stop.x, stop.z) + 1.4, stop.z);
+}
+
+function cameraOffsetForStop(mapNumber, aspect) {
+    if (mapNumber === PAHINGAHAN_STOP) {
+        const k = aspect >= 1 ? 1 : Math.min(1.88, 0.90 / Math.max(0.32, aspect));
+        return new THREE.Vector3(-4.4, 8.2, 16.4).multiplyScalar(Math.max(1, k));
+    }
+    return cameraOffset(aspect);
 }
 
 export default function CameraRig({
@@ -73,15 +91,29 @@ export default function CameraRig({
     }, [aspect, startMapNumber]);
 
     const lastSnappedMapRef = useRef(null);
+    const settleGoalRef = useRef(null);
 
     useEffect(() => {
         if (!tourActive && guideStep === null && !isWalking && controlsRef?.current) {
-            if (!snappedInitialRef.current || lastSnappedMapRef.current !== startMapNumber) {
+            if (!snappedInitialRef.current) {
                 const p = standPoint(startMapNumber);
-                camera.position.copy(p).add(cameraOffset(aspect));
+                camera.position.copy(p).add(cameraOffsetForStop(startMapNumber, aspect));
                 controlsRef.current.target.copy(p);
                 controlsRef.current.update();
                 snappedInitialRef.current = true;
+                lastSnappedMapRef.current = startMapNumber;
+            } else if (lastSnappedMapRef.current !== startMapNumber) {
+                const p = standPoint(startMapNumber);
+                const pos = p.clone().add(cameraOffsetForStop(startMapNumber, aspect));
+                if (startMapNumber === PAHINGAHAN_STOP) {
+                    // Smooth scenic glide into the Pahingahan Kubo + Duyan view upon arrival
+                    settleGoalRef.current = { pos, look: p, remaining: 1.5 };
+                } else {
+                    settleGoalRef.current = null;
+                    camera.position.copy(pos);
+                    controlsRef.current.target.copy(p);
+                    controlsRef.current.update();
+                }
                 lastSnappedMapRef.current = startMapNumber;
             }
         }
@@ -159,7 +191,22 @@ export default function CameraRig({
             return;
         }
 
-        if (!tourActive) return;
+        if (!tourActive) {
+            const goal = settleGoalRef.current;
+            if (goal && !isWalking && guideStep === null) {
+                goal.remaining -= dt;
+                const ease = Math.min(1, dt * 3.4);
+                camera.position.lerp(goal.pos, ease);
+                if (controlsRef?.current) {
+                    controlsRef.current.target.lerp(goal.look, ease);
+                    controlsRef.current.update();
+                }
+                if (goal.remaining <= 0 || camera.position.distanceTo(goal.pos) < 0.08) {
+                    settleGoalRef.current = null;
+                }
+            }
+            return;
+        }
 
         elapsedRef.current += delta;
         const progress = Math.min(1, elapsedRef.current / totalDuration);
@@ -196,6 +243,9 @@ export default function CameraRig({
         <OrbitControls
             ref={controlsRef}
             enabled={!tourActive && guideStep === null && !isWalking}
+            onStart={() => {
+                settleGoalRef.current = null;
+            }}
             enablePan={false}
             enableDamping
             dampingFactor={0.08}

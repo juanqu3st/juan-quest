@@ -34,7 +34,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function () {
     // Public Auth Routes
     Route::post('/auth/join', [AuthController::class, 'joinByCode']);
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
-    Route::post('/auth/register', [AuthController::class, 'register']);
 
     // Authenticated Sanctum Routes
     Route::middleware('auth:sanctum')->group(function () {

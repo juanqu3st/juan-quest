@@ -3,7 +3,17 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { cameraOffset, CHAR_SCALE, getWalkHeight, MAP_NODE_STOPS, WALK_SPEED } from './worldConfig';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import {
+    cameraOffset,
+    CHAR_SCALE,
+    getHammockSwingAngle,
+    getTerrainHeight,
+    getWalkHeight,
+    MAP_NODE_STOPS,
+    PAHINGAHAN_ZONE,
+    WALK_SPEED,
+} from './worldConfig';
 import { getCharacterMeta } from '../../utils/characters';
 
 const FEET_LIFT = 0.14; // stands on top of the sandy road / plaza
@@ -42,6 +52,7 @@ export default function PlayerCharacter({
     startMapNumber,
     targetMapNumber,
     isWalking,
+    isResting = false,
     tourActive,
     lowQuality = false,
     controlsRef,
@@ -49,6 +60,7 @@ export default function PlayerCharacter({
     onArrived,
 }) {
     const groupRef = useRef();
+    const pendulumRef = useRef();
     const bodyHopRef = useRef();
     const shadowRef = useRef();
     const dustMeshRefs = useRef([]);
@@ -105,6 +117,13 @@ export default function PlayerCharacter({
         slot.vz = -tanZ * 0.28 + perpZ * 0.35;
     };
 
+    const hammockPivotPos = useMemo(() => {
+        const hx = PAHINGAHAN_ZONE.x + PAHINGAHAN_ZONE.hammockOffset[0];
+        const hz = PAHINGAHAN_ZONE.z + PAHINGAHAN_ZONE.hammockOffset[2];
+        const gy = getTerrainHeight(PAHINGAHAN_ZONE.x, PAHINGAHAN_ZONE.z);
+        return new THREE.Vector3(hx, gy + PAHINGAHAN_ZONE.hammockAnchorY, hz);
+    }, []);
+
     const place = (t) => {
         curve.getPointAt(t, tmp.pos);
         tmp.pos.y = getWalkHeight(tmp.pos.x, tmp.pos.z) + FEET_LIFT;
@@ -119,22 +138,67 @@ export default function PlayerCharacter({
         // Place on initial mount OR snap cleanly back when teacher triggers a full reset while idle
         if (!initializedRef.current || !isWalking) {
             progressTRef.current = MAP_NODE_STOPS[startMapNumber]?.t ?? 0;
-            place(progressTRef.current);
+            if (isResting) {
+                groupRef.current.position.copy(hammockPivotPos);
+                groupRef.current.rotation.set(0, PAHINGAHAN_ZONE.hammockYaw, 0);
+                if (playerPosRef?.current) {
+                    playerPosRef.current.set(
+                        hammockPivotPos.x,
+                        hammockPivotPos.y - PAHINGAHAN_ZONE.hammockSeatDrop,
+                        hammockPivotPos.z
+                    );
+                }
+            } else {
+                place(progressTRef.current);
+            }
             initializedRef.current = true;
         }
-    }, [curve, startMapNumber, isWalking]);
+    }, [curve, startMapNumber, isWalking, isResting, hammockPivotPos]);
 
     useEffect(() => {
         if (isWalking) {
             arrivedRef.current = false;
             stepAccumRef.current = 0;
+            if (pendulumRef.current) pendulumRef.current.rotation.set(0, 0, 0);
+            if (groupRef.current) {
+                place(progressTRef.current);
+            }
         }
     }, [isWalking, targetMapNumber]);
 
-    useFrame((_, delta) => {
+    useFrame(({ clock }, delta) => {
         const g = groupRef.current;
         if (!g || tourActive) return;
         const dt = Math.min(delta, 0.05);
+
+        if (isResting && !isWalking) {
+            g.position.copy(hammockPivotPos);
+            g.rotation.set(0, PAHINGAHAN_ZONE.hammockYaw, 0);
+            if (pendulumRef.current) {
+                pendulumRef.current.rotation.x = getHammockSwingAngle(clock.getElapsedTime(), true);
+            }
+            if (bodyHopRef.current) {
+                bodyHopRef.current.position.y = 0;
+            }
+            if (shadowRef.current) {
+                shadowRef.current.visible = false;
+            }
+            if (playerPosRef?.current) {
+                playerPosRef.current.set(
+                    hammockPivotPos.x,
+                    hammockPivotPos.y - PAHINGAHAN_ZONE.hammockSeatDrop,
+                    hammockPivotPos.z
+                );
+            }
+            return;
+        }
+
+        if (pendulumRef.current && pendulumRef.current.rotation.x !== 0) {
+            pendulumRef.current.rotation.x = 0;
+        }
+        if (shadowRef.current && !shadowRef.current.visible) {
+            shadowRef.current.visible = true;
+        }
 
         if (isWalking) {
             const targetT = MAP_NODE_STOPS[targetMapNumber]?.t ?? progressTRef.current;
@@ -241,12 +305,27 @@ export default function PlayerCharacter({
                     <circleGeometry args={[0.7, 24]} />
                     <meshBasicMaterial color="#0F172A" transparent opacity={0.25} depthWrite={false} />
                 </mesh>
-                <group ref={bodyHopRef}>
-                    <ModelErrorBoundary key={modelUrl} fallback={fallback}>
-                        <Suspense fallback={fallback}>
-                            <GlbCharacter url={modelUrl} isWalking={isWalking} />
-                        </Suspense>
-                    </ModelErrorBoundary>
+                <group ref={pendulumRef}>
+                    <group ref={bodyHopRef}>
+                        <group
+                            position={isResting ? [0.28, -0.96, 0.02] : [0, 0, 0]}
+                            rotation={isResting ? [0.16, Math.PI / 2, 0] : [0, 0, 0]}
+                        >
+                            <group rotation={isResting ? [-Math.PI / 2 + 0.14, 0, 0] : [0, 0, 0]}>
+                                <group position={isResting ? [0, -1.18, 0] : [0, 0, 0]}>
+                                    <ModelErrorBoundary key={modelUrl} fallback={fallback}>
+                                        <Suspense fallback={fallback}>
+                                            <GlbCharacter
+                                                url={modelUrl}
+                                                isWalking={isWalking}
+                                                isResting={isResting}
+                                            />
+                                        </Suspense>
+                                    </ModelErrorBoundary>
+                                </group>
+                            </group>
+                        </group>
+                    </group>
                 </group>
             </group>
 
@@ -276,12 +355,12 @@ export default function PlayerCharacter({
     );
 }
 
-function GlbCharacter({ url, isWalking }) {
+function GlbCharacter({ url, isWalking, isResting = false }) {
     const { scene } = useGLTF(url, '/draco/');
     const model = useMemo(() => cloneSkinned(scene), [scene]);
 
-    // Cache skeleton bones & exact rest poses using dot/underscore-insensitive lookup!
-    // (Three.js GLTFLoader sanitizes Blender's "thigh.L" -> "thighL", "shin.L" -> "shinL", etc.)
+    // Cache skeleton bones, exact rest poses, open eye meshes, and auto-fitted sleeping closed eyes!
+    // Works automatically across ALL 7 playable characters (Juan, Pedro, Maria, Alkalde, Pulis, Guwardya, Magnanakaw).
     const rig = useMemo(() => {
         const canonical = (s) => (s || '').replace(/[._\-\s]/g, '').toLowerCase();
         const wanted = new Set([
@@ -303,12 +382,26 @@ function GlbCharacter({ url, isWalking }) {
         ]);
         const bones = {};
         const restQ = {};
+        const openEyeMeshes = [];
+        let irisMesh = null;
+        let headMesh = null;
 
         model.traverse((child) => {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
                 child.frustumCulled = false;
+
+                const cname = canonical(child.name);
+                if (/(eyeiris|eyeshine|eyewhites|eyelids|eyelash)/.test(cname)) {
+                    openEyeMeshes.push(child);
+                }
+                if (!irisMesh && cname.includes('eyeiris')) {
+                    irisMesh = child;
+                }
+                if (!headMesh && (cname === 'jhead' || cname === 'phead' || cname === 'sphere001')) {
+                    headMesh = child;
+                }
             }
             const key = canonical(child.name);
             if ((child.isBone || child.type === 'Bone') && wanted.has(key) && !bones[key]) {
@@ -317,29 +410,139 @@ function GlbCharacter({ url, isWalking }) {
             }
         });
 
+        // Build curved peaceful closed-eye sleep arcs fitted directly to this character's face & bound to head bone!
+        let closedEyesMesh = null;
+        if (bones.head && irisMesh?.geometry) {
+            model.updateMatrixWorld(true);
+            irisMesh.geometry.computeBoundingBox();
+            const irisBox = irisMesh.geometry.boundingBox;
+
+            let hx0 = 0;
+            let hy0 = (irisBox.min.y + irisBox.max.y) * 0.5 + 0.032;
+            let hz0 = 0;
+            let rx = 0.2;
+            let ry = 0.185;
+            let rz = irisBox.max.z;
+
+            if (headMesh?.geometry) {
+                headMesh.geometry.computeBoundingBox();
+                const hb = headMesh.geometry.boundingBox;
+                hx0 = (hb.min.x + hb.max.x) * 0.5;
+                hy0 = (hb.min.y + hb.max.y) * 0.5;
+                hz0 = (hb.min.z + hb.max.z) * 0.5;
+                rx = Math.max(0.14, (hb.max.x - hb.min.x) * 0.5);
+                ry = Math.max(0.14, (hb.max.y - hb.min.y) * 0.5);
+                rz = Math.max(0.14, (hb.max.z - hb.min.z) * 0.5);
+            }
+
+            const eyeCenterY = (irisBox.min.y + irisBox.max.y) * 0.5;
+            const halfSpanX = irisBox.max.x;
+            const eyeCenterX = halfSpanX * 0.66;
+            const eyeHalfW = halfSpanX * 0.34;
+            const arcDip = (irisBox.max.y - irisBox.min.y) * 0.22;
+
+            // Project each arc point cleanly onto the curved surface of the character's head sphere (+7mm proud)
+            const surfacePoint = (x, y, zBoost = 0.007) => {
+                const nx = (x - hx0) / rx;
+                const ny = (y - hy0) / ry;
+                const under = Math.max(0.12, 1 - nx * nx - ny * ny);
+                const z = hz0 + rz * Math.sqrt(under) + zBoost;
+                return new THREE.Vector3(x, y, z);
+            };
+
+            const parts = [];
+            for (const side of [-1, 1]) {
+                const cx = side * eyeCenterX;
+                const curvePts = [
+                    surfacePoint(cx - eyeHalfW, eyeCenterY + arcDip * 0.45),
+                    surfacePoint(cx - eyeHalfW * 0.5, eyeCenterY - arcDip * 0.65),
+                    surfacePoint(cx, eyeCenterY - arcDip),
+                    surfacePoint(cx + eyeHalfW * 0.5, eyeCenterY - arcDip * 0.65),
+                    surfacePoint(cx + eyeHalfW, eyeCenterY + arcDip * 0.45),
+                ];
+                const arcCurve = new THREE.CatmullRomCurve3(curvePts);
+                const arcGeo = new THREE.TubeGeometry(arcCurve, 12, 0.0085, 6, false);
+                parts.push(arcGeo.index ? arcGeo.toNonIndexed() : arcGeo);
+
+                // Subtle outer eyelash curl tick for clear cartoon sleeping expression
+                const outerX = cx + side * eyeHalfW;
+                const tickCurve = new THREE.LineCurve3(
+                    surfacePoint(outerX - side * 0.004, eyeCenterY + arcDip * 0.35),
+                    surfacePoint(outerX + side * 0.011, eyeCenterY + arcDip * 0.95)
+                );
+                const tickGeo = new THREE.TubeGeometry(tickCurve, 4, 0.0055, 5, false);
+                parts.push(tickGeo.index ? tickGeo.toNonIndexed() : tickGeo);
+            }
+
+            const merged = mergeGeometries(parts, false);
+            parts.forEach((p) => p.dispose());
+
+            // Convert from mesh/model bind space into bones.head local space so eyes move 100% with head bone
+            const meshToWorld = irisMesh.matrixWorld.clone();
+            const worldToHead = bones.head.matrixWorld.clone().invert();
+            const toHeadLocal = new THREE.Matrix4().multiplyMatrices(worldToHead, meshToWorld);
+            merged.applyMatrix4(toHeadLocal);
+
+            const closedMat = new THREE.MeshStandardMaterial({
+                color: '#1C110B',
+                roughness: 0.72,
+            });
+            closedEyesMesh = new THREE.Mesh(merged, closedMat);
+            closedEyesMesh.name = 'JQ_ClosedSleepEyes';
+            closedEyesMesh.visible = false;
+            closedEyesMesh.frustumCulled = false;
+            bones.head.add(closedEyesMesh);
+        }
+
         const restHipsPos = bones.hips ? bones.hips.position.clone() : new THREE.Vector3(0, 0, 0.36);
-        return { bones, restQ, restHipsPos };
+        return { bones, restQ, restHipsPos, openEyeMeshes, closedEyesMesh };
     }, [model]);
+
+    useEffect(() => {
+        const closed = rig.closedEyesMesh;
+        return () => {
+            if (closed) {
+                closed.parent?.remove(closed);
+                closed.geometry?.dispose();
+                closed.material?.dispose();
+            }
+        };
+    }, [rig]);
+
+    useEffect(() => {
+        const sleeping = Boolean(isResting && !isWalking);
+        for (const m of rig.openEyeMeshes) {
+            m.visible = !sleeping;
+        }
+        if (rig.closedEyesMesh) {
+            rig.closedEyesMesh.visible = sleeping;
+        }
+    }, [rig, isResting, isWalking]);
 
     const animRef = useRef({
         phase: 0,
         idleT: 0,
         walkBlend: 0,
+        restBlend: 0,
         qTmp: new THREE.Quaternion(),
         eulerTmp: new THREE.Euler(0, 0, 0, 'XYZ'),
     });
 
-    // Lifelike real-time skeletal Walk (high knee lift + heel-to-toe stride + double-bounce + arm swing) & Idle!
+    // Lifelike real-time skeletal Walk, Idle, and Relaxed Hammock Siesta pose!
     useFrame((_, delta) => {
         const dt = Math.min(delta, 0.05);
         const st = animRef.current;
         const { bones, restQ, restHipsPos } = rig;
         if (!bones.hips) return;
 
-        // Smooth blend between Idle (0) and Walk (1)
-        const targetBlend = isWalking ? 1 : 0;
-        st.walkBlend += (targetBlend - st.walkBlend) * Math.min(1, dt * 12);
+        // Smooth blend between Idle (0), Walk (1), and Hammock Rest (1)
+        const targetWalk = isWalking ? 1 : 0;
+        const targetRest = isResting && !isWalking ? 1 : 0;
+        st.walkBlend += (targetWalk - st.walkBlend) * Math.min(1, dt * 12);
+        st.restBlend += (targetRest - st.restBlend) * Math.min(1, dt * 10);
         const w = st.walkBlend;
+        const r = st.restBlend;
+        const idleW = Math.max(0, 1 - w - r);
 
         st.idleT += dt;
         if (w > 0.005) {
@@ -369,16 +572,18 @@ function GlbCharacter({ url, isWalking }) {
 
         const liftL = Math.max(0, Math.cos(p + 0.35));
         const liftR = Math.max(0, Math.cos(p + Math.PI + 0.35));
+        const napBreath = Math.sin(st.idleT * 1.45);
+        const lazyFootBob = Math.sin(st.idleT * 1.85) * 0.12;
 
-        // Left Leg: forward/back stride + clear knee lift during swing phase + ankle roll
-        const thighL = (-sinL * 0.78 - 0.06) * w;
-        const shinL = (Math.pow(liftL, 1.15) * 1.15 + 0.06) * w;
-        const footL = (-sinL * 0.30 - liftL * 0.14) * w;
+        // Left Leg: walk stride OR relaxed bent siesta knee in hammock
+        const thighL = (-sinL * 0.78 - 0.06) * w + -0.42 * r;
+        const shinL = (Math.pow(liftL, 1.15) * 1.15 + 0.06) * w + 0.72 * r;
+        const footL = (-sinL * 0.30 - liftL * 0.14) * w + 0.16 * r;
 
-        // Right Leg (180° opposite phase!)
-        const thighR = (-sinR * 0.78 - 0.06) * w;
-        const shinR = (Math.pow(liftR, 1.15) * 1.15 + 0.06) * w;
-        const footR = (-sinR * 0.30 - liftR * 0.14) * w;
+        // Right Leg: opposite walk stride OR higher lazily bobbing knee in hammock
+        const thighR = (-sinR * 0.78 - 0.06) * w + -0.68 * r;
+        const shinR = (Math.pow(liftR, 1.15) * 1.15 + 0.06) * w + 1.06 * r;
+        const footR = (-sinR * 0.30 - liftR * 0.14) * w + (0.14 + lazyFootBob) * r;
 
         applyBone('thighl', thighL);
         applyBone('shinl', shinL);
@@ -387,31 +592,41 @@ function GlbCharacter({ url, isWalking }) {
         applyBone('shinr', shinR);
         applyBone('footr', footR);
 
-        // Opposite-phase Arm Swing + Natural Forward Elbow Pump (plus gentle Idle breathing)
-        const idleBreath = Math.sin(st.idleT * 2.2) * (1 - w);
-        const armL = sinL * 0.68 * w + idleBreath * 0.04;
-        const armR = sinR * 0.68 * w - idleBreath * 0.04;
-        const elbowL = (-0.24 - Math.max(0, -sinL) * 0.56) * w - 0.10 * (1 - w);
-        const elbowR = (-0.24 - Math.max(0, -sinR) * 0.56) * w - 0.10 * (1 - w);
+        // Opposite-phase Arm Swing (walk), gentle Idle breathing, OR hands folded lazily over tummy in hammock
+        const idleBreath = Math.sin(st.idleT * 2.2) * idleW;
+        const armL = sinL * 0.68 * w + idleBreath * 0.04 + (-0.30 + napBreath * 0.025) * r;
+        const armR = sinR * 0.68 * w - idleBreath * 0.04 + (-0.30 + napBreath * 0.025) * r;
+        const elbowL = (-0.24 - Math.max(0, -sinL) * 0.56) * w - 0.10 * idleW + -1.24 * r;
+        const elbowR = (-0.24 - Math.max(0, -sinR) * 0.56) * w - 0.10 * idleW + -1.24 * r;
 
         applyBone('upperarml', armL, 0, idleBreath * 0.03);
         applyBone('forearml', elbowL);
         applyBone('upperarmr', armR, 0, -idleBreath * 0.03);
         applyBone('forearmr', elbowR);
 
-        // Real-life Double-Bounce Hip Lift (highest at passing/mid-stance, lowest at contact!) + pelvic twist & sway
+        // Real-life Double-Bounce Hip Lift during walk; steady gentle rise in hammock
         const stepBounce = (Math.abs(cosL) - 0.32) * 0.042 * w + idleBreath * 0.006;
         bones.hips.position.set(restHipsPos.x, restHipsPos.y, restHipsPos.z + stepBounce);
         applyBone('hips', 0, sinL * 0.14 * w, sinL * 0.055 * w);
 
-        // Spine & Chest: natural forward walk lean + counter-twist opposite to hips
-        applyBone('spine', -0.10 * w + idleBreath * 0.025, -sinL * 0.11 * w, -sinL * 0.03 * w);
-        applyBone('chest', -0.04 * w, -sinL * 0.06 * w, 0);
+        // Spine & Chest: walk lean OR slight cozy hammock cradle curve with slow nap breathing
+        applyBone(
+            'spine',
+            -0.10 * w + idleBreath * 0.025 + (-0.12 + napBreath * 0.028) * r,
+            -sinL * 0.11 * w,
+            -sinL * 0.03 * w
+        );
+        applyBone('chest', -0.04 * w + (-0.09 + napBreath * 0.024) * r, -sinL * 0.06 * w, 0);
 
-        // Head: steady forward gaze during walk, cheerful curious look-around during Idle
-        const idleLookY = Math.sin(st.idleT * 0.85) * 0.24 * (1 - w);
-        const idleTiltX = Math.sin(st.idleT * 1.4) * 0.04 * (1 - w);
-        applyBone('head', 0.09 * w + idleTiltX, idleLookY, 0);
+        // Head: steady forward gaze during walk, curious look-around in idle, cozy pillow rest in hammock
+        const idleLookY = Math.sin(st.idleT * 0.85) * 0.24 * idleW;
+        const idleTiltX = Math.sin(st.idleT * 1.4) * 0.04 * idleW;
+        applyBone(
+            'head',
+            0.09 * w + idleTiltX + (-0.24 + napBreath * 0.035) * r,
+            idleLookY + -0.14 * r,
+            0
+        );
     });
 
     return <primitive object={model} scale={CHAR_SCALE} />;

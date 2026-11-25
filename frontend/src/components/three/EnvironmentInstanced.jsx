@@ -8,8 +8,10 @@ import {
     BARRIO_TINDAHANS,
     BRIDGE_X,
     createWorldCurve,
+    FINISH_ARCH_T,
     getTerrainHeight,
     MAP_NODE_STOPS,
+    PAHINGAHAN_ZONE,
     PATINTERO_ZONE,
     PLAZA_RADIUS,
     RIVER_FISHERMAN,
@@ -90,13 +92,20 @@ function generatePinoyBarrioFoliage() {
 
     const curve = createWorldCurve();
     const pathPts = curve.getSpacedPoints(240);
-    const finishPt = curve.getPointAt(1);
+    const finishPt = curve.getPointAt(FINISH_ARCH_T);
     const bridgeZ = riverCenterZ(BRIDGE_X);
 
     const isClear = (x, z, landmarkPad, pathPad) => {
         if (Math.abs(z - riverCenterZ(x)) < 4.5 * S) return false;
         if (Math.hypot(x - BRIDGE_X, z - bridgeZ) < 13.5) return false;
-        if (Math.hypot(x - finishPt.x, z - finishPt.z) < 9.0) return false;
+        if (Math.hypot(x - finishPt.x, z - finishPt.z) < 8.5) return false;
+        if (Math.hypot(x - PAHINGAHAN_ZONE.x, z - PAHINGAHAN_ZONE.z) < PAHINGAHAN_ZONE.clearRadius + landmarkPad * 0.35) {
+            return false;
+        }
+        // Keep camera sightline in front of Pahingahan open and clean
+        if (Math.hypot(x - (PAHINGAHAN_ZONE.x - 5.5), z - (PAHINGAHAN_ZONE.z + 13.5)) < 7.0) {
+            return false;
+        }
 
         if (Math.hypot(x - PATINTERO_ZONE.x, z - PATINTERO_ZONE.z) < PATINTERO_ZONE.clearRadius + landmarkPad * 0.3) {
             return false;

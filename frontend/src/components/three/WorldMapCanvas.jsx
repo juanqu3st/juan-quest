@@ -13,6 +13,7 @@ import MapLandmarkNode from './MapLandmarkNode';
 import EnvironmentInstanced from './EnvironmentInstanced';
 import PinoyBarrioProps from './PinoyBarrioProps';
 import BarrioLivingWorld from './BarrioLivingWorld';
+import PahingahanNode from './PahingahanNode';
 
 export default function WorldMapCanvas({
     maps = [],
@@ -21,6 +22,8 @@ export default function WorldMapCanvas({
     startMapNumber,
     targetMapNumber,
     isWalking,
+    isResting = false,
+    allMapsCompleted = false,
     tourActive,
     guideStep = null,
     isSessionWaiting = false,
@@ -30,6 +33,7 @@ export default function WorldMapCanvas({
     lockScreenProjectorRef,
     paused = false,
     onEnterMap,
+    onSelectPahingahan,
     onArrived,
     onTourCardChange,
     onTourFinish,
@@ -175,12 +179,23 @@ export default function WorldMapCanvas({
             {/* Skip heavy multi-part background crowd (~180 draw calls) in lowQuality so budget phones stay 50-60 FPS */}
             {!lowQuality && <BarrioLivingWorld lowQuality={false} />}
 
+            <PahingahanNode
+                characterKey={characterKey}
+                allCompleted={allMapsCompleted}
+                isResting={isResting}
+                tourActive={tourActive}
+                guideActive={guideStep !== null}
+                lowQuality={lowQuality}
+                onSelectPahingahan={onSelectPahingahan}
+            />
+
             <PlayerCharacter
                 characterKey={characterKey}
                 curve={curve}
                 startMapNumber={startMapNumber ?? currentMapNumber}
                 targetMapNumber={targetMapNumber}
                 isWalking={isWalking}
+                isResting={isResting}
                 tourActive={tourActive}
                 lowQuality={lowQuality}
                 controlsRef={controlsRef}

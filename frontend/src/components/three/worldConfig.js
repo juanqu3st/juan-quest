@@ -38,15 +38,20 @@ export const WALK_SPEED = 7.2;
 
 const S = WORLD_SCALE;
 
+export const PAHINGAHAN_STOP = 6;
+
 const BASE_STOPS = {
     1: [-24, 13], // Mapa 1: Ang Curfew (Munisipyo)
     2: [-11, 2], // Mapa 2: Ang Kuwartel
     3: [2, -8], // Mapa 3: Ang Kariton ng Lupa
     4: [14, 4], // Mapa 4: Ang Pinto at Palakol (Bahay Kubo)
     5: [25, 12], // Mapa 5: Ang mga Magnanakaw (Kagubatan)
+    6: [36.5, 3.0], // Pahingahan ni Juan: Bagong Bahay Kubo & Duyan
 };
 
-// Natural winding Pinoy dirt trail (lupa) connecting Mapa 1..5 straight to the Bamboo Finish Arch.
+const BASE_FINISH_ARCH = [32.0, 6.2];
+
+// Natural winding Pinoy dirt trail (lupa) connecting Mapa 1..5 through the Bamboo Finish Arch straight to Pahingahan ni Juan.
 const BASE_PATH = [
     [-24, 13],
     [-18, 8],
@@ -57,9 +62,34 @@ const BASE_PATH = [
     [14, 4],
     [19.5, 8.5],
     [25, 12],
-    [29.5, 11.2],
-    [32.5, 5.5],
+    [29.5, 10.6],
+    BASE_FINISH_ARCH,
+    [35.1, 3.9],
 ];
+
+/** Dedicated cozy Pahingahan clearing (Bagong Bahay Kubo + swaying Duyan under Acacia shade + napping Askal). */
+export const PAHINGAHAN_ZONE = {
+    x: BASE_STOPS[PAHINGAHAN_STOP][0] * S,
+    z: BASE_STOPS[PAHINGAHAN_STOP][1] * S,
+    clearRadius: 11.5,
+    hammockOffset: [-0.7, 0, -0.55],
+    hammockYaw: 0.24,
+    hammockAnchorY: 2.42,
+    hammockSeatDrop: 1.06,
+    hammockSpan: 4.95,
+    kuboOffset: [4.2, 0, -4.5],
+    kuboYaw: -0.62,
+    treeOffset: [-4.9, 0, -2.0],
+    askalOffset: [1.85, 0, 1.45],
+};
+
+/** Shared hammock pendulum swing angle so Duyan sling and resting character rock together smoothly (tumatabyog). */
+export function getHammockSwingAngle(elapsedTime, occupied = true) {
+    if (!occupied) {
+        return Math.sin(elapsedTime * 1.15) * 0.055;
+    }
+    return Math.sin(elapsedTime * 1.75) * 0.24;
+}
 
 /** Curated roadside Pinoy Sari-Sari Stores (Tindahan), verified clear of landmarks, road, and river. */
 export const BARRIO_TINDAHANS = [
@@ -113,23 +143,23 @@ function rawValleyHeight(x, z) {
     return y;
 }
 
-// Natural flat clearings for all 5 map stops + the open Patintero playground!
+// Natural flat clearings for all 5 map stops, Pahingahan ni Juan, and the open Patintero playground!
 const STOP_PLATEAU_Y = {};
-for (let m = 1; m <= 5; m++) {
+for (let m = 1; m <= PAHINGAHAN_STOP; m++) {
     const [sx, sz] = BASE_STOPS[m];
-    STOP_PLATEAU_Y[m] = rawValleyHeight(sx, sz) + 0.52;
+    STOP_PLATEAU_Y[m] = rawValleyHeight(sx, sz) + (m === PAHINGAHAN_STOP ? 0.35 : 0.52);
 }
 const PATINTERO_PLATEAU_Y = rawValleyHeight(PATINTERO_ZONE.x / S, PATINTERO_ZONE.z / S) + 0.18;
 
 function baseHeight(x, z) {
     let y = rawValleyHeight(x, z);
 
-    for (let m = 1; m <= 5; m++) {
+    for (let m = 1; m <= PAHINGAHAN_STOP; m++) {
         const [sx, sz] = BASE_STOPS[m];
         const d = Math.hypot(x - sx, z - sz);
-        if (d < 7.6) {
-            const inner = 4.4;
-            const outer = 7.6;
+        const inner = m === PAHINGAHAN_STOP ? 5.2 : 4.4;
+        const outer = m === PAHINGAHAN_STOP ? 8.6 : 7.6;
+        if (d < outer) {
             const k = d <= inner ? 1 : 1 - (d - inner) / (outer - inner);
             const blend = k * k * (3 - 2 * k);
             y = y + (STOP_PLATEAU_Y[m] - y) * blend;
@@ -157,12 +187,12 @@ export function createWorldCurve() {
     return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.45);
 }
 
-export const MAP_NODE_STOPS = (() => {
+export const { MAP_NODE_STOPS, FINISH_ARCH_T } = (() => {
     const curve = createWorldCurve();
     const samples = 1600;
     const pts = curve.getSpacedPoints(samples);
     const stops = {};
-    for (let m = 1; m <= 5; m++) {
+    for (let m = 1; m <= PAHINGAHAN_STOP; m++) {
         const x = BASE_STOPS[m][0] * S;
         const z = BASE_STOPS[m][1] * S;
         let best = 0;
@@ -176,7 +206,20 @@ export const MAP_NODE_STOPS = (() => {
         });
         stops[m] = { t: best / samples, x, z };
     }
-    return stops;
+
+    const ax = BASE_FINISH_ARCH[0] * S;
+    const az = BASE_FINISH_ARCH[1] * S;
+    let bestArch = samples;
+    let bestArchD = Infinity;
+    pts.forEach((p, i) => {
+        const d = (p.x - ax) ** 2 + (p.z - az) ** 2;
+        if (d < bestArchD) {
+            bestArchD = d;
+            bestArch = i;
+        }
+    });
+
+    return { MAP_NODE_STOPS: stops, FINISH_ARCH_T: bestArch / samples };
 })();
 
 export const FINISH_T = 1;

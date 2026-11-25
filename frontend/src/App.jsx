@@ -5,7 +5,6 @@ import { AuthProvider, ProtectedRoute } from './context/AuthContext';
 import { PwaProvider } from './context/PwaContext';
 import { ToastProvider } from './context/ToastContext';
 import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
 
 const StudentWorldPage = lazy(() => import('./pages/student/StudentWorldPage'));
 const TeacherSessionsPage = lazy(() => import('./pages/teacher/TeacherSessionsPage'));
@@ -32,7 +31,6 @@ export default function App() {
                             <Suspense fallback={<PageLoader />}>
                                 <Routes>
                                     <Route path="/login" element={<LoginPage />} />
-                                    <Route path="/register" element={<RegisterPage />} />
 
                                     <Route
                                         path="/student/world"
