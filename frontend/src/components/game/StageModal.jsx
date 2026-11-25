@@ -10,6 +10,7 @@ import {
     getAudioVolume,
     pickPraiseHeadline,
     playFeedbackAudio,
+    preloadFeedbackAudio,
     setAudioVolume,
     stopAllFeedbackAudio,
     unlockAudio,
@@ -126,6 +127,7 @@ export default function StageModal({
         map?.progress?.pending_lifeline ?? null
     );
     const [lifelineDelaying, setLifelineDelaying] = useState(false);
+    const [feedbackLock, setFeedbackLock] = useState(false);
     const [drafts, setDrafts] = useState(() =>
         initialResume?.mapId === map?.id ? initialResume.drafts || {} : {}
     );
@@ -142,6 +144,8 @@ export default function StageModal({
     const levelEndedRef = useRef(false);
     const pendingLifelineRef = useRef(pendingLifeline);
     const lifelineDelayingRef = useRef(false);
+    const feedbackLockRef = useRef(false);
+    const feedbackSeqRef = useRef(0);
     const lifelineDelayTimerRef = useRef(null);
     const bgmRef = useRef(null);
     const secondsLeftRef = useRef(secondsLeft);
@@ -153,10 +157,14 @@ export default function StageModal({
     timeLimitRef.current = timeLimitUsed;
     pendingLifelineRef.current = pendingLifeline;
     lifelineDelayingRef.current = lifelineDelaying;
+    feedbackLockRef.current = feedbackLock;
     draftsRef.current = drafts;
 
     useEffect(() => {
-        return () => clearTimeout(lifelineDelayTimerRef.current);
+        return () => {
+            feedbackSeqRef.current += 1;
+            clearTimeout(lifelineDelayTimerRef.current);
+        };
     }, []);
 
     const perQuestionTimer = isPerQuestionStrategy(map?.strategy_type);
@@ -164,6 +172,11 @@ export default function StageModal({
     const praiseAudioUrl = resolveStorageUrl(map?.praise_audio_path || lesson?.praise_audio_path);
     const wrongAudioUrl = resolveStorageUrl(map?.wrong_audio_path || lesson?.wrong_audio_path);
     const bgmAudioUrl = resolveStorageUrl(lesson?.bgm_audio_path);
+
+    // Preload teacher praise/wrong audio into memory Blob URLs as soon as the map opens (0ms production playback!)
+    useEffect(() => {
+        preloadFeedbackAudio([praiseAudioUrl, wrongAudioUrl]);
+    }, [praiseAudioUrl, wrongAudioUrl]);
 
     const handleVolumeChange = (nextPct) => {
         const clamped = Math.max(0, Math.min(100, Math.round(Number(nextPct) || 0)));
@@ -322,8 +335,8 @@ export default function StageModal({
                 clearInterval(interval);
                 return;
             }
-            // Pause countdown cleanly while wrong-answer shake plays OR while deciding on the Heart Lifeline modal
-            if (pendingLifelineRef.current || lifelineDelayingRef.current) {
+            // Pause countdown cleanly while praise/wrong feedback plays OR while deciding on the Heart Lifeline modal
+            if (pendingLifelineRef.current || lifelineDelayingRef.current || feedbackLockRef.current) {
                 return;
             }
             totalElapsedRef.current += 1;
@@ -345,6 +358,7 @@ export default function StageModal({
             secondsLeft === 0 &&
             !pendingLifelineRef.current &&
             !lifelineDelayingRef.current &&
+            !feedbackLockRef.current &&
             !timeoutFiredRef.current &&
             !levelEndedRef.current
         ) {
@@ -404,23 +418,24 @@ export default function StageModal({
 
             setHeartsRemaining(data.hearts_remaining);
             setProjectedScore(data.projected_score);
-            setCompletedChallengeIds(data.completed_challenge_ids || []);
-            setResolvedChallengeIds(data.resolved_challenge_ids || data.completed_challenge_ids || []);
             setLastDetails(data.details || null);
 
+            const seq = ++feedbackSeqRef.current;
+
             if (data.awaiting_lifeline && data.pending_lifeline) {
+                setCompletedChallengeIds(data.completed_challenge_ids || []);
+                setResolvedChallengeIds(data.resolved_challenge_ids || data.completed_challenge_ids || []);
                 setShakeTrigger((c) => c + 1);
-                playFeedbackAudio('wrong', wrongAudioUrl);
-                // Let the student clearly see the wrong-answer red flash + shake animation before sliding up the sheet!
+                // Pause timer & wait cleanly for wrong feedback audio + shake animation before sliding up Heart Lifeline!
                 lifelineDelayingRef.current = true;
                 setLifelineDelaying(true);
-                clearTimeout(lifelineDelayTimerRef.current);
                 const nextLifeline = data.pending_lifeline;
-                lifelineDelayTimerRef.current = setTimeout(() => {
+                playFeedbackAudio('wrong', wrongAudioUrl, undefined, { minWaitMs: 520, maxWaitMs: 2600 }).then(() => {
+                    if (feedbackSeqRef.current !== seq) return;
                     lifelineDelayingRef.current = false;
                     setLifelineDelaying(false);
                     setPendingLifeline(nextLifeline);
-                }, 480);
+                });
                 return data;
             }
 
@@ -431,39 +446,67 @@ export default function StageModal({
                 setPendingLifeline(null);
                 dismissToast();
                 clearStageResume(userId);
-                playFeedbackAudio(
-                    data.finish_reason === 'completed' ? 'complete' : 'wrong',
-                    data.is_correct ? praiseAudioUrl : wrongAudioUrl
-                );
-                setSummaryResult({
-                    score: data.final_score,
+
+                // Keep final question/board visible with green confirmation while full papuri/wrong audio finishes!
+                feedbackLockRef.current = true;
+                setFeedbackLock(true);
+                if (data.is_correct) {
+                    showToast('success', data.feedback, pickPraiseHeadline());
+                }
+                const nextSummary = {
+                    score: data.final_score ?? 0,
                     hearts_remaining: data.hearts_remaining,
                     finish_reason: data.finish_reason,
                     next_map_number: data.current_map_number,
                     feedback: data.feedback,
+                };
+                playFeedbackAudio(
+                    data.finish_reason === 'completed' ? 'complete' : 'wrong',
+                    data.is_correct ? praiseAudioUrl : wrongAudioUrl,
+                    undefined,
+                    { minWaitMs: 650, maxWaitMs: 3800 }
+                ).then(() => {
+                    if (feedbackSeqRef.current !== seq) return;
+                    feedbackLockRef.current = false;
+                    setFeedbackLock(false);
+                    dismissToast();
+                    setCompletedChallengeIds(data.completed_challenge_ids || []);
+                    setResolvedChallengeIds(data.resolved_challenge_ids || data.completed_challenge_ids || []);
+                    setSummaryResult(nextSummary);
+                    setStep('stage_summary');
                 });
-                setStep('stage_summary');
             } else {
-                // Reset per-question timer when advancing (either answered right OR 0-heart auto-advance)
-                if (perQuestionTimer) {
-                    setSecondsLeft(timeLimitRef.current);
-                }
                 const toastHeading = data.is_correct
                     ? pickPraiseHeadline()
                     : isOfflineMode
                       ? 'Susunod na tanong.'
                       : '0 pts · Susunod.';
                 const spokenLabel = data.is_correct ? toastHeading : 'Susunod na tanong.';
-                playFeedbackAudio(
-                    data.is_correct ? 'correct' : 'wrong',
-                    data.is_correct ? praiseAudioUrl : wrongAudioUrl,
-                    spokenLabel
-                );
+
+                // Pause countdown & let student see the green/red result AND hear the full praise before advancing!
+                feedbackLockRef.current = true;
+                setFeedbackLock(true);
                 showToast(
                     data.is_correct ? 'success' : 'error',
                     data.feedback,
                     toastHeading
                 );
+                playFeedbackAudio(
+                    data.is_correct ? 'correct' : 'wrong',
+                    data.is_correct ? praiseAudioUrl : wrongAudioUrl,
+                    spokenLabel,
+                    { minWaitMs: 520, maxWaitMs: 3600 }
+                ).then(() => {
+                    if (feedbackSeqRef.current !== seq) return;
+                    feedbackLockRef.current = false;
+                    setFeedbackLock(false);
+                    setCompletedChallengeIds(data.completed_challenge_ids || []);
+                    setResolvedChallengeIds(data.resolved_challenge_ids || data.completed_challenge_ids || []);
+                    if (perQuestionTimer) {
+                        timeoutFiredRef.current = false;
+                        setSecondsLeft(timeLimitRef.current);
+                    }
+                });
             }
             return data;
         } catch (err) {
@@ -621,6 +664,9 @@ export default function StageModal({
     };
 
     const handleClose = () => {
+        feedbackSeqRef.current += 1;
+        feedbackLockRef.current = false;
+        setFeedbackLock(false);
         syncElapsedBeforeExit();
         dismissToast();
         stopAllFeedbackAudio();
@@ -636,6 +682,9 @@ export default function StageModal({
     };
 
     const handleConfirmQuit = () => {
+        feedbackSeqRef.current += 1;
+        feedbackLockRef.current = false;
+        setFeedbackLock(false);
         syncElapsedBeforeExit();
         dismissToast();
         stopAllFeedbackAudio();
@@ -948,7 +997,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying || feedbackLock}
                                         savedWrongByChallenge={drafts.wrongLettersByChallenge}
                                         onSaveWrongByChallenge={(val) =>
                                             handleDraftChange('wrongLettersByChallenge', val)
@@ -960,7 +1009,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying || feedbackLock}
                                         savedWrongByChallenge={drafts.wrongLettersByChallenge}
                                         onSaveWrongByChallenge={(val) =>
                                             handleDraftChange('wrongLettersByChallenge', val)
@@ -971,7 +1020,7 @@ export default function StageModal({
                                     <SequenceChallengeGame
                                         challenges={map.challenges}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying || feedbackLock}
                                         savedOrder={drafts.sequenceSlots}
                                         onSaveOrder={(val) => handleDraftChange('sequenceSlots', val)}
                                     />
@@ -980,7 +1029,7 @@ export default function StageModal({
                                     <MatchingGame
                                         challenges={map.challenges}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying || feedbackLock}
                                         lastDetails={lastDetails}
                                         savedPairs={drafts.matchingPairs}
                                         onSavePairs={(val) => handleDraftChange('matchingPairs', val)}
@@ -993,7 +1042,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying || feedbackLock}
                                         savedPickedByChallenge={drafts.fourPicsPickedByChallenge}
                                         onSavePickedByChallenge={(val) =>
                                             handleDraftChange('fourPicsPickedByChallenge', val)

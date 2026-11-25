@@ -10,9 +10,68 @@ const WRONG_PHRASES = ['Subukan muli.', 'Hindi tama, subukan ulit.'];
 let audioCtx = null;
 let activeFeedbackEl = null;
 let activeFeedbackBlobUrl = null;
+let activeFeedbackResolve = null;
 let activePromptEl = null;
 let activePromptBlobUrl = null;
 let praiseCursor = 0;
+
+// In-memory preloaded Blob URL cache for instant 0ms praise/wrong audio playback (especially over production Cloudinary!)
+const preloadedFeedbackMap = new Map();
+const preloadingFeedbackPromises = new Map();
+
+function settleActiveFeedback() {
+    if (activeFeedbackResolve) {
+        const resolve = activeFeedbackResolve;
+        activeFeedbackResolve = null;
+        try {
+            resolve();
+        } catch {
+            // ignore
+        }
+    }
+}
+
+/**
+ * Preload teacher-uploaded praise/wrong audio into memory Blob URLs as soon as a map opens
+ * so answering a question plays feedback at 0ms lag even on production mobile networks.
+ */
+export function preloadFeedbackAudio(urls = []) {
+    if (typeof window === 'undefined' || !Array.isArray(urls)) return;
+    urls.forEach((rawUrl) => {
+        if (!rawUrl || typeof rawUrl !== 'string') return;
+        if (preloadedFeedbackMap.has(rawUrl) || preloadingFeedbackPromises.has(rawUrl)) return;
+
+        const job = resolveCachedAudioUrl(rawUrl)
+            .then(async ({ url, isObjectUrl }) => {
+                if (isObjectUrl && url) {
+                    preloadedFeedbackMap.set(rawUrl, url);
+                    return url;
+                }
+                // Warm fetch into an in-memory Blob URL so first playback never waits for Cloudinary TLS/buffering
+                const targetUrl = url || rawUrl;
+                try {
+                    const res = await fetch(targetUrl, { mode: 'cors' });
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        if (blob && blob.size > 0) {
+                            const objUrl = URL.createObjectURL(blob);
+                            preloadedFeedbackMap.set(rawUrl, objUrl);
+                            return objUrl;
+                        }
+                    }
+                } catch {
+                    // Fallback: warm browser HTTP cache via lightweight Audio preload
+                }
+                return targetUrl;
+            })
+            .catch(() => null)
+            .finally(() => {
+                preloadingFeedbackPromises.delete(rawUrl);
+            });
+
+        preloadingFeedbackPromises.set(rawUrl, job);
+    });
+}
 
 function revokeFeedbackBlob() {
     if (activeFeedbackBlobUrl) {
@@ -101,6 +160,8 @@ export function setAudioMuted(muted) {
 
 export function stopAllFeedbackAudio() {
     if (activeFeedbackEl) {
+        activeFeedbackEl.onended = null;
+        activeFeedbackEl.onerror = null;
         try {
             activeFeedbackEl.pause();
             activeFeedbackEl.currentTime = 0;
@@ -110,6 +171,7 @@ export function stopAllFeedbackAudio() {
         activeFeedbackEl = null;
     }
     revokeFeedbackBlob();
+    settleActiveFeedback();
     if (activePromptEl) {
         try {
             activePromptEl.pause();
@@ -135,8 +197,10 @@ export function pickPraiseHeadline() {
     return label;
 }
 
-function speakTemporaryVoice(text) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+function speakTemporaryVoice(text, onFinished) {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        return false;
+    }
     try {
         const synth = window.speechSynthesis;
         synth.cancel();
@@ -151,9 +215,15 @@ function speakTemporaryVoice(text) {
         utter.rate = 1.05;
         utter.pitch = 1.05;
         utter.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.9));
+        if (onFinished) {
+            utter.onend = onFinished;
+            utter.onerror = onFinished;
+        }
         synth.speak(utter);
+        return true;
     } catch {
         // speech synthesis optional fallback
+        return false;
     }
 }
 
@@ -305,14 +375,17 @@ export function playVictoryFanfare() {
     });
 }
 
-export function playFeedbackAudio(type, customUrl, spokenText) {
+export function playFeedbackAudio(type, customUrl, spokenText, options = {}) {
+    const minWaitMs = Math.max(0, Number(options.minWaitMs ?? 0));
+    const maxWaitMs = Math.max(minWaitMs + 200, Number(options.maxWaitMs ?? 3600));
+
     if (type === 'correct') triggerHaptic('correct');
     else if (type === 'complete') triggerHaptic('victory');
     else if (type === 'wrong') triggerHaptic('wrong');
 
-    if (isAudioMuted()) return;
-
     if (activeFeedbackEl) {
+        activeFeedbackEl.onended = null;
+        activeFeedbackEl.onerror = null;
         try {
             activeFeedbackEl.pause();
             activeFeedbackEl.currentTime = 0;
@@ -322,49 +395,129 @@ export function playFeedbackAudio(type, customUrl, spokenText) {
         activeFeedbackEl = null;
     }
     revokeFeedbackBlob();
+    settleActiveFeedback();
 
-    if (customUrl) {
-        resolveCachedAudioUrl(customUrl)
-            .then(({ url, isObjectUrl }) => {
-                if (!url || isAudioMuted()) {
-                    if (isObjectUrl && url) URL.revokeObjectURL(url);
-                    return;
+    if (isAudioMuted()) {
+        if (minWaitMs <= 0) return Promise.resolve();
+        return new Promise((resolve) => setTimeout(resolve, minWaitMs));
+    }
+
+    const startedAt = Date.now();
+
+    return new Promise((resolve) => {
+        let settled = false;
+        let maxTimer = null;
+        let minTimer = null;
+
+        const finishNow = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(maxTimer);
+            clearTimeout(minTimer);
+            if (activeFeedbackResolve === finishImmediate) {
+                activeFeedbackResolve = null;
+            }
+            resolve();
+        };
+
+        const finishImmediate = () => finishNow();
+
+        const finishRespectingMin = () => {
+            if (settled) return;
+            const elapsed = Date.now() - startedAt;
+            const remaining = minWaitMs - elapsed;
+            if (remaining > 16) {
+                clearTimeout(minTimer);
+                minTimer = setTimeout(finishNow, remaining);
+            } else {
+                finishNow();
+            }
+        };
+
+        activeFeedbackResolve = finishImmediate;
+        maxTimer = setTimeout(finishNow, maxWaitMs);
+
+        const playFallbackAndWait = () => {
+            playFallbackTone(type);
+            let phrase = spokenText;
+            if (!phrase) {
+                if (type === 'correct') phrase = pickPraiseHeadline();
+                else if (type === 'complete') phrase = 'Binabati kita! Tapos na ang mapa!';
+                else if (type === 'wrong') phrase = WRONG_PHRASES[praiseCursor % WRONG_PHRASES.length];
+            }
+            const spoke = phrase ? speakTemporaryVoice(phrase, finishRespectingMin) : false;
+            if (!spoke) {
+                const chimeMs = type === 'complete' ? 680 : 420;
+                minTimer = setTimeout(finishRespectingMin, chimeMs);
+            }
+        };
+
+        const startCustomPlayback = (srcUrl, ownsBlobUrl) => {
+            if (settled || !srcUrl || isAudioMuted()) {
+                if (ownsBlobUrl && srcUrl) URL.revokeObjectURL(srcUrl);
+                finishRespectingMin();
+                return;
+            }
+            const audio = new Audio(srcUrl);
+            audio.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.95));
+            activeFeedbackEl = audio;
+            if (ownsBlobUrl) activeFeedbackBlobUrl = srcUrl;
+
+            const cleanupAndFinish = (fallback = false) => {
+                audio.onended = null;
+                audio.onerror = null;
+                if (activeFeedbackEl === audio) {
+                    activeFeedbackEl = null;
+                    if (ownsBlobUrl) revokeFeedbackBlob();
+                } else if (ownsBlobUrl) {
+                    URL.revokeObjectURL(srcUrl);
                 }
-                const audio = new Audio(url);
-                audio.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.95));
-                activeFeedbackEl = audio;
-                if (isObjectUrl) activeFeedbackBlobUrl = url;
-                const clearRef = () => {
-                    if (activeFeedbackEl === audio) {
-                        activeFeedbackEl = null;
-                        revokeFeedbackBlob();
-                    } else if (isObjectUrl) {
-                        URL.revokeObjectURL(url);
+                if (fallback && !settled) {
+                    playFallbackAndWait();
+                } else {
+                    finishRespectingMin();
+                }
+            };
+
+            audio.onended = () => cleanupAndFinish(false);
+            audio.onerror = () => cleanupAndFinish(true);
+
+            const playPromise = audio.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch(() => cleanupAndFinish(true));
+            }
+        };
+
+        if (customUrl) {
+            // Instant 0ms synchronous playback when preloaded!
+            const preloadedUrl = preloadedFeedbackMap.get(customUrl);
+            if (preloadedUrl) {
+                startCustomPlayback(preloadedUrl, false);
+                return;
+            }
+
+            // Otherwise resolve from CacheStorage or network (still guarded cleanly by maxTimer)
+            resolveCachedAudioUrl(customUrl)
+                .then(({ url, isObjectUrl }) => {
+                    if (settled) {
+                        if (isObjectUrl && url) URL.revokeObjectURL(url);
+                        return;
                     }
-                };
-                audio.onended = clearRef;
-                audio.onerror = clearRef;
-                audio.play().catch(() => {
-                    clearRef();
-                    playFallbackTone(type);
+                    if (isObjectUrl && url) {
+                        preloadedFeedbackMap.set(customUrl, url);
+                        startCustomPlayback(url, false);
+                    } else {
+                        startCustomPlayback(url || customUrl, false);
+                    }
+                })
+                .catch(() => {
+                    if (!settled) playFallbackAndWait();
                 });
-            })
-            .catch(() => {
-                playFallbackTone(type);
-            });
-        return;
-    }
+            return;
+        }
 
-    playFallbackTone(type);
-
-    if (type === 'correct') {
-        speakTemporaryVoice(spokenText || pickPraiseHeadline());
-    } else if (type === 'complete') {
-        speakTemporaryVoice(spokenText || 'Binabati kita! Tapos na ang mapa!');
-    } else if (type === 'wrong') {
-        const phrase = WRONG_PHRASES[praiseCursor % WRONG_PHRASES.length];
-        speakTemporaryVoice(spokenText || phrase);
-    }
+        playFallbackAndWait();
+    });
 }
 
 /**

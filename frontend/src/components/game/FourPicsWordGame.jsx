@@ -78,11 +78,11 @@ export default function FourPicsWordGame({
         const nextIdx = challenges.findIndex((c) => !completedChallengeIds.includes(c.id));
         if (nextIdx !== -1 && nextIdx !== currentIndex) {
             clearTimeout(advanceTimerRef.current);
-            // Brief emerald pop before gliding smoothly to the next puzzle
+            // Smooth crisp glide right after StageModal finishes feedback audio
             advanceTimerRef.current = setTimeout(() => {
                 setWordFeedback('');
                 setCurrentIndex(nextIdx);
-            }, 320);
+            }, 90);
         }
     }, [completedChallengeIds, challenges, currentIndex]);
 

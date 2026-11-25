@@ -46,13 +46,13 @@ export default function MultipleChoiceGame({
         const nextIdx = challenges.findIndex((c) => !completedChallengeIds.includes(c.id));
         if (nextIdx !== -1 && nextIdx !== currentIndex) {
             clearTimeout(advanceTimerRef.current);
-            // Brief green confirmation flash before advancing smoothly
+            // Smooth crisp advance right after StageModal finishes feedback audio
             advanceTimerRef.current = setTimeout(() => {
                 setCurrentIndex(nextIdx);
                 setSelectedLetter(null);
                 setSolvedLetter(null);
                 setJustWrongLetter(null);
-            }, 340);
+            }, 90);
         }
     }, [completedChallengeIds, challenges, currentIndex]);
 

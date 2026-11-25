@@ -178,7 +178,7 @@ export default function ScenePlaceholderGuide({
         if (!playingNow) return;
         controlsHideTimerRef.current = setTimeout(() => {
             setControlsVisible(false);
-        }, 2500);
+        }, 3000);
     };
 
     const safeInitial = Math.min(Math.max(0, initialSceneIdx || 0), Math.max(0, timedScenes.length - 1));
@@ -667,8 +667,9 @@ export default function ScenePlaceholderGuide({
                     <div
                         ref={playerBoxRef}
                         onClick={handleVideoTap}
-                        onMouseMove={() => {
-                            if (isPlaying) {
+                        onPointerMove={(e) => {
+                            // Strictly mouse hover only (NEVER intercept mobile touch taps!)
+                            if (e.pointerType === 'mouse' && isPlaying) {
                                 setControlsVisible(true);
                                 scheduleControlsAutoHide(true);
                             }
@@ -783,7 +784,7 @@ export default function ScenePlaceholderGuide({
                                     {formatVideoClock(currentTime)} / {formatVideoClock(duration)}
                                 </span>
 
-                                <div className="relative flex-1 h-5 flex items-center">
+                                <div className="relative flex-1 h-7 flex items-center">
                                     <div className="w-full h-1.5 rounded-full bg-white/30 overflow-hidden">
                                         <div
                                             className="h-full bg-[#EA580C] rounded-full"
@@ -796,6 +797,23 @@ export default function ScenePlaceholderGuide({
                                         max={duration || 0}
                                         step={0.1}
                                         value={Math.min(currentTime, duration || 0)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onPointerDown={(e) => {
+                                            e.stopPropagation();
+                                            clearTimeout(controlsHideTimerRef.current);
+                                        }}
+                                        onPointerUp={(e) => {
+                                            e.stopPropagation();
+                                            if (isPlaying) scheduleControlsAutoHide(true);
+                                        }}
+                                        onTouchStart={(e) => {
+                                            e.stopPropagation();
+                                            clearTimeout(controlsHideTimerRef.current);
+                                        }}
+                                        onTouchEnd={(e) => {
+                                            e.stopPropagation();
+                                            if (isPlaying) scheduleControlsAutoHide(true);
+                                        }}
                                         onChange={handleSeekInput}
                                         aria-label="Oras ng video"
                                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"

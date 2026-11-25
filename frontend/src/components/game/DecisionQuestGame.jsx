@@ -51,7 +51,7 @@ export default function DecisionQuestGame({
                 setSelectedLetter(null);
                 setSolvedLetter(null);
                 setJustWrongLetter(null);
-            }, 340);
+            }, 90);
         }
     }, [completedChallengeIds, challenges, currentIndex]);
 
