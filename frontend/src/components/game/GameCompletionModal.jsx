@@ -3,7 +3,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Award, Check, CheckCircle2, Clock, Copy, Download, Heart, ShieldCheck, Trophy } from 'lucide-react';
 import { buildSignedResultQrPayload } from '../../utils/offlineEngine';
 import { downloadResultQrImage } from '../../utils/qrExport';
+import { playVictoryFanfare } from '../../utils/gameAudio';
 import QrCodeImage from '../qr/QrCodeImage';
+import VictoryConfettiCanvas, { useCountUp } from './VictoryConfettiCanvas';
 
 function getPerformanceLabel(score, maxScore) {
     const ratio = maxScore > 0 ? score / maxScore : 0;
@@ -36,7 +38,6 @@ export default function GameCompletionModal({
     const maps = world?.maps || [];
     const totalScore = world?.total_score ?? 0;
     const maxScore = world?.max_total_score ?? 50;
-    const pct = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
     const perf = getPerformanceLabel(totalScore, maxScore);
 
     const isGroupMode = world?.session?.play_mode === 'group';
@@ -54,6 +55,15 @@ export default function GameCompletionModal({
     const [resultQrPayload, setResultQrPayload] = useState(null);
     const [copiedCode, setCopiedCode] = useState(false);
     const [downloadedQr, setDownloadedQr] = useState(false);
+
+    const animatedScore = useCountUp(totalScore, open && !isOfflineMode, 920);
+    const animatedPct = maxScore > 0 ? Math.round((animatedScore / maxScore) * 100) : 0;
+
+    useEffect(() => {
+        if (open) {
+            playVictoryFanfare();
+        }
+    }, [open]);
 
     useEffect(() => {
         if (!open || !isOfflineMode) return undefined;
@@ -98,8 +108,9 @@ export default function GameCompletionModal({
                     exit={{ opacity: 0 }}
                     className="fixed inset-0 z-[60] h-dvh bg-[#FAF8F5] flex flex-col overflow-y-auto pt-safe pb-safe"
                 >
+                    <VictoryConfettiCanvas active={open} intensity="grand" burstOriginY={0.26} />
                     <div
-                        className={`${
+                        className={`relative z-20 ${
                             isOfflineMode ? 'max-w-md' : 'max-w-2xl'
                         } mx-auto w-full px-4 sm:px-6 py-6 sm:py-10 my-auto`}
                     >
@@ -232,10 +243,10 @@ export default function GameCompletionModal({
                                             Kabuuang Puntos
                                         </p>
                                         <p className="text-2xl sm:text-3xl font-bold text-[#C2410C] tabular-nums mt-1">
-                                            {totalScore}
+                                            {animatedScore}
                                             <span className="text-sm font-medium text-stone-400"> / {maxScore}</span>
                                         </p>
-                                        <p className="text-[11px] text-stone-500 tabular-nums">{pct}% Marka</p>
+                                        <p className="text-[11px] text-stone-500 tabular-nums">{animatedPct}% Marka</p>
                                     </div>
 
                                     <div>
@@ -269,7 +280,7 @@ export default function GameCompletionModal({
                                         Buod ng Puntos sa Bawat Mapa (Score Review)
                                     </h3>
                                     <div className="border border-stone-200 rounded-xl divide-y divide-stone-200 overflow-hidden">
-                                        {maps.map((m) => {
+                                        {maps.map((m, idx) => {
                                             const score = m.progress?.score ?? 0;
                                             const hearts = m.progress?.hearts_remaining ?? 0;
                                             const mapMaxHearts = m.max_hearts ?? 3;
@@ -283,7 +294,8 @@ export default function GameCompletionModal({
                                             return (
                                                 <div
                                                     key={m.id}
-                                                    className="px-4 py-3 bg-white flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm"
+                                                    style={{ animationDelay: `${idx * 65}ms` }}
+                                                    className="jq-row-in px-4 py-3 bg-white flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm"
                                                 >
                                                     <div className="flex items-center gap-2.5 min-w-0">
                                                         <CheckCircle2

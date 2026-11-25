@@ -126,3 +126,32 @@ export async function resolveCachedVideoUrl(rawUrl) {
 
     return { url: rawUrl, isObjectUrl: false, fromCache: false };
 }
+
+/**
+ * Resolve any cached audio asset (teacher dubbing, panuto, praise/wrong SFX, BGM) from CacheStorage
+ * so custom voiceovers & audio play 100% cleanly offline without silent fallbacks.
+ */
+export async function resolveCachedAudioUrl(rawUrl) {
+    if (!rawUrl || typeof window === 'undefined' || !('caches' in window)) {
+        return { url: rawUrl, isObjectUrl: false, fromCache: false };
+    }
+
+    try {
+        const cache = await caches.open(VIDEO_CACHE_NAME);
+        const cached = await cache.match(rawUrl);
+        if (cached) {
+            const blob = await cached.blob();
+            if (blob.size > 0) {
+                return { url: URL.createObjectURL(blob), isObjectUrl: true, fromCache: true };
+            }
+        }
+
+        if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+            cacheMediaWithRetry(rawUrl, { cacheName: VIDEO_CACHE_NAME, retries: 2, minBytes: 512 }).catch(() => {});
+        }
+    } catch {
+        // Fallback smoothly to direct audio URL when online
+    }
+
+    return { url: rawUrl, isObjectUrl: false, fromCache: false };
+}

@@ -18,8 +18,17 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MonitorRankingController extends Controller
 {
+    private function ensureOwnsSession(Request $request, GameSession $session): void
+    {
+        if ((int) $session->teacher_id !== (int) $request->user()->id) {
+            abort(403, 'Walang pahintulot na buksan o baguhin ang sesyong ito.');
+        }
+    }
+
     public function show(Request $request, GameSession $session, RankingMonitorService $monitor): JsonResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         $version = GroupingService::sessionVersion($session->id, $session->status !== 'finished');
         $sinceVer = $request->query('since_ver');
 
@@ -43,6 +52,8 @@ class MonitorRankingController extends Controller
         OfflineQrService $offlineQr,
         RankingMonitorService $monitor
     ): JsonResponse {
+        $this->ensureOwnsSession($request, $session);
+
         $validated = $request->validate([
             'qr_payload' => ['required', 'array'],
             'allow_manual' => ['sometimes', 'boolean'],
@@ -72,6 +83,8 @@ class MonitorRankingController extends Controller
         GroupingService $grouping,
         RankingMonitorService $monitor
     ): JsonResponse {
+        $this->ensureOwnsSession($request, $session);
+
         $validated = $request->validate([
             'map_number' => ['nullable', 'integer', 'min:1', 'max:5'],
         ]);
@@ -125,8 +138,10 @@ class MonitorRankingController extends Controller
         ]);
     }
 
-    public function export(GameSession $session, RankingMonitorService $monitor): StreamedResponse
+    public function export(Request $request, GameSession $session, RankingMonitorService $monitor): StreamedResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         return $monitor->exportCsv($session);
     }
 }

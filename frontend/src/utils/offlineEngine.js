@@ -85,8 +85,10 @@ export async function unlockPinWithTeacherCode(joinCode, enteredCode, fallbackQr
         const expected = await computeTeacherUnblockCode(cleanCode, key);
         verified = cleanEntered === expected;
     } else {
-        // Fallback when initial entry had no QR key (manual PIN entry)
-        verified = cleanEntered === `${cleanCode}OK` || cleanEntered === 'UNBLOCK';
+        return {
+            ok: false,
+            message: 'Kailangan ang opisyal na Teacher Unblock QR ng sesyon upang mabuksan muli ang PIN na ito.',
+        };
     }
 
     if (!verified) {
@@ -153,7 +155,10 @@ export async function resetOfflineMapWithTeacherAuth(mapId, mapNumber, { code = 
         const expected = await computeTeacherUnblockCode(joinCode, qrKey);
         verified = enteredCode === expected;
     } else {
-        verified = enteredCode === `${joinCode}OK` || enteredCode === 'UNBLOCK';
+        return {
+            ok: false,
+            message: 'Kailangan ang Teacher Unblock QR ng sesyon upang makapag-reset nang offline.',
+        };
     }
 
     if (!verified) {
@@ -757,6 +762,15 @@ function finalizeOfflineProgress(state, pack, map, p, reason) {
     if (nextNum > state.currentMapNumber) {
         state.currentMapNumber = nextNum;
     }
+
+    // Immediately archive the signed Result QR backup & lock PIN once all maps are finished (even before GameCompletionModal mounts!)
+    const allMapsCompleted =
+        (pack.maps || []).length > 0 &&
+        (pack.maps || []).every((m) => Boolean(state.progressByMapId[m.id]?.is_completed));
+    if (allMapsCompleted) {
+        saveOfflineState(state);
+        buildSignedResultQrPayload().catch(() => {});
+    }
 }
 
 function buildOfflineResponse(state, map, p, isCorrect, feedback, mapCompleted, details = null, finishReason = null, lifelinePrompt = false) {
@@ -905,17 +919,17 @@ export async function submitOfflineChallenge(mapId, payload) {
     if (isBoard) {
         p.earned_points = boardAttemptEarned;
         p.score = boardAttemptEarned;
-        finalizeOfflineProgress(freshState, pack, map, p, 'completed');
+        finalizeOfflineProgress(freshState, pack, map, p, 'hearts_depleted');
         saveOfflineState(freshState);
         return buildOfflineResponse(
             freshState,
             map,
             p,
             false,
-            'Ubos na ang iyong mga puso! Naitala na ang iyong nakuha sa mapang ito.',
+            'Ubos na ang iyong mga puso! Naitala na ang iyong sagot sa mapang ito.',
             true,
             check.details || null,
-            'completed',
+            'hearts_depleted',
             false
         );
     }
@@ -997,7 +1011,7 @@ export async function resolveOfflineLifeline(mapId, action) {
                 map,
                 p,
                 false,
-                `Itinala ang iyong ${p.score} / ${map.perfect_score ?? 10} puntos at naitabi ang natirang puso.`,
+                'Naitala na ang iyong sagot sa mapang ito at naitabi ang natirang puso.',
                 true,
                 null,
                 'completed'
@@ -1024,8 +1038,8 @@ export async function resolveOfflineLifeline(mapId, action) {
             p,
             false,
             allResolved
-                ? `Natapos na ang mapa. Naitala ang iyong ${p.score} / ${map.perfect_score ?? 10} puntos.`
-                : '0 pts sa tanong na ito — naitabi ang iyong puso. Tumuloy sa susunod na tanong.',
+                ? 'Natapos na ang mapa at naitala na ang iyong resulta.'
+                : 'Naitabi ang iyong puso. Tumuloy sa susunod na tanong.',
             allResolved,
             null,
             allResolved ? 'completed' : null
@@ -1069,7 +1083,7 @@ export async function timeoutOfflineMap(mapId) {
         map,
         p,
         false,
-        `Naubos na ang oras. Naitala ang iyong ${p.score} puntos (minimum ${map.min_floor_score ?? 2} pts) upang makapagpatuloy.`,
+        'Naubos na ang oras. Naitala na ang iyong resulta upang makapagpatuloy sa susunod na mapa.',
         true,
         null,
         'timeout'

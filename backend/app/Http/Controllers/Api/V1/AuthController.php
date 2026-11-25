@@ -31,6 +31,12 @@ class AuthController extends Controller
         $fullName = preg_replace('/\s+/', ' ', trim((string) $request->validated('full_name')));
 
         $student = DB::transaction(function () use ($session, $fullName, $grouping) {
+            if ($session->groups_locked) {
+                throw ValidationException::withMessages([
+                    'join_code' => ['Sarado na ang pagpapasali sa sesyon na ito. Makipag-ugnayan sa iyong guro.'],
+                ]);
+            }
+
             $existingParticipant = SessionParticipant::with('user')
                 ->where('game_session_id', $session->id)
                 ->whereHas('user', function ($query) use ($fullName) {
@@ -41,6 +47,14 @@ class AuthController extends Controller
 
             if ($existingParticipant && $existingParticipant->user) {
                 $student = $existingParticipant->user;
+
+                // Protect password-registered student accounts from guest PIN+name takeover
+                if ($student->password !== null) {
+                    throw ValidationException::withMessages([
+                        'full_name' => ['May nakarehistrong account na gumagamit ng pangalang ito. Mag-sign in gamit ang email at password.'],
+                    ]);
+                }
+
                 $student->update([
                     'activity_status' => $student->activity_status === 'completed' ? 'completed' : 'exploring_world',
                     'last_seen_at' => now(),
@@ -51,12 +65,6 @@ class AuthController extends Controller
                 }
 
                 return $student;
-            }
-
-            if ($session->groups_locked) {
-                throw ValidationException::withMessages([
-                    'join_code' => ['Sarado na ang pagpapasali sa sesyon na ito. Makipag-ugnayan sa iyong guro.'],
-                ]);
             }
 
             $student = User::create([

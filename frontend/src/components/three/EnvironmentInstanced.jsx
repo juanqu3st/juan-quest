@@ -589,12 +589,19 @@ function InstancedSculptedTrees({ trees, bananas, lowQuality, playerPosRef, tour
     );
 }
 
+const CLOUD_PUFFS = [
+    { ox: 0, oy: 0.24, oz: 0, r: 1.35, color: new THREE.Color('#FFFDF5') },
+    { ox: -1.18, oy: -0.08, oz: 0.14, r: 0.96, color: new THREE.Color('#FAF8F0') },
+    { ox: 1.22, oy: -0.1, oz: -0.1, r: 1.02, color: new THREE.Color('#FAF8F0') },
+    { ox: 0.25, oy: -0.22, oz: 0.72, r: 0.82, color: new THREE.Color('#F1F5F9') },
+];
+
 export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourActive = false }) {
     const grassRef = useRef();
     const fencePostRef = useRef();
     const fenceRailRef = useRef();
     const flowerRef = useRef();
-    const cloudsGroupRef = useRef();
+    const cloudsMeshRef = useRef();
 
     const { trees, bananas, grassTufts, fences, flowers } = useMemo(() => generatePinoyBarrioFoliage(), []);
     const grassGeo = useMemo(() => createGrassTuftGeo(), []);
@@ -604,7 +611,7 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
     const grassCount = lowQuality ? Math.min(45, grassTufts.length) : grassTufts.length;
     const fenceCount = fences.length;
     const flowerCount = lowQuality ? 0 : flowers.length;
-    const cloudList = lowQuality ? CLOUD_CLUSTERS.slice(0, 3) : CLOUD_CLUSTERS;
+    const cloudList = useMemo(() => (lowQuality ? CLOUD_CLUSTERS.slice(0, 3) : CLOUD_CLUSTERS), [lowQuality]);
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
 
@@ -661,18 +668,50 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
             flowerRef.current.instanceMatrix.needsUpdate = true;
             if (flowerRef.current.instanceColor) flowerRef.current.instanceColor.needsUpdate = true;
         }
-    }, [grassCount, fenceCount, flowerCount, grassTufts, fences, flowers, dummy]);
+
+        if (cloudsMeshRef.current) {
+            let slot = 0;
+            for (let i = 0; i < cloudList.length; i += 1) {
+                const c = cloudList[i];
+                for (let p = 0; p < CLOUD_PUFFS.length; p += 1) {
+                    const puff = CLOUD_PUFFS[p];
+                    dummy.position.set(c.x + puff.ox * c.scale, c.y + puff.oy * c.scale, c.z + puff.oz * c.scale);
+                    const s = puff.r * c.scale;
+                    dummy.scale.set(s, s, s);
+                    dummy.rotation.set(0, 0, 0);
+                    dummy.updateMatrix();
+                    cloudsMeshRef.current.setMatrixAt(slot, dummy.matrix);
+                    cloudsMeshRef.current.setColorAt(slot, puff.color);
+                    slot += 1;
+                }
+            }
+            cloudsMeshRef.current.count = slot;
+            cloudsMeshRef.current.instanceMatrix.needsUpdate = true;
+            if (cloudsMeshRef.current.instanceColor) cloudsMeshRef.current.instanceColor.needsUpdate = true;
+        }
+    }, [grassCount, fenceCount, flowerCount, grassTufts, fences, flowers, cloudList, dummy]);
 
     useFrame(({ clock }) => {
-        if (lowQuality || !cloudsGroupRef.current) return;
+        if (lowQuality || !cloudsMeshRef.current) return;
         const t = clock.getElapsedTime();
-        cloudsGroupRef.current.children.forEach((cloud, i) => {
-            const base = cloudList[i];
-            if (!base) return;
-            const span = 112 * S;
-            cloud.position.x = ((((base.x + t * 0.65 + span / 2) % span) + span) % span) - span / 2;
-            cloud.position.y = base.y + Math.sin(t * 0.5 + i) * 0.22;
-        });
+        const span = 112 * S;
+        let slot = 0;
+        for (let i = 0; i < cloudList.length; i += 1) {
+            const c = cloudList[i];
+            const cx = ((((c.x + t * 0.65 + span / 2) % span) + span) % span) - span / 2;
+            const cy = c.y + Math.sin(t * 0.5 + i) * 0.22;
+            for (let p = 0; p < CLOUD_PUFFS.length; p += 1) {
+                const puff = CLOUD_PUFFS[p];
+                dummy.position.set(cx + puff.ox * c.scale, cy + puff.oy * c.scale, c.z + puff.oz * c.scale);
+                const s = puff.r * c.scale;
+                dummy.scale.set(s, s, s);
+                dummy.rotation.set(0, 0, 0);
+                dummy.updateMatrix();
+                cloudsMeshRef.current.setMatrixAt(slot, dummy.matrix);
+                slot += 1;
+            }
+        }
+        cloudsMeshRef.current.instanceMatrix.needsUpdate = true;
     });
 
     return (
@@ -713,29 +752,15 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
                 </instancedMesh>
             )}
 
-            {/* Warm Fluffy Tropical Cumulus Clouds */}
-            <group ref={cloudsGroupRef}>
-                {cloudList.map((c, idx) => (
-                    <group key={idx} position={[c.x, c.y, c.z]} scale={c.scale}>
-                        <mesh position={[0, 0.24, 0]}>
-                            <sphereGeometry args={[1.35, 12, 10]} />
-                            <meshStandardMaterial color="#FFFDF5" roughness={0.92} />
-                        </mesh>
-                        <mesh position={[-1.18, -0.08, 0.14]}>
-                            <sphereGeometry args={[0.96, 10, 8]} />
-                            <meshStandardMaterial color="#FAF8F0" roughness={0.94} />
-                        </mesh>
-                        <mesh position={[1.22, -0.10, -0.1]}>
-                            <sphereGeometry args={[1.02, 10, 8]} />
-                            <meshStandardMaterial color="#FAF8F0" roughness={0.94} />
-                        </mesh>
-                        <mesh position={[0.25, -0.22, 0.72]}>
-                            <sphereGeometry args={[0.82, 10, 8]} />
-                            <meshStandardMaterial color="#F1F5F9" roughness={0.94} />
-                        </mesh>
-                    </group>
-                ))}
-            </group>
+            {/* Warm Fluffy Tropical Cumulus Clouds (GPU-Instanced: 28 draw calls -> 1!) */}
+            <instancedMesh
+                ref={cloudsMeshRef}
+                args={[null, null, CLOUD_CLUSTERS.length * CLOUD_PUFFS.length]}
+                frustumCulled={false}
+            >
+                <sphereGeometry args={[1, 10, 8]} />
+                <meshStandardMaterial color="#FFFFFF" roughness={0.93} />
+            </instancedMesh>
         </group>
     );
 }

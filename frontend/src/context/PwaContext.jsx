@@ -99,6 +99,7 @@ export function PwaProvider({ children }) {
     const updateSwFnRef = useRef(null);
     const isInstalledRef = useRef(isInstalled);
     isInstalledRef.current = isInstalled;
+    const lastVisibilityCheckRef = useRef(0);
 
     const isIos = detectIos();
 
@@ -164,7 +165,12 @@ export function PwaProvider({ children }) {
 
         const onVisibility = () => {
             if (document.visibilityState === 'visible' && navigator.onLine !== false) {
-                checkInstalledUpdates();
+                const now = Date.now();
+                // Throttle tab-focus update checks to once every 60s to avoid spamming /version.json & /offline/pack
+                if (now - lastVisibilityCheckRef.current >= 60000) {
+                    lastVisibilityCheckRef.current = now;
+                    checkInstalledUpdates();
+                }
             }
         };
 

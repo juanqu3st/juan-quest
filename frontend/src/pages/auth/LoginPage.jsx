@@ -64,7 +64,7 @@ export default function LoginPage() {
     const [unblockCodeInput, setUnblockCodeInput] = useState('');
     const [unblockError, setUnblockError] = useState('');
 
-    const savedQrHistory = !isOnline ? loadSavedQrHistory() : [];
+    const savedQrHistory = loadSavedQrHistory();
     const activeSavedQr = savedQrHistory[selectedSavedQrIdx] || savedQrHistory[0] || null;
 
     if (!loading && user) {
@@ -722,6 +722,21 @@ export default function LoginPage() {
                                 </form>
                             )}
                         </div>
+
+                        {/* Recoverable Offline Result QR Backup Button (Remains accessible even after Wi-Fi reconnects!) */}
+                        {savedQrHistory.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedSavedQrIdx(0);
+                                    setSavedQrModalOpen(true);
+                                }}
+                                className="w-full py-2.5 px-3 rounded-xl bg-amber-50/90 hover:bg-amber-100/90 border border-amber-200/80 text-amber-900 text-xs font-bold inline-flex items-center justify-center gap-2 transition cursor-pointer"
+                            >
+                                <History className="w-3.5 h-3.5 text-[#C2410C]" />
+                                <span>Mga Nakaraang Result QR (Backup · {savedQrHistory.length})</span>
+                            </button>
+                        )}
 
                         {/* Clean Install App Button (Downloads 100% of app + 5 videos during installation!) */}
                         {canShowInstallButton && (

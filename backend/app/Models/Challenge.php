@@ -10,6 +10,13 @@ class Challenge extends Model
 {
     use HasFactory;
 
+    /**
+     * Touch parent map on create/update/delete so cached offline PWA pack versions invalidate cleanly.
+     *
+     * @var list<string>
+     */
+    protected $touches = ['map'];
+
     protected $fillable = [
         'map_id',
         'order_index',

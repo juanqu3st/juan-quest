@@ -2,12 +2,132 @@ import React, { Suspense, useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { getTerrainHeight, MAP_NODE_STOPS } from './worldConfig';
 import GuardFigure from './GuardFigure';
 import MapLabelSprite from './MapLabelSprite';
 
 for (let m = 1; m <= 5; m++) {
     useGLTF.preload(`/models/map${m}.glb`, '/draco/');
+}
+
+// Shared module-level padlock geometries & materials across all 5 landmarks (10 draw calls -> 4 per padlock!)
+let sharedPadlockAssets = null;
+
+function bakeLockPart(rawGeo, position = [0, 0, 0], rotation = [0, 0, 0]) {
+    const g = rawGeo.index ? rawGeo.toNonIndexed() : rawGeo.clone();
+    rawGeo.dispose();
+    const mat = new THREE.Matrix4().compose(
+        new THREE.Vector3(position[0], position[1], position[2]),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ')),
+        new THREE.Vector3(1, 1, 1)
+    );
+    g.applyMatrix4(mat);
+    return g;
+}
+
+function getPadlockAssets() {
+    if (sharedPadlockAssets) return sharedPadlockAssets;
+
+    const bodyGeo = new THREE.BoxGeometry(0.88, 0.72, 0.38);
+    const bodyMat = new THREE.MeshStandardMaterial({
+        color: '#FACC15',
+        emissive: '#EAB308',
+        emissiveIntensity: 0.45,
+        metalness: 0.2,
+        roughness: 0.28,
+    });
+
+    const trimParts = [
+        bakeLockPart(new THREE.BoxGeometry(0.92, 0.08, 0.41), [0, 0.33, 0]),
+        bakeLockPart(new THREE.BoxGeometry(0.92, 0.08, 0.41), [0, -0.33, 0]),
+    ];
+    const trimGeo = mergeGeometries(trimParts, false);
+    trimParts.forEach((p) => p.dispose());
+    const trimMat = new THREE.MeshStandardMaterial({
+        color: '#CA8A04',
+        emissive: '#A16207',
+        emissiveIntensity: 0.22,
+        metalness: 0.25,
+        roughness: 0.35,
+    });
+
+    const keyholeParts = [];
+    [0.195, -0.195].forEach((zPos) => {
+        keyholeParts.push(
+            bakeLockPart(new THREE.CylinderGeometry(0.11, 0.11, 0.04, 14), [0, 0.1, zPos], [Math.PI / 2, 0, 0])
+        );
+        keyholeParts.push(bakeLockPart(new THREE.BoxGeometry(0.11, 0.24, 0.04), [0, -0.08, zPos]));
+    });
+    const keyholeGeo = mergeGeometries(keyholeParts, false);
+    keyholeParts.forEach((p) => p.dispose());
+    const keyholeMat = new THREE.MeshStandardMaterial({ color: '#422006', roughness: 0.5 });
+
+    const shackleParts = [
+        bakeLockPart(new THREE.TorusGeometry(0.25, 0.088, 12, 20, Math.PI), [0, 0.44, 0]),
+        bakeLockPart(new THREE.CylinderGeometry(0.088, 0.088, 0.16, 12), [-0.25, 0.39, 0]),
+        bakeLockPart(new THREE.CylinderGeometry(0.088, 0.088, 0.16, 12), [0.25, 0.39, 0]),
+    ];
+    const shackleGeo = mergeGeometries(shackleParts, false);
+    shackleParts.forEach((p) => p.dispose());
+    const shackleMat = new THREE.MeshStandardMaterial({
+        color: '#FEF08A',
+        emissive: '#FACC15',
+        emissiveIntensity: 0.35,
+        metalness: 0.3,
+        roughness: 0.22,
+    });
+
+    sharedPadlockAssets = {
+        bodyGeo,
+        bodyMat,
+        trimGeo,
+        trimMat,
+        keyholeGeo,
+        keyholeMat,
+        shackleGeo,
+        shackleMat,
+    };
+    return sharedPadlockAssets;
+}
+
+// Shared module-level 3D golden star geometry & material for completed map landmarks (0 duplicate GPU allocations)
+let sharedStarGeometry = null;
+let sharedStarMaterial = null;
+
+function getCompletedStarAssets() {
+    if (!sharedStarGeometry) {
+        const shape = new THREE.Shape();
+        const outerR = 0.62;
+        const innerR = 0.27;
+        for (let i = 0; i < 10; i += 1) {
+            const r = i % 2 === 0 ? outerR : innerR;
+            const a = Math.PI / 2 + (i * Math.PI) / 5;
+            const x = Math.cos(a) * r;
+            const y = Math.sin(a) * r;
+            if (i === 0) shape.moveTo(x, y);
+            else shape.lineTo(x, y);
+        }
+        shape.closePath();
+        sharedStarGeometry = new THREE.ExtrudeGeometry(shape, {
+            depth: 0.16,
+            bevelEnabled: true,
+            bevelThickness: 0.05,
+            bevelSize: 0.04,
+            bevelSegments: 2,
+        });
+        sharedStarGeometry.center();
+    }
+    if (!sharedStarMaterial) {
+        sharedStarMaterial = new THREE.MeshStandardMaterial({
+            color: '#FACC15',
+            emissive: '#EAB308',
+            emissiveIntensity: 0.45,
+            metalness: 0.26,
+            roughness: 0.24,
+        });
+    }
+    return { geometry: sharedStarGeometry, material: sharedStarMaterial };
 }
 
 /**
@@ -81,17 +201,26 @@ export default function MapLandmarkNode({
     onEnterMap,
     tourActive,
     guideActive = false,
+    hideScores = false,
     lowQuality,
 }) {
     const stop = MAP_NODE_STOPS[map.map_number];
     const lockRef = useRef();
+    const buildingRef = useRef();
+    const beaconRef = useRef();
+    const starRef = useRef();
+    const tapBounceRef = useRef(0);
     const { camera, gl } = useThree();
 
     const isCompleted = Boolean(map.progress?.is_completed);
     const isUnlocked = map.map_number <= currentMapNumber || Boolean(map.is_unlocked);
     const showRoofPadlock = !isUnlocking && (isSessionWaiting || !isUnlocked || (!hasBeenOpened && !isCompleted));
     const isReadyToOpen = !isSessionWaiting && isUnlocked && !hasBeenOpened && !isCompleted;
+    const showActiveBeacon = !isSessionWaiting && isUnlocked && !isCompleted && !tourActive && !guideActive;
+    const showCompletedStar = isCompleted && !tourActive && !guideActive;
     const labelState = isCompleted ? 'done' : !isSessionWaiting && isUnlocked ? 'open' : 'locked';
+    const starAssets = useMemo(() => (showCompletedStar ? getCompletedStarAssets() : null), [showCompletedStar]);
+    const padlockAssets = useMemo(() => (showRoofPadlock ? getPadlockAssets() : null), [showRoofPadlock]);
 
     const layout = LANDMARK_LAYOUT[map.map_number] || {
         offset: [0, -3.5],
@@ -101,6 +230,14 @@ export default function MapLandmarkNode({
     };
 
     const groundY = stop ? getTerrainHeight(stop.x, stop.z) : 0;
+
+    useEffect(() => {
+        return () => {
+            if (typeof document !== 'undefined' && document.body.style.cursor === 'pointer') {
+                document.body.style.cursor = '';
+            }
+        };
+    }, []);
 
     // Register a live 3D -> 2D screen coordinate projector for this building's roof padlock
     useEffect(() => {
@@ -128,14 +265,40 @@ export default function MapLandmarkNode({
         };
     }, [lockScreenProjectorRef, stop, map.map_number, layout.offset, groundY, camera, gl]);
 
-    useFrame(({ clock }) => {
+    useFrame(({ clock }, delta) => {
+        const t = clock.getElapsedTime();
+        const dt = Math.min(delta, 0.05);
+
         if (lockRef.current && showRoofPadlock && !lowQuality) {
-            const t = clock.getElapsedTime();
             const bobSpeed = isReadyToOpen ? 3.2 : 2.1;
             const bobAmp = isReadyToOpen ? 0.28 : 0.2;
             const spinSpeed = isReadyToOpen ? 1.1 : 0.65;
             lockRef.current.position.y = 6.85 + Math.sin(t * bobSpeed) * bobAmp;
             lockRef.current.rotation.y = t * spinSpeed;
+        }
+
+        if (beaconRef.current && showActiveBeacon && !lowQuality) {
+            const pulse = 0.5 + 0.5 * Math.sin(t * 2.8);
+            const s = 1.0 + pulse * 0.085;
+            beaconRef.current.scale.set(s, s, 1);
+            beaconRef.current.material.opacity = 0.2 + pulse * 0.28;
+        }
+
+        if (starRef.current && showCompletedStar && !lowQuality) {
+            starRef.current.position.y = 6.45 + Math.sin(t * 2.4 + map.map_number) * 0.22;
+            starRef.current.rotation.y = t * 1.15;
+        }
+
+        if (buildingRef.current) {
+            if (tapBounceRef.current > 0) {
+                tapBounceRef.current = Math.max(0, tapBounceRef.current - dt);
+                const u = 1 - tapBounceRef.current / 0.22;
+                const squash = Math.sin(u * Math.PI * 2) * 0.045 * (1 - u);
+                const base = layout.scale;
+                buildingRef.current.scale.set(base * (1 + squash * 0.6), base * (1 - squash), base * (1 + squash * 0.6));
+            } else if (buildingRef.current.scale.y !== layout.scale) {
+                buildingRef.current.scale.set(layout.scale, layout.scale, layout.scale);
+            }
         }
     });
 
@@ -146,8 +309,17 @@ export default function MapLandmarkNode({
     return (
         <group
             position={[stop.x, groundY, stop.z]}
+            onPointerOver={(e) => {
+                if (tourActive || guideActive) return;
+                e.stopPropagation();
+                if (typeof document !== 'undefined') document.body.style.cursor = 'pointer';
+            }}
+            onPointerOut={() => {
+                if (typeof document !== 'undefined') document.body.style.cursor = '';
+            }}
             onClick={(e) => {
                 e.stopPropagation();
+                tapBounceRef.current = 0.22;
                 const screenOrigin = lockScreenProjectorRef?.current?.get(map.map_number)?.();
                 onEnterMap?.(map, screenOrigin);
             }}
@@ -158,78 +330,52 @@ export default function MapLandmarkNode({
                 <meshBasicMaterial />
             </mesh>
 
-            {/* Locked / Unopened 3D Bright-Yellow Padlock floating visibly above building */}
-            {showRoofPadlock && (
+            {/* Active Unlocked Quest Stop: Subtle Pulsing Golden-Amber Ground Beacon Ring */}
+            {showActiveBeacon && (
+                <mesh
+                    ref={beaconRef}
+                    rotation={[-Math.PI / 2, 0, 0]}
+                    position={[layout.offset[0], 0.09, layout.offset[1]]}
+                >
+                    <ringGeometry args={[3.2, 3.68, 36]} />
+                    <meshBasicMaterial
+                        color="#F59E0B"
+                        transparent
+                        opacity={0.34}
+                        depthWrite={false}
+                        side={THREE.DoubleSide}
+                    />
+                </mesh>
+            )}
+
+            {/* Completed Map Stop: Floating Rotating Golden 3D Star Crest */}
+            {showCompletedStar && starAssets && (
+                <mesh
+                    ref={starRef}
+                    geometry={starAssets.geometry}
+                    material={starAssets.material}
+                    position={[layout.offset[0], 6.45, layout.offset[1]]}
+                    castShadow={!lowQuality}
+                />
+            )}
+
+            {/* Locked / Unopened 3D Bright-Yellow Padlock floating visibly above building (Shared batched assets!) */}
+            {showRoofPadlock && padlockAssets && (
                 <group ref={lockRef} position={[layout.offset[0], 6.85, layout.offset[1]]} scale={1.85}>
-                    {/* Vibrant golden-yellow padlock body (low metalness + emissive so it stays bright yellow in any lighting) */}
-                    <mesh castShadow={!lowQuality}>
-                        <boxGeometry args={[0.88, 0.72, 0.38]} />
-                        <meshStandardMaterial
-                            color="#FACC15"
-                            emissive="#EAB308"
-                            emissiveIntensity={0.45}
-                            metalness={0.2}
-                            roughness={0.28}
-                        />
-                    </mesh>
-                    {/* Crisp warm-amber trim bands top & bottom for strong silhouette contrast against bright sky */}
-                    <mesh position={[0, 0.33, 0]}>
-                        <boxGeometry args={[0.92, 0.08, 0.41]} />
-                        <meshStandardMaterial color="#CA8A04" emissive="#A16207" emissiveIntensity={0.22} metalness={0.25} roughness={0.35} />
-                    </mesh>
-                    <mesh position={[0, -0.33, 0]}>
-                        <boxGeometry args={[0.92, 0.08, 0.41]} />
-                        <meshStandardMaterial color="#CA8A04" emissive="#A16207" emissiveIntensity={0.22} metalness={0.25} roughness={0.35} />
-                    </mesh>
-                    {/* Bold keyhole emblem on BOTH front (+z) and back (-z) faces */}
-                    {[0.195, -0.195].map((zPos, idx) => (
-                        <group key={idx} position={[0, 0.02, zPos]}>
-                            <mesh position={[0, 0.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                                <cylinderGeometry args={[0.11, 0.11, 0.04, 14]} />
-                                <meshStandardMaterial color="#422006" roughness={0.5} />
-                            </mesh>
-                            <mesh position={[0, -0.1, 0]}>
-                                <boxGeometry args={[0.11, 0.24, 0.04]} />
-                                <meshStandardMaterial color="#422006" roughness={0.5} />
-                            </mesh>
-                        </group>
-                    ))}
-                    {/* Thick bright-yellow U-shackle arch + vertical legs seated cleanly into lock body */}
-                    <mesh position={[0, 0.44, 0]}>
-                        <torusGeometry args={[0.25, 0.088, 12, 20, Math.PI]} />
-                        <meshStandardMaterial
-                            color="#FEF08A"
-                            emissive="#FACC15"
-                            emissiveIntensity={0.35}
-                            metalness={0.3}
-                            roughness={0.22}
-                        />
-                    </mesh>
-                    <mesh position={[-0.25, 0.39, 0]}>
-                        <cylinderGeometry args={[0.088, 0.088, 0.16, 12]} />
-                        <meshStandardMaterial
-                            color="#FEF08A"
-                            emissive="#FACC15"
-                            emissiveIntensity={0.35}
-                            metalness={0.3}
-                            roughness={0.22}
-                        />
-                    </mesh>
-                    <mesh position={[0.25, 0.39, 0]}>
-                        <cylinderGeometry args={[0.088, 0.088, 0.16, 12]} />
-                        <meshStandardMaterial
-                            color="#FEF08A"
-                            emissive="#FACC15"
-                            emissiveIntensity={0.35}
-                            metalness={0.3}
-                            roughness={0.22}
-                        />
-                    </mesh>
+                    <mesh
+                        geometry={padlockAssets.bodyGeo}
+                        material={padlockAssets.bodyMat}
+                        castShadow={!lowQuality}
+                    />
+                    <mesh geometry={padlockAssets.trimGeo} material={padlockAssets.trimMat} />
+                    <mesh geometry={padlockAssets.keyholeGeo} material={padlockAssets.keyholeMat} />
+                    <mesh geometry={padlockAssets.shackleGeo} material={padlockAssets.shackleMat} />
                 </group>
             )}
 
             {/* Main Architectural Landmark Grounded Directly on the Natural Pinoy Clearing */}
             <group
+                ref={buildingRef}
                 position={[layout.offset[0], 0.01, layout.offset[1]]}
                 rotation={[0, layout.yaw, 0]}
                 scale={layout.scale}
@@ -275,6 +421,7 @@ export default function MapLandmarkNode({
                     state={labelState}
                     score={score}
                     maxScore={map.perfect_score ?? 10}
+                    hideScore={hideScores}
                     position={[layout.offset[0], showRoofPadlock ? 9.35 : 8.2, layout.offset[1]]}
                     height={1.45}
                 />

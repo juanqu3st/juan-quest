@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, KeyRound, Keyboard, 
 import { resolveStorageUrl } from '../../api/axiosClient';
 import { studentApi } from '../../api/studentApi';
 import { resetOfflineMapWithTeacherAuth } from '../../utils/offlineEngine';
+import { resolveCachedAudioUrl } from '../../utils/videoCache';
 import QrScannerBox from '../qr/QrScannerBox';
 import {
     isAudioMuted,
@@ -24,6 +25,7 @@ import DecisionQuestGame from './DecisionQuestGame';
 import SequenceChallengeGame from './SequenceChallengeGame';
 import MatchingGame from './MatchingGame';
 import FourPicsWordGame from './FourPicsWordGame';
+import VictoryConfettiCanvas, { useCountUp } from './VictoryConfettiCanvas';
 
 const stepMotion = {
     initial: { opacity: 0, y: 8 },
@@ -120,6 +122,7 @@ export default function StageModal({
     const [pendingLifeline, setPendingLifeline] = useState(
         map?.progress?.pending_lifeline ?? null
     );
+    const [lifelineDelaying, setLifelineDelaying] = useState(false);
     const [drafts, setDrafts] = useState(() =>
         initialResume?.mapId === map?.id ? initialResume.drafts || {} : {}
     );
@@ -135,6 +138,8 @@ export default function StageModal({
     const timeoutFiredRef = useRef(false);
     const levelEndedRef = useRef(false);
     const pendingLifelineRef = useRef(pendingLifeline);
+    const lifelineDelayingRef = useRef(false);
+    const lifelineDelayTimerRef = useRef(null);
     const bgmRef = useRef(null);
     const secondsLeftRef = useRef(secondsLeft);
     const timeLimitRef = useRef(timeLimitUsed);
@@ -143,6 +148,11 @@ export default function StageModal({
     secondsLeftRef.current = secondsLeft;
     timeLimitRef.current = timeLimitUsed;
     pendingLifelineRef.current = pendingLifeline;
+    lifelineDelayingRef.current = lifelineDelaying;
+
+    useEffect(() => {
+        return () => clearTimeout(lifelineDelayTimerRef.current);
+    }, []);
 
     const perQuestionTimer = isPerQuestionStrategy(map?.strategy_type);
 
@@ -224,7 +234,7 @@ export default function StageModal({
         };
     }, [dismissToast]);
 
-    // Optional teacher-uploaded BGM during active gameplay
+    // Optional teacher-uploaded BGM during active gameplay (supports offline CacheStorage!)
     useEffect(() => {
         if (step !== 'active_gameplay' || !bgmAudioUrl) {
             if (bgmRef.current) {
@@ -233,19 +243,43 @@ export default function StageModal({
             }
             return undefined;
         }
-        const audio = new Audio(bgmAudioUrl);
-        audio.loop = true;
-        audio.volume = 0.22;
-        audio.muted = muted;
-        bgmRef.current = audio;
-        audio.play().catch(() => {});
+        let cancelled = false;
+        let bgmBlobUrl = null;
+        let audio = null;
+
+        resolveCachedAudioUrl(bgmAudioUrl)
+            .then(({ url, isObjectUrl }) => {
+                if (cancelled) {
+                    if (isObjectUrl && url) URL.revokeObjectURL(url);
+                    return;
+                }
+                if (isObjectUrl && url) bgmBlobUrl = url;
+                audio = new Audio(url || bgmAudioUrl);
+                audio.loop = true;
+                audio.volume = 0.22;
+                audio.muted = muted;
+                bgmRef.current = audio;
+                audio.play().catch(() => {});
+            })
+            .catch(() => {});
+
         return () => {
-            audio.pause();
-            if (bgmRef.current === audio) bgmRef.current = null;
+            cancelled = true;
+            if (audio) {
+                audio.pause();
+                if (bgmRef.current === audio) bgmRef.current = null;
+            }
+            if (bgmBlobUrl) {
+                try {
+                    URL.revokeObjectURL(bgmBlobUrl);
+                } catch {
+                    // ignore
+                }
+            }
         };
     }, [step, bgmAudioUrl]);
 
-    // Countdown timer + keepalive sync on tab close/reload (no noisy background polling competing with submits)
+    // Countdown timer + keepalive sync on tab close/reload (pure state updater — timeout runs cleanly in effect below!)
     useEffect(() => {
         if (step !== 'active_gameplay' || !map?.id) return undefined;
         timeoutFiredRef.current = false;
@@ -271,22 +305,12 @@ export default function StageModal({
                 clearInterval(interval);
                 return;
             }
-            // Pause countdown cleanly while the student decides on the Heart Lifeline modal
-            if (pendingLifelineRef.current) {
+            // Pause countdown cleanly while wrong-answer shake plays OR while deciding on the Heart Lifeline modal
+            if (pendingLifelineRef.current || lifelineDelayingRef.current) {
                 return;
             }
             totalElapsedRef.current += 1;
-            setSecondsLeft((prev) => {
-                if (prev <= 1) {
-                    clearInterval(interval);
-                    if (!timeoutFiredRef.current && !levelEndedRef.current) {
-                        timeoutFiredRef.current = true;
-                        handleTimeout();
-                    }
-                    return 0;
-                }
-                return prev - 1;
-            });
+            setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
         }, 1000);
 
         return () => {
@@ -297,8 +321,32 @@ export default function StageModal({
         };
     }, [step, map?.id, perQuestionTimer]);
 
+    // Pure side-effect trigger when countdown hits 0 (never inside setSecondsLeft updater!)
+    useEffect(() => {
+        if (
+            step === 'active_gameplay' &&
+            secondsLeft === 0 &&
+            !pendingLifelineRef.current &&
+            !lifelineDelayingRef.current &&
+            !timeoutFiredRef.current &&
+            !levelEndedRef.current
+        ) {
+            timeoutFiredRef.current = true;
+            handleTimeout();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step, secondsLeft]);
+
     const handleDraftChange = useCallback((key, value) => {
-        setDrafts((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
+        setDrafts((prev) => {
+            if (prev[key] === value) return prev;
+            try {
+                if (JSON.stringify(prev[key]) === JSON.stringify(value)) return prev;
+            } catch {
+                // ignore non-serializable values
+            }
+            return { ...prev, [key]: value };
+        });
     }, []);
 
     const handleStartGame = async () => {
@@ -344,8 +392,18 @@ export default function StageModal({
             setLastDetails(data.details || null);
 
             if (data.awaiting_lifeline && data.pending_lifeline) {
+                setShakeTrigger((c) => c + 1);
                 playFeedbackAudio('wrong', wrongAudioUrl);
-                setPendingLifeline(data.pending_lifeline);
+                // Let the student clearly see the wrong-answer red flash + shake animation before sliding up the sheet!
+                lifelineDelayingRef.current = true;
+                setLifelineDelaying(true);
+                clearTimeout(lifelineDelayTimerRef.current);
+                const nextLifeline = data.pending_lifeline;
+                lifelineDelayTimerRef.current = setTimeout(() => {
+                    lifelineDelayingRef.current = false;
+                    setLifelineDelaying(false);
+                    setPendingLifeline(nextLifeline);
+                }, 480);
                 return data;
             }
 
@@ -373,16 +431,21 @@ export default function StageModal({
                 if (perQuestionTimer) {
                     setSecondsLeft(timeLimitRef.current);
                 }
-                const praiseWord = data.is_correct ? pickPraiseHeadline() : '0 pts · Susunod.';
+                const toastHeading = data.is_correct
+                    ? pickPraiseHeadline()
+                    : isOfflineMode
+                      ? 'Susunod na tanong.'
+                      : '0 pts · Susunod.';
+                const spokenLabel = data.is_correct ? toastHeading : 'Susunod na tanong.';
                 playFeedbackAudio(
                     data.is_correct ? 'correct' : 'wrong',
                     data.is_correct ? praiseAudioUrl : wrongAudioUrl,
-                    praiseWord
+                    spokenLabel
                 );
                 showToast(
                     data.is_correct ? 'success' : 'error',
                     data.feedback,
-                    praiseWord
+                    toastHeading
                 );
             }
             return data;
@@ -449,9 +512,9 @@ export default function StageModal({
         levelEndedRef.current = true;
         setLoading(true);
         dismissToast();
-        clearStageResume(userId);
         try {
             const data = await studentApi.timeoutMap(map.id);
+            clearStageResume(userId);
             playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras.');
             setSummaryResult({
                 score: data.final_score ?? 2,
@@ -461,6 +524,21 @@ export default function StageModal({
                 feedback: data.feedback,
             });
             setStep('stage_summary');
+        } catch {
+            // Never strand the student on a frozen 0:00 timer if the timeout request failed transiently
+            levelEndedRef.current = false;
+            timeoutFiredRef.current = false;
+            showToast(
+                'error',
+                'Naubos ang oras pero mahina ang koneksyon. Sinusubukang itala muli...',
+                'Koneksyon.'
+            );
+            setTimeout(() => {
+                if (!levelEndedRef.current && !timeoutFiredRef.current) {
+                    timeoutFiredRef.current = true;
+                    handleTimeout();
+                }
+            }, 2500);
         } finally {
             setLoading(false);
         }
@@ -775,7 +853,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline)}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
                                         savedWrongByChallenge={drafts.wrongLettersByChallenge}
                                         onSaveWrongByChallenge={(val) =>
                                             handleDraftChange('wrongLettersByChallenge', val)
@@ -787,7 +865,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline)}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
                                         savedWrongByChallenge={drafts.wrongLettersByChallenge}
                                         onSaveWrongByChallenge={(val) =>
                                             handleDraftChange('wrongLettersByChallenge', val)
@@ -798,7 +876,7 @@ export default function StageModal({
                                     <SequenceChallengeGame
                                         challenges={map.challenges}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline)}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
                                         savedOrder={drafts.sequenceOrder}
                                         onSaveOrder={(val) => handleDraftChange('sequenceOrder', val)}
                                     />
@@ -807,7 +885,7 @@ export default function StageModal({
                                     <MatchingGame
                                         challenges={map.challenges}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline)}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
                                         lastDetails={lastDetails}
                                         savedPairs={drafts.matchingPairs}
                                         onSavePairs={(val) => handleDraftChange('matchingPairs', val)}
@@ -820,7 +898,7 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         completedChallengeIds={resolvedChallengeIds}
                                         onSubmit={handleSubmit}
-                                        busy={loading || Boolean(pendingLifeline)}
+                                        busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
                                         savedPickedByChallenge={drafts.fourPicsPickedByChallenge}
                                         onSavePickedByChallenge={(val) =>
                                             handleDraftChange('fourPicsPickedByChallenge', val)
@@ -831,15 +909,19 @@ export default function StageModal({
                         )}
 
                         {step === 'stage_summary' && summaryResult && (
-                            <motion.div key="summary" {...stepMotion} className="my-auto">
-                                <div className="max-w-md mx-auto bg-white border border-stone-200 rounded-2xl p-6 sm:p-8 text-center space-y-5">
+                            <motion.div key="summary" {...stepMotion} className="my-auto relative">
+                                {summaryResult.finish_reason !== 'timeout' &&
+                                    summaryResult.finish_reason !== 'hearts_depleted' && (
+                                        <VictoryConfettiCanvas active={true} intensity="normal" burstOriginY={0.34} />
+                                    )}
+                                <div className="relative z-20 max-w-md mx-auto bg-white border border-stone-200 rounded-2xl p-6 sm:p-8 text-center space-y-5">
                                     <div
                                         className={`w-12 h-12 rounded-xl mx-auto flex items-center justify-center border ${
                                             summaryResult.finish_reason === 'timeout'
                                                 ? 'bg-amber-50 border-amber-200 text-amber-700'
                                                 : summaryResult.finish_reason === 'hearts_depleted'
                                                   ? 'bg-rose-50 border-rose-200 text-rose-700'
-                                                  : 'bg-emerald-50 border-emerald-200 text-[#15803D]'
+                                                  : 'bg-emerald-50 border-emerald-200 text-[#15803D] jq-pop'
                                         }`}
                                     >
                                         {summaryResult.finish_reason === 'timeout' ? (
@@ -875,13 +957,14 @@ export default function StageModal({
                                             score={summaryResult.score}
                                             maxScore={map.perfect_score ?? 10}
                                             hearts={summaryResult.hearts_remaining}
+                                            animate={true}
                                         />
                                     )}
 
                                     <button
                                         type="button"
                                         onClick={handleClose}
-                                        className="w-full min-h-[46px] px-6 py-2.5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer"
+                                        className="w-full min-h-[46px] px-6 py-2.5 rounded-xl bg-[#15803D] hover:bg-[#166534] active:scale-[0.99] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer"
                                     >
                                         <span>
                                             {isFinalMap
@@ -904,6 +987,7 @@ export default function StageModal({
                 heartsRemaining={heartsRemaining}
                 maxHearts={map.max_hearts ?? 3}
                 pendingLifeline={pendingLifeline}
+                hideScores={isOfflineMode}
                 busy={loading}
                 onUseHeart={() => handleResolveLifeline('use_heart')}
                 onSkip={() => handleResolveLifeline('skip')}
@@ -912,13 +996,15 @@ export default function StageModal({
     );
 }
 
-function ScoreSummaryRow({ score, maxScore = 10, hearts }) {
+function ScoreSummaryRow({ score, maxScore = 10, hearts, animate = false }) {
+    const shownScore = useCountUp(score, animate, 680);
+
     return (
         <div className="grid grid-cols-2 divide-x divide-stone-200 rounded-xl bg-[#FAF8F5] border border-stone-200 py-3.5">
             <div>
                 <p className="text-xs text-stone-500">Puntos</p>
                 <p className="text-2xl font-bold text-[#C2410C] tabular-nums mt-0.5">
-                    {score} <span className="text-sm font-medium text-stone-400">/ {maxScore}</span>
+                    {shownScore} <span className="text-sm font-medium text-stone-400">/ {maxScore}</span>
                 </p>
             </div>
             <div>

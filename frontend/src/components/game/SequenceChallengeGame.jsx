@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import {
     DndContext,
     DragOverlay,
@@ -18,6 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
+import { playPairSnap } from '../../utils/gameAudio';
 
 function restoreEventsOrder(events, savedOrder) {
     if (!Array.isArray(savedOrder) || savedOrder.length !== events.length) return events;
@@ -32,6 +34,11 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
         restoreEventsOrder(challenge?.payload?.events || [], savedOrder)
     );
     const [activeId, setActiveId] = useState(null);
+    const [shakeWrong, setShakeWrong] = useState(false);
+    const shakeTimerRef = useRef(null);
+    const onSaveOrderRef = useRef(onSaveOrder);
+    const didMountOrderRef = useRef(false);
+    onSaveOrderRef.current = onSaveOrder;
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -39,10 +46,18 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
     );
 
     useEffect(() => {
-        if (items.length > 0) {
-            onSaveOrder?.(items.map((i) => i.id));
+        return () => clearTimeout(shakeTimerRef.current);
+    }, []);
+
+    useEffect(() => {
+        if (!didMountOrderRef.current) {
+            didMountOrderRef.current = true;
+            return;
         }
-    }, [items, onSaveOrder]);
+        if (items.length > 0) {
+            onSaveOrderRef.current?.(items.map((i) => i.id));
+        }
+    }, [items]);
 
     if (!challenge) return null;
     const imageUrl = resolveStorageUrl(challenge.payload.image);
@@ -57,6 +72,7 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
         setActiveId(null);
         if (!over || active.id === over.id) return;
 
+        playPairSnap();
         setItems((prev) => {
             const oldIndex = prev.findIndex((i) => i.id === active.id);
             const newIndex = prev.findIndex((i) => i.id === over.id);
@@ -68,7 +84,18 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
     const moveItemBy = (idx, delta) => {
         const nextIdx = idx + delta;
         if (nextIdx < 0 || nextIdx >= items.length) return;
+        playPairSnap();
         setItems((prev) => arrayMove(prev, idx, nextIdx));
+    };
+
+    const handleSubmitOrder = async () => {
+        if (busy) return;
+        const res = await onSubmit(challenge.id, { order: items.map((i) => i.id) });
+        if (res && !res.is_correct && !res.level_ended) {
+            setShakeWrong(true);
+            clearTimeout(shakeTimerRef.current);
+            shakeTimerRef.current = setTimeout(() => setShakeWrong(false), 380);
+        }
     };
 
     return (
@@ -103,9 +130,14 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
                     onDragCancel={() => setActiveId(null)}
                 >
                     <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-                        <div className="space-y-2.5">
+                        <div className={`space-y-2.5 ${shakeWrong ? 'jq-shake' : ''}`}>
                             {items.map((item, idx) => (
-                                <div key={item.id} className="flex items-stretch gap-2 sm:gap-3">
+                                <motion.div
+                                    key={item.id}
+                                    layout={!activeId}
+                                    transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                                    className="flex items-stretch gap-2 sm:gap-3"
+                                >
                                     <div className="w-10 sm:w-12 shrink-0 flex flex-col items-center justify-center rounded-xl border border-stone-200 bg-stone-100/80 select-none">
                                         <span className="text-xs sm:text-sm font-bold text-stone-900 tabular-nums leading-none">
                                             {idx + 1}
@@ -124,7 +156,7 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
                                         onMoveUp={() => moveItemBy(idx, -1)}
                                         onMoveDown={() => moveItemBy(idx, 1)}
                                     />
-                                </div>
+                                </motion.div>
                             ))}
                         </div>
                     </SortableContext>
@@ -146,8 +178,8 @@ export default function SequenceChallengeGame({ challenges, onSubmit, busy, save
                 <button
                     type="button"
                     disabled={busy}
-                    onClick={() => onSubmit(challenge.id, { order: items.map((i) => i.id) })}
-                    className="w-full min-h-[48px] py-2.5 px-6 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] disabled:bg-stone-200 disabled:text-stone-500 text-white font-semibold text-sm transition cursor-pointer disabled:cursor-not-allowed"
+                    onClick={handleSubmitOrder}
+                    className="w-full min-h-[48px] py-2.5 px-6 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.99] disabled:bg-stone-200 disabled:text-stone-500 text-white font-semibold text-sm transition cursor-pointer disabled:cursor-not-allowed"
                 >
                     {busy ? 'Sinusuri...' : 'Isumite ang Pagkakasunod-sunod'}
                 </button>
@@ -198,7 +230,7 @@ function SortableEventCard({ item, canMoveUp, canMoveDown, onMoveUp, onMoveDown 
                     disabled={!canMoveUp}
                     onClick={onMoveUp}
                     aria-label="Ilipat pataas"
-                    className="w-8 h-7 rounded-md border border-stone-200 bg-stone-50 hover:bg-stone-100 disabled:opacity-30 text-stone-700 inline-flex items-center justify-center cursor-pointer disabled:cursor-not-allowed"
+                    className="w-8 h-7 rounded-md border border-stone-200 bg-stone-50 hover:bg-stone-100 active:scale-90 disabled:opacity-30 text-stone-700 inline-flex items-center justify-center transition cursor-pointer disabled:cursor-not-allowed"
                 >
                     <ChevronUp className="w-4 h-4" />
                 </button>
@@ -207,7 +239,7 @@ function SortableEventCard({ item, canMoveUp, canMoveDown, onMoveUp, onMoveDown 
                     disabled={!canMoveDown}
                     onClick={onMoveDown}
                     aria-label="Ilipat pababa"
-                    className="w-8 h-7 rounded-md border border-stone-200 bg-stone-50 hover:bg-stone-100 disabled:opacity-30 text-stone-700 inline-flex items-center justify-center cursor-pointer disabled:cursor-not-allowed"
+                    className="w-8 h-7 rounded-md border border-stone-200 bg-stone-50 hover:bg-stone-100 active:scale-90 disabled:opacity-30 text-stone-700 inline-flex items-center justify-center transition cursor-pointer disabled:cursor-not-allowed"
                 >
                     <ChevronDown className="w-4 h-4" />
                 </button>

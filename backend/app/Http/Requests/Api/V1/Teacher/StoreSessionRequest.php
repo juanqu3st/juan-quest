@@ -11,6 +11,16 @@ class StoreSessionRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('join_code') && is_string($this->input('join_code'))) {
+            $normalized = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($this->input('join_code'))));
+            $this->merge([
+                'join_code' => $normalized !== '' ? $normalized : null,
+            ]);
+        }
+    }
+
     /**
      * @return array<string, mixed>
      */

@@ -247,7 +247,19 @@ class OfflineQrService
                         'member_names' => $memberNames !== '' ? mb_substr($memberNames, 0, 500) : $existingParticipant->sessionGroup->member_names,
                     ]);
                 }
+                $existingProgressByMapId = StudentProgress::where('user_id', $student->id)
+                    ->get()
+                    ->keyBy('map_id');
+
                 foreach ($maps as $idx => $map) {
+                    // During an online->offline failover merge (attempt 1), NEVER overwrite already-completed server-graded maps!
+                    if ($isFailoverMerge && $attempt <= 1) {
+                        $existingMapProgress = $existingProgressByMapId->get($map->id);
+                        if ($existingMapProgress && $existingMapProgress->is_completed) {
+                            continue;
+                        }
+                    }
+
                     $frCode = (string) ($reasons[$idx] ?? 'c');
                     $finishReason = $frCode === 't' ? 'timeout' : 'completed';
                     StudentProgress::updateOrCreate(

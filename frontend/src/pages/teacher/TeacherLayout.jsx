@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
     Activity,
@@ -11,6 +11,7 @@ import {
     X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { usePwa } from '../../context/PwaContext';
 
 const NAV_GROUPS = [
     {
@@ -41,8 +42,15 @@ function getInitials(name = '') {
 
 export default function TeacherLayout({ title, subtitle, toolbarRight, children }) {
     const { user, logout } = useAuth();
+    const { setGameplayActive } = usePwa();
     const navigate = useNavigate();
     const [mobileOpen, setMobileOpen] = useState(false);
+
+    // Suppress blocking PWA Force Update modal while teacher is running Live Monitor, Lobby, or CMS
+    useEffect(() => {
+        setGameplayActive(true);
+        return () => setGameplayActive(false);
+    }, [setGameplayActive]);
 
     const handleLogout = async () => {
         await logout();

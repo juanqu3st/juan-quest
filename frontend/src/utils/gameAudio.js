@@ -1,3 +1,5 @@
+import { resolveCachedAudioUrl } from './videoCache';
+
 // Feedback & lesson audio controller with clear Web Audio chimes + temporary Filipino voice praise fallback.
 
 const MUTE_KEY = 'juanquest_audio_muted';
@@ -6,8 +8,32 @@ const WRONG_PHRASES = ['Subukan muli.', 'Hindi tama, subukan ulit.'];
 
 let audioCtx = null;
 let activeFeedbackEl = null;
+let activeFeedbackBlobUrl = null;
 let activePromptEl = null;
+let activePromptBlobUrl = null;
 let praiseCursor = 0;
+
+function revokeFeedbackBlob() {
+    if (activeFeedbackBlobUrl) {
+        try {
+            URL.revokeObjectURL(activeFeedbackBlobUrl);
+        } catch {
+            // ignore
+        }
+        activeFeedbackBlobUrl = null;
+    }
+}
+
+function revokePromptBlob() {
+    if (activePromptBlobUrl) {
+        try {
+            URL.revokeObjectURL(activePromptBlobUrl);
+        } catch {
+            // ignore
+        }
+        activePromptBlobUrl = null;
+    }
+}
 
 function getAudioContext() {
     if (typeof window === 'undefined') return null;
@@ -54,6 +80,7 @@ export function stopAllFeedbackAudio() {
         }
         activeFeedbackEl = null;
     }
+    revokeFeedbackBlob();
     if (activePromptEl) {
         try {
             activePromptEl.pause();
@@ -63,6 +90,7 @@ export function stopAllFeedbackAudio() {
         }
         activePromptEl = null;
     }
+    revokePromptBlob();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         try {
             window.speechSynthesis.cancel();
@@ -137,7 +165,116 @@ function playFallbackTone(type) {
 /**
  * Play teacher-uploaded praise/wrong audio if configured; otherwise play clear chime + Filipino voice fallback.
  */
+const HAPTIC_PATTERNS = {
+    tap: [8],
+    pair: [12],
+    correct: [18],
+    wrong: [35, 30, 35],
+    tick: [6],
+    unlock: [20, 40, 30],
+    victory: [20, 40, 30],
+};
+
+/** Gentle Android haptic pulse (respects prefers-reduced-motion & fails silently on iOS/desktop). */
+export function triggerHaptic(kind = 'tap') {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    if (typeof navigator.vibrate !== 'function') return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
+    const pattern = HAPTIC_PATTERNS[kind];
+    if (!pattern) return;
+    try {
+        navigator.vibrate(pattern);
+    } catch {
+        // ignore unsupported browser/gesture error
+    }
+}
+
+export function playUiTap(freq = 520) {
+    triggerHaptic('tap');
+    if (isAudioMuted()) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.exponentialRampToValueAtTime(freq * 1.26, now + 0.045);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.06);
+}
+
+export function playPairSnap() {
+    triggerHaptic('pair');
+    if (isAudioMuted()) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(460, now);
+    osc.frequency.exponentialRampToValueAtTime(720, now + 0.06);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.06, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.08);
+}
+
+export function playTimerTick() {
+    triggerHaptic('tick');
+    if (isAudioMuted()) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.042, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.036);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.05);
+}
+
+export function playVictoryFanfare() {
+    triggerHaptic('victory');
+    if (isAudioMuted()) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + i * 0.075);
+        gain.gain.setValueAtTime(0.0001, now + i * 0.075);
+        gain.gain.exponentialRampToValueAtTime(0.085, now + i * 0.075 + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.075 + 0.28);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.075);
+        osc.stop(now + i * 0.075 + 0.31);
+    });
+}
+
 export function playFeedbackAudio(type, customUrl, spokenText) {
+    if (type === 'correct') triggerHaptic('correct');
+    else if (type === 'complete') triggerHaptic('victory');
+    else if (type === 'wrong') triggerHaptic('wrong');
+
     if (isAudioMuted()) return;
 
     if (activeFeedbackEl) {
@@ -149,19 +286,38 @@ export function playFeedbackAudio(type, customUrl, spokenText) {
         }
         activeFeedbackEl = null;
     }
+    revokeFeedbackBlob();
 
     if (customUrl) {
-        try {
-            const audio = new Audio(customUrl);
-            audio.volume = 0.95;
-            activeFeedbackEl = audio;
-            audio.play().catch(() => {
+        resolveCachedAudioUrl(customUrl)
+            .then(({ url, isObjectUrl }) => {
+                if (!url || isAudioMuted()) {
+                    if (isObjectUrl && url) URL.revokeObjectURL(url);
+                    return;
+                }
+                const audio = new Audio(url);
+                audio.volume = 0.95;
+                activeFeedbackEl = audio;
+                if (isObjectUrl) activeFeedbackBlobUrl = url;
+                const clearRef = () => {
+                    if (activeFeedbackEl === audio) {
+                        activeFeedbackEl = null;
+                        revokeFeedbackBlob();
+                    } else if (isObjectUrl) {
+                        URL.revokeObjectURL(url);
+                    }
+                };
+                audio.onended = clearRef;
+                audio.onerror = clearRef;
+                audio.play().catch(() => {
+                    clearRef();
+                    playFallbackTone(type);
+                });
+            })
+            .catch(() => {
                 playFallbackTone(type);
             });
-            return;
-        } catch {
-            // fallback below
-        }
+        return;
     }
 
     playFallbackTone(type);
@@ -180,6 +336,7 @@ export function playFeedbackAudio(type, customUrl, spokenText) {
  * Crisp mechanical unlock click + ascending golden sparkle arpeggio for PadlockUnlockOverlay.
  */
 export function playUnlockChime() {
+    triggerHaptic('unlock');
     if (isAudioMuted()) return;
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -220,26 +377,40 @@ export function togglePromptAudio(url, onEnd) {
             // ignore
         }
         activePromptEl = null;
+        revokePromptBlob();
         onEnd?.();
         return false;
     }
     if (!url || isAudioMuted()) return false;
     try {
-        const audio = new Audio(url);
+        const audio = new Audio();
         audio.volume = 0.95;
         activePromptEl = audio;
-        audio.onended = () => {
-            activePromptEl = null;
+        const finish = () => {
+            if (activePromptEl === audio) {
+                activePromptEl = null;
+                revokePromptBlob();
+            }
             onEnd?.();
         };
-        audio.onerror = () => {
-            activePromptEl = null;
-            onEnd?.();
-        };
-        audio.play().catch(() => {
-            activePromptEl = null;
-            onEnd?.();
-        });
+        audio.onended = finish;
+        audio.onerror = finish;
+
+        resolveCachedAudioUrl(url)
+            .then(({ url: resolvedUrl, isObjectUrl }) => {
+                if (activePromptEl !== audio) {
+                    if (isObjectUrl && resolvedUrl) URL.revokeObjectURL(resolvedUrl);
+                    return;
+                }
+                if (isObjectUrl) activePromptBlobUrl = resolvedUrl;
+                audio.src = resolvedUrl || url;
+                audio.play().catch(finish);
+            })
+            .catch(() => {
+                if (activePromptEl !== audio) return;
+                audio.src = url;
+                audio.play().catch(finish);
+            });
         return true;
     } catch {
         return false;

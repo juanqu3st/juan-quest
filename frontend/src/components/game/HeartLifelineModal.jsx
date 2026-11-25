@@ -10,6 +10,7 @@ export default function HeartLifelineModal({
     heartsRemaining,
     maxHearts = 3,
     pendingLifeline,
+    hideScores = false,
     busy = false,
     onUseHeart,
     onSkip,
@@ -29,11 +30,11 @@ export default function HeartLifelineModal({
                     className="fixed inset-0 z-[75] bg-stone-950/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4"
                 >
                     <motion.div
-                        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 12, scale: 0.98 }}
-                        transition={{ duration: 0.16, ease: 'easeOut' }}
-                        className="w-full max-w-sm bg-white border-t sm:border border-stone-200 rounded-t-3xl sm:rounded-2xl shadow-xl overflow-hidden pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-0"
+                        initial={{ opacity: 0, y: 40 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 28 }}
+                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                        className="w-full sm:max-w-sm bg-white border-t sm:border border-stone-200 rounded-t-3xl sm:rounded-2xl shadow-xl overflow-hidden pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-0"
                     >
                         <div className="sm:hidden pt-2.5 flex justify-center">
                             <div className="w-10 h-1 rounded-full bg-stone-300" />
@@ -64,10 +65,22 @@ export default function HeartLifelineModal({
                                 </h3>
                                 <p className="text-[13px] text-stone-600 leading-relaxed">
                                     {isBoard ? (
+                                        hideScores ? (
+                                            <>
+                                                May <strong className="text-rose-600">{heartsRemaining} puso</strong> ka pang natitira — gagamit ka ba ng{' '}
+                                                <strong className="text-stone-900">1 puso</strong> upang ayusin muli ang iyong sagot?
+                                            </>
+                                        ) : (
+                                            <>
+                                                Nakuha mo na ang <strong className="text-stone-900">{attemptEarned}/10 pts</strong>. May{' '}
+                                                <strong className="text-rose-600">{heartsRemaining} puso</strong> ka pang natitira — gagamit ka ba ng{' '}
+                                                <strong className="text-stone-900">1 puso</strong> upang ayusin muli?
+                                            </>
+                                        )
+                                    ) : hideScores ? (
                                         <>
-                                            Nakuha mo na ang <strong className="text-stone-900">{attemptEarned}/10 pts</strong>. May{' '}
-                                            <strong className="text-rose-600">{heartsRemaining} puso</strong> ka pang natitira — gagamit ka ba ng{' '}
-                                            <strong className="text-stone-900">1 puso</strong> upang ayusin muli?
+                                            May <strong className="text-rose-600">{heartsRemaining} puso</strong> ka pang natitira. Gagamit ka ba ng{' '}
+                                            <strong className="text-stone-900">1 puso</strong> upang sumagot muli?
                                         </>
                                     ) : (
                                         <>
@@ -100,8 +113,12 @@ export default function HeartLifelineModal({
                                 >
                                     <span>
                                         {isBoard
-                                            ? `Huwag Gumamit (Itala ang ${attemptEarned}/10)`
-                                            : 'Huwag Gumamit (0 pts, Tumuloy)'}
+                                            ? hideScores
+                                                ? 'Huwag Gumamit (Itala ang Sagot)'
+                                                : `Huwag Gumamit (Itala ang ${attemptEarned}/10)`
+                                            : hideScores
+                                              ? 'Huwag Gumamit (Tumuloy)'
+                                              : 'Huwag Gumamit (0 pts, Tumuloy)'}
                                     </span>
                                     <ArrowRight className="w-4 h-4" />
                                 </button>

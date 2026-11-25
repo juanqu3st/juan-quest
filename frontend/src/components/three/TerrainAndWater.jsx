@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
     BRIDGE_X,
     getTerrainHeight,
@@ -11,6 +12,24 @@ import {
     WORLD_SCALE,
 } from './worldConfig';
 import { getPbrTextures } from './pbrTextures';
+
+function bakeTransformedPart(rawGeo, position, rotation = [0, 0, 0]) {
+    const g = rawGeo.index ? rawGeo.toNonIndexed() : rawGeo.clone();
+    rawGeo.dispose();
+    const mat = new THREE.Matrix4().compose(
+        new THREE.Vector3(position[0], position[1], position[2]),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ')),
+        new THREE.Vector3(1, 1, 1)
+    );
+    g.applyMatrix4(mat);
+    return g;
+}
+
+function mergeAndDispose(parts) {
+    const merged = mergeGeometries(parts, false);
+    parts.forEach((p) => p.dispose());
+    return merged;
+}
 
 const S = WORLD_SCALE;
 const WATER_Y = -0.32 * HEIGHT_SCALE;
@@ -96,6 +115,9 @@ function buildFlowingRiverRibbon() {
 
 export default function TerrainAndWater({ lowQuality }) {
     const waterRef = useRef();
+    const riverRocksRef = useRef();
+    const innerPeaksRef = useRef();
+    const outerPeaksRef = useRef();
     const { grassMap, grassBump, stoneMap, stoneBump, woodMap, waterFlowMap, waterBump } = useMemo(
         () => getPbrTextures(),
         []
@@ -257,6 +279,144 @@ export default function TerrainAndWater({ lowQuality }) {
         return segs;
     }, [yNorth, ySouth]);
 
+    // Merge the 93 static bridge pieces into just 3 GPU draw calls (stone, dark stringers, timber deck/rails)!
+    const { bridgeStoneGeo, bridgeStringerGeo, bridgeTimberGeo } = useMemo(() => {
+        const stoneParts = [];
+        const stringerParts = [];
+        const timberParts = [];
+
+        // Deep Grounded Stone Abutment Ramps & Entry Bollards
+        [
+            { zEnd: -halfSpan - 0.55, bankY: yNorth },
+            { zEnd: halfSpan + 0.55, bankY: ySouth },
+        ].forEach(({ zEnd, bankY }) => {
+            stoneParts.push(bakeTransformedPart(new THREE.BoxGeometry(4.7, 1.55, 1.9), [0, bankY - 0.68, zEnd]));
+            [-1.92, 1.92].forEach((bxOff) => {
+                stoneParts.push(
+                    bakeTransformedPart(new THREE.BoxGeometry(0.5, 1.32, 0.5), [bxOff, bankY + 0.56, zEnd])
+                );
+            });
+        });
+
+        // Twin Stone Mid-River Support Piers
+        [-3.8, 3.8].forEach((zMid) => {
+            const topY = bridgeDeckY(zMid) - 0.18;
+            const botY = -2.2;
+            const h = Math.max(0.8, topY - botY);
+            [-1.55, 1.55].forEach((xPier) => {
+                stoneParts.push(
+                    bakeTransformedPart(new THREE.CylinderGeometry(0.36, 0.48, h, 10), [xPier, botY + h * 0.5, zMid])
+                );
+            });
+        });
+
+        // Twin Continuous Arched Under-Deck Timber Stringer Beams
+        [-1.65, 1.65].forEach((xBeam) => {
+            archSegments.forEach((seg) => {
+                stringerParts.push(
+                    bakeTransformedPart(
+                        new THREE.BoxGeometry(0.28, 0.3, seg.len),
+                        [xBeam, seg.yMid - 0.22, seg.zMid],
+                        [seg.pitch, 0, 0]
+                    )
+                );
+            });
+        });
+
+        // Seamless Arched Timber Bridge Deck Planks
+        plankOffsets.forEach((zOff) => {
+            timberParts.push(
+                bakeTransformedPart(
+                    new THREE.BoxGeometry(4.2, 0.2, 0.84),
+                    [0, bridgeDeckY(zOff), zOff],
+                    [bridgeSlopePitch(zOff), 0, 0]
+                )
+            );
+        });
+
+        // Left & Right Timber Handrails (Posts + Top Rail + Mid Safety Rail)
+        [-1.92, 1.92].forEach((xSide) => {
+            [-6.3, -4.2, -2.1, 0, 2.1, 4.2, 6.3].forEach((zp) => {
+                timberParts.push(
+                    bakeTransformedPart(new THREE.BoxGeometry(0.2, 1.32, 0.2), [xSide, bridgeDeckY(zp) + 0.62, zp])
+                );
+            });
+            archSegments.forEach((seg) => {
+                timberParts.push(
+                    bakeTransformedPart(
+                        new THREE.BoxGeometry(0.16, 0.14, seg.len),
+                        [xSide, seg.yMid + 1.18, seg.zMid],
+                        [seg.pitch, 0, 0]
+                    )
+                );
+                timberParts.push(
+                    bakeTransformedPart(
+                        new THREE.BoxGeometry(0.12, 0.1, seg.len),
+                        [xSide, seg.yMid + 0.64, seg.zMid],
+                        [seg.pitch, 0, 0]
+                    )
+                );
+            });
+        });
+
+        return {
+            bridgeStoneGeo: mergeAndDispose(stoneParts),
+            bridgeStringerGeo: mergeAndDispose(stringerParts),
+            bridgeTimberGeo: mergeAndDispose(timberParts),
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [archSegments, plankOffsets, yNorth, ySouth]);
+
+    useEffect(() => {
+        return () => {
+            bridgeStoneGeo?.dispose();
+            bridgeStringerGeo?.dispose();
+            bridgeTimberGeo?.dispose();
+        };
+    }, [bridgeStoneGeo, bridgeStringerGeo, bridgeTimberGeo]);
+
+    // Populate instanced matrices for riverbank stones + inner/outer mountain rings (77 draw calls -> 3!)
+    useLayoutEffect(() => {
+        const dummy = new THREE.Object3D();
+
+        if (riverRocksRef.current) {
+            riverRocks.forEach((rk, i) => {
+                dummy.position.set(rk.x, rk.y + 0.15, rk.z);
+                dummy.rotation.set(0, i * 0.6, 0);
+                dummy.scale.set(rk.s * 1.3, rk.s * 0.7, rk.s);
+                dummy.updateMatrix();
+                riverRocksRef.current.setMatrixAt(i, dummy.matrix);
+            });
+            riverRocksRef.current.instanceMatrix.needsUpdate = true;
+        }
+
+        if (innerPeaksRef.current) {
+            innerPeaks.forEach((p, idx) => {
+                dummy.position.set(p.x, p.height * 0.42 - 1.2, p.z);
+                dummy.rotation.set(0, p.rot, 0);
+                dummy.scale.set(p.radius, p.height, p.radius);
+                dummy.updateMatrix();
+                innerPeaksRef.current.setMatrixAt(idx, dummy.matrix);
+            });
+            innerPeaksRef.current.instanceMatrix.needsUpdate = true;
+        }
+
+        if (outerPeaksRef.current) {
+            const colA = new THREE.Color('#68A4B5');
+            const colB = new THREE.Color('#7EB9C8');
+            outerPeaks.forEach((p, idx) => {
+                dummy.position.set(p.x, p.height * 0.45 - 2.0, p.z);
+                dummy.rotation.set(0, p.rot, 0);
+                dummy.scale.set(p.radius, p.height, p.radius);
+                dummy.updateMatrix();
+                outerPeaksRef.current.setMatrixAt(idx, dummy.matrix);
+                outerPeaksRef.current.setColorAt(idx, idx % 2 === 0 ? colA : colB);
+            });
+            outerPeaksRef.current.instanceMatrix.needsUpdate = true;
+            if (outerPeaksRef.current.instanceColor) outerPeaksRef.current.instanceColor.needsUpdate = true;
+        }
+    }, [riverRocks, innerPeaks, outerPeaks]);
+
     return (
         <group>
             {/* PBR Curved Textured Meadow Terrain */}
@@ -284,151 +444,67 @@ export default function TerrainAndWater({ lowQuality }) {
                 />
             </mesh>
 
-            {/* Natural Riverbank Stones */}
-            {riverRocks.map((rk, i) => (
-                <mesh key={i} position={[rk.x, rk.y + 0.15, rk.z]} scale={[rk.s * 1.3, rk.s * 0.7, rk.s]} castShadow={!lowQuality}>
-                    <dodecahedronGeometry args={[0.75, 1]} />
-                    <meshStandardMaterial map={stoneMap} roughness={0.9} />
-                </mesh>
-            ))}
+            {/* Natural Riverbank Stones (GPU-Instanced: 1 draw call!) */}
+            <instancedMesh
+                ref={riverRocksRef}
+                args={[null, null, riverRocks.length]}
+                castShadow={!lowQuality}
+                frustumCulled={false}
+            >
+                <dodecahedronGeometry args={[0.75, 1]} />
+                <meshStandardMaterial map={stoneMap} roughness={0.9} />
+            </instancedMesh>
 
-            {/* Properly Aligned & Grounded Arched Stone-and-Timber Footbridge Spanning Both Riverbanks */}
+            {/* Properly Aligned & Grounded Arched Stone-and-Timber Footbridge (Merged: 3 draw calls!) */}
             <group position={[bridgeX, 0, bridgeZ]} rotation={[0, bridgeYaw, 0]}>
-                {/* Deep Grounded Stone Abutment Ramps & Entry Bollards anchored cleanly into both riverbanks */}
-                {[
-                    { zEnd: -halfSpan - 0.55, bankY: yNorth },
-                    { zEnd: halfSpan + 0.55, bankY: ySouth },
-                ].map(({ zEnd, bankY }, idx) => (
-                    <group key={idx}>
-                        <mesh position={[0, bankY - 0.68, zEnd]} castShadow={!lowQuality} receiveShadow>
-                            <boxGeometry args={[4.7, 1.55, 1.9]} />
-                            <meshStandardMaterial map={stoneMap} bumpMap={stoneBump} bumpScale={0.1} roughness={0.85} />
-                        </mesh>
-                        {[-1.92, 1.92].map((bxOff, bIdx) => (
-                            <mesh key={bIdx} position={[bxOff, bankY + 0.56, zEnd]} castShadow={!lowQuality}>
-                                <boxGeometry args={[0.50, 1.32, 0.50]} />
-                                <meshStandardMaterial map={stoneMap} bumpMap={stoneBump} bumpScale={0.1} roughness={0.84} />
-                            </mesh>
-                        ))}
-                    </group>
-                ))}
-
-                {/* Twin Stone Mid-River Support Piers extending deep underwater up into the timber stringers */}
-                {[-3.8, 3.8].map((zMid, idx) => {
-                    const topY = bridgeDeckY(zMid) - 0.18;
-                    const botY = -2.2;
-                    const h = Math.max(0.8, topY - botY);
-                    return (
-                        <group key={idx}>
-                            {[-1.55, 1.55].map((xPier, pIdx) => (
-                                <mesh key={pIdx} position={[xPier, botY + h * 0.5, zMid]} castShadow={!lowQuality}>
-                                    <cylinderGeometry args={[0.36, 0.48, h, 10]} />
-                                    <meshStandardMaterial map={stoneMap} bumpMap={stoneBump} bumpScale={0.08} roughness={0.86} />
-                                </mesh>
-                            ))}
-                        </group>
-                    );
-                })}
-
-                {/* Twin Continuous Arched Under-Deck Timber Stringer Beams */}
-                {[-1.65, 1.65].map((xBeam, bIdx) => (
-                    <group key={bIdx} position={[xBeam, 0, 0]}>
-                        {archSegments.map((seg, sIdx) => (
-                            <mesh
-                                key={sIdx}
-                                position={[0, seg.yMid - 0.22, seg.zMid]}
-                                rotation={[seg.pitch, 0, 0]}
-                                castShadow={!lowQuality}
-                            >
-                                <boxGeometry args={[0.28, 0.30, seg.len]} />
-                                <meshStandardMaterial map={woodMap} color="#8B5A2B" roughness={0.78} />
-                            </mesh>
-                        ))}
-                    </group>
-                ))}
-
-                {/* Seamless Arched Timber Bridge Deck Planks sloping flush into both banks */}
-                {plankOffsets.map((zOff, i) => (
-                    <mesh
-                        key={i}
-                        position={[0, bridgeDeckY(zOff), zOff]}
-                        rotation={[bridgeSlopePitch(zOff), 0, 0]}
-                        castShadow={!lowQuality}
-                        receiveShadow
-                    >
-                        <boxGeometry args={[4.2, 0.20, 0.84]} />
+                {bridgeStoneGeo && (
+                    <mesh geometry={bridgeStoneGeo} castShadow={!lowQuality} receiveShadow>
+                        <meshStandardMaterial map={stoneMap} bumpMap={stoneBump} bumpScale={0.1} roughness={0.85} />
+                    </mesh>
+                )}
+                {bridgeStringerGeo && (
+                    <mesh geometry={bridgeStringerGeo} castShadow={!lowQuality}>
+                        <meshStandardMaterial map={woodMap} color="#8B5A2B" roughness={0.78} />
+                    </mesh>
+                )}
+                {bridgeTimberGeo && (
+                    <mesh geometry={bridgeTimberGeo} castShadow={!lowQuality} receiveShadow>
                         <meshStandardMaterial map={woodMap} roughness={0.75} />
                     </mesh>
-                ))}
-
-                {/* Left & Right Timber Handrails (Top Rail + Mid Safety Rail + Sturdy Posts) */}
-                {[-1.92, 1.92].map((xSide, sIdx) => (
-                    <group key={sIdx} position={[xSide, 0, 0]}>
-                        {[-6.3, -4.2, -2.1, 0, 2.1, 4.2, 6.3].map((zp, pIdx) => (
-                            <mesh key={pIdx} position={[0, bridgeDeckY(zp) + 0.62, zp]} castShadow={!lowQuality}>
-                                <boxGeometry args={[0.20, 1.32, 0.20]} />
-                                <meshStandardMaterial map={woodMap} roughness={0.74} />
-                            </mesh>
-                        ))}
-                        {archSegments.map((seg, rIdx) => (
-                            <group key={rIdx}>
-                                <mesh
-                                    position={[0, seg.yMid + 1.18, seg.zMid]}
-                                    rotation={[seg.pitch, 0, 0]}
-                                    castShadow={!lowQuality}
-                                >
-                                    <boxGeometry args={[0.16, 0.14, seg.len]} />
-                                    <meshStandardMaterial map={woodMap} roughness={0.74} />
-                                </mesh>
-                                <mesh
-                                    position={[0, seg.yMid + 0.64, seg.zMid]}
-                                    rotation={[seg.pitch, 0, 0]}
-                                    castShadow={!lowQuality}
-                                >
-                                    <boxGeometry args={[0.12, 0.10, seg.len]} />
-                                    <meshStandardMaterial map={woodMap} roughness={0.76} />
-                                </mesh>
-                            </group>
-                        ))}
-                    </group>
-                ))}
+                )}
             </group>
 
-            {/* Sculpted Lush Pinoy Foothill Ridges */}
-            {innerPeaks.map((p, idx) => (
-                <mesh
-                    key={`in-${idx}`}
-                    position={[p.x, p.height * 0.42 - 1.2, p.z]}
-                    rotation={[0, p.rot, 0]}
-                    receiveShadow
-                >
-                    <coneGeometry args={[p.radius, p.height, 14]} />
-                    <meshStandardMaterial
-                        map={grassMap}
-                        bumpMap={grassBump}
-                        bumpScale={0.14}
-                        color="#4F9A3D"
-                        roughness={0.92}
-                    />
-                </mesh>
-            ))}
+            {/* Sculpted Lush Pinoy Foothill Ridges (GPU-Instanced: 1 draw call!) */}
+            <instancedMesh
+                ref={innerPeaksRef}
+                args={[null, null, innerPeaks.length]}
+                receiveShadow
+                frustumCulled={false}
+            >
+                <coneGeometry args={[1, 1, 14]} />
+                <meshStandardMaterial
+                    map={grassMap}
+                    bumpMap={grassBump}
+                    bumpScale={0.14}
+                    color="#4F9A3D"
+                    roughness={0.92}
+                />
+            </instancedMesh>
 
-            {/* Distant Atmospheric Blue-Teal Cordillera / Sierra Madre Mountain Range */}
-            {outerPeaks.map((p, idx) => (
-                <mesh
-                    key={`out-${idx}`}
-                    position={[p.x, p.height * 0.45 - 2.0, p.z]}
-                    rotation={[0, p.rot, 0]}
-                >
-                    <coneGeometry args={[p.radius, p.height, 12]} />
-                    <meshStandardMaterial
-                        bumpMap={stoneBump}
-                        bumpScale={0.10}
-                        color={idx % 2 === 0 ? '#68A4B5' : '#7EB9C8'}
-                        roughness={0.95}
-                    />
-                </mesh>
-            ))}
+            {/* Distant Atmospheric Blue-Teal Cordillera / Sierra Madre Mountain Range (GPU-Instanced: 1 draw call!) */}
+            <instancedMesh
+                ref={outerPeaksRef}
+                args={[null, null, outerPeaks.length]}
+                frustumCulled={false}
+            >
+                <coneGeometry args={[1, 1, 12]} />
+                <meshStandardMaterial
+                    bumpMap={stoneBump}
+                    bumpScale={0.1}
+                    color="#FFFFFF"
+                    roughness={0.95}
+                />
+            </instancedMesh>
         </group>
     );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
+import { playUiTap } from '../../utils/gameAudio';
 
 export default function MultipleChoiceGame({
     challenges,
@@ -18,8 +19,10 @@ export default function MultipleChoiceGame({
     const [currentIndex, setCurrentIndex] = useState(firstPendingIdx);
     const [selectedLetter, setSelectedLetter] = useState(null);
     const [solvedLetter, setSolvedLetter] = useState(null);
+    const [justWrongLetter, setJustWrongLetter] = useState(null);
     const [wrongByChallenge, setWrongByChallenge] = useState(() => savedWrongByChallenge || {});
     const advanceTimerRef = useRef(null);
+    const wrongShakeTimerRef = useRef(null);
     const onSaveWrongRef = useRef(onSaveWrongByChallenge);
     const didMountWrongRef = useRef(false);
     onSaveWrongRef.current = onSaveWrongByChallenge;
@@ -33,7 +36,10 @@ export default function MultipleChoiceGame({
     }, [wrongByChallenge]);
 
     useEffect(() => {
-        return () => clearTimeout(advanceTimerRef.current);
+        return () => {
+            clearTimeout(advanceTimerRef.current);
+            clearTimeout(wrongShakeTimerRef.current);
+        };
     }, []);
 
     useEffect(() => {
@@ -45,6 +51,7 @@ export default function MultipleChoiceGame({
                 setCurrentIndex(nextIdx);
                 setSelectedLetter(null);
                 setSolvedLetter(null);
+                setJustWrongLetter(null);
             }, 340);
         }
     }, [completedChallengeIds, challenges, currentIndex]);
@@ -57,12 +64,18 @@ export default function MultipleChoiceGame({
     const handleChoose = useCallback(
         async (letter) => {
             if (!current || busy || solvedLetter || wrongLetters.includes(letter)) return;
+            playUiTap();
             setSelectedLetter(letter);
             const res = await onSubmit(current.id, { choice: letter });
-            if (res?.is_correct) {
-                setSolvedLetter(letter);
-            } else if (res && !res.is_correct) {
+            if (!res) {
                 setSelectedLetter(null);
+            } else if (res.is_correct) {
+                setSolvedLetter(letter);
+            } else {
+                setSelectedLetter(null);
+                setJustWrongLetter(letter);
+                clearTimeout(wrongShakeTimerRef.current);
+                wrongShakeTimerRef.current = setTimeout(() => setJustWrongLetter(null), 380);
                 setWrongByChallenge((prev) => {
                     const prevList = prev[current.id] || [];
                     if (prevList.includes(letter)) return prev;
@@ -134,14 +147,16 @@ export default function MultipleChoiceGame({
                             type="button"
                             disabled={busy || Boolean(solvedLetter) || isWrong}
                             onClick={() => handleChoose(letter)}
-                            className={`group w-full min-h-[60px] text-left p-3.5 sm:p-4 rounded-xl border transition-colors flex items-start gap-3 ${
+                            className={`group w-full min-h-[60px] text-left p-3.5 sm:p-4 rounded-xl border transition-[colors,transform] flex items-start gap-3 ${
+                                justWrongLetter === letter ? 'jq-shake ' : ''
+                            }${
                                 isWrong
                                     ? 'border-rose-200 bg-rose-50/70 cursor-not-allowed'
                                     : isSolved
-                                      ? 'border-[#15803D] bg-emerald-50 cursor-default'
+                                      ? 'border-[#15803D] bg-emerald-50 cursor-default jq-pop'
                                       : isPicked
-                                        ? 'border-[#C2410C] bg-orange-50/60 cursor-wait'
-                                        : 'border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50 cursor-pointer disabled:opacity-70'
+                                        ? 'border-[#C2410C] bg-orange-50/60 cursor-wait scale-[0.99]'
+                                        : 'border-stone-200 bg-white hover:border-stone-400 hover:bg-stone-50 active:scale-[0.985] cursor-pointer disabled:opacity-70'
                             }`}
                         >
                             <span

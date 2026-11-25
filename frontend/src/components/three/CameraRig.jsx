@@ -72,15 +72,20 @@ export default function CameraRig({
         return [...buildFlythroughWaypoints(aspect), { pos: endPos, look: endLook, mapIndex: 0 }];
     }, [aspect, startMapNumber]);
 
+    const lastSnappedMapRef = useRef(null);
+
     useEffect(() => {
-        if (!tourActive && guideStep === null && !snappedInitialRef.current && controlsRef?.current) {
-            const p = standPoint(startMapNumber);
-            camera.position.copy(p).add(cameraOffset(aspect));
-            controlsRef.current.target.copy(p);
-            controlsRef.current.update();
-            snappedInitialRef.current = true;
+        if (!tourActive && guideStep === null && !isWalking && controlsRef?.current) {
+            if (!snappedInitialRef.current || lastSnappedMapRef.current !== startMapNumber) {
+                const p = standPoint(startMapNumber);
+                camera.position.copy(p).add(cameraOffset(aspect));
+                controlsRef.current.target.copy(p);
+                controlsRef.current.update();
+                snappedInitialRef.current = true;
+                lastSnappedMapRef.current = startMapNumber;
+            }
         }
-    }, [tourActive, guideStep, startMapNumber, camera, controlsRef, aspect]);
+    }, [tourActive, guideStep, isWalking, startMapNumber, camera, controlsRef, aspect]);
 
     useEffect(() => {
         if (tourActive) {

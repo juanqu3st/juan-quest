@@ -7,6 +7,8 @@ import { cameraOffset, CHAR_SCALE, getWalkHeight, MAP_NODE_STOPS, WALK_SPEED } f
 import { getCharacterMeta } from '../../utils/characters';
 
 const FEET_LIFT = 0.14; // stands on top of the sandy road / plaza
+const DUST_POOL_SIZE = 6;
+const DUST_SHARED_GEO = new THREE.SphereGeometry(0.17, 7, 6);
 
 class ModelErrorBoundary extends React.Component {
     constructor(props) {
@@ -41,11 +43,32 @@ export default function PlayerCharacter({
     targetMapNumber,
     isWalking,
     tourActive,
+    lowQuality = false,
     controlsRef,
     playerPosRef,
     onArrived,
 }) {
     const groupRef = useRef();
+    const bodyHopRef = useRef();
+    const shadowRef = useRef();
+    const dustMeshRefs = useRef([]);
+    const dustSlotsRef = useRef(
+        Array.from({ length: DUST_POOL_SIZE }, () => ({
+            life: 0,
+            maxLife: 0.52,
+            x: 0,
+            y: 0,
+            z: 0,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+        }))
+    );
+    const dustCursorRef = useRef(0);
+    const stepAccumRef = useRef(0);
+    const footSideRef = useRef(1);
+    const hopTimerRef = useRef(0);
+
     const { camera, size } = useThree();
     const progressTRef = useRef(MAP_NODE_STOPS[startMapNumber]?.t ?? 0);
     const initializedRef = useRef(false);
@@ -64,6 +87,24 @@ export default function PlayerCharacter({
         []
     );
 
+    const spawnFootDust = (x, y, z, tanX, tanZ) => {
+        if (lowQuality) return;
+        const slot = dustSlotsRef.current[dustCursorRef.current];
+        dustCursorRef.current = (dustCursorRef.current + 1) % DUST_POOL_SIZE;
+        const side = footSideRef.current;
+        footSideRef.current = -side;
+        // Perpendicular left/right foot offset
+        const perpX = -tanZ * 0.22 * side;
+        const perpZ = tanX * 0.22 * side;
+        slot.life = slot.maxLife;
+        slot.x = x + perpX;
+        slot.y = y + 0.08;
+        slot.z = z + perpZ;
+        slot.vx = -tanX * 0.28 + perpX * 0.35;
+        slot.vy = 0.42;
+        slot.vz = -tanZ * 0.28 + perpZ * 0.35;
+    };
+
     const place = (t) => {
         curve.getPointAt(t, tmp.pos);
         tmp.pos.y = getWalkHeight(tmp.pos.x, tmp.pos.z) + FEET_LIFT;
@@ -74,15 +115,20 @@ export default function PlayerCharacter({
     };
 
     useEffect(() => {
-        if (!initializedRef.current && groupRef.current) {
+        if (!groupRef.current) return;
+        // Place on initial mount OR snap cleanly back when teacher triggers a full reset while idle
+        if (!initializedRef.current || !isWalking) {
             progressTRef.current = MAP_NODE_STOPS[startMapNumber]?.t ?? 0;
             place(progressTRef.current);
             initializedRef.current = true;
         }
-    }, [curve, startMapNumber]);
+    }, [curve, startMapNumber, isWalking]);
 
     useEffect(() => {
-        if (isWalking) arrivedRef.current = false;
+        if (isWalking) {
+            arrivedRef.current = false;
+            stepAccumRef.current = 0;
+        }
     }, [isWalking, targetMapNumber]);
 
     useFrame((_, delta) => {
@@ -101,6 +147,7 @@ export default function PlayerCharacter({
                 faceCameraRef.current = true;
                 if (!arrivedRef.current) {
                     arrivedRef.current = true;
+                    hopTimerRef.current = 0.36; // brief cheerful arrival hop
                     onArrived?.(targetMapNumber);
                 }
             } else {
@@ -111,6 +158,15 @@ export default function PlayerCharacter({
                 const desired = Math.atan2(tmp.tan.x * dir, tmp.tan.z * dir);
                 yawRef.current += shortestAngle(yawRef.current, desired) * Math.min(1, dt * 10);
                 faceCameraRef.current = false;
+
+                // Subtle earthen footstep dust puff along the dirt road every stride
+                if (!lowQuality) {
+                    stepAccumRef.current += WALK_SPEED * dt;
+                    if (stepAccumRef.current >= 1.05) {
+                        stepAccumRef.current = 0;
+                        spawnFootDust(g.position.x, g.position.y, g.position.z, tmp.tan.x * dir, tmp.tan.z * dir);
+                    }
+                }
 
                 // camera follows, character stays in the middle of the screen
                 cameraOffset(size.width / size.height, tmp.off);
@@ -129,6 +185,49 @@ export default function PlayerCharacter({
             yawRef.current += shortestAngle(yawRef.current, desired) * Math.min(1, dt * 4);
         }
         g.rotation.y = yawRef.current;
+
+        // Animate brief cheerful arrival hop (smooth arc + gentle shadow shrink)
+        if (hopTimerRef.current > 0) {
+            hopTimerRef.current = Math.max(0, hopTimerRef.current - dt);
+            const u = 1 - hopTimerRef.current / 0.36;
+            const hopY = Math.sin(u * Math.PI) * 0.38;
+            if (bodyHopRef.current) bodyHopRef.current.position.y = hopY;
+            if (shadowRef.current) {
+                const s = 1 - hopY * 0.42;
+                shadowRef.current.scale.set(s, s, 1);
+            }
+        } else if (bodyHopRef.current && bodyHopRef.current.position.y !== 0) {
+            bodyHopRef.current.position.y = 0;
+            if (shadowRef.current) shadowRef.current.scale.set(1, 1, 1);
+        }
+
+        // Update pooled world-space footstep dust puffs (zero allocation, hidden when idle)
+        if (!lowQuality) {
+            const slots = dustSlotsRef.current;
+            for (let i = 0; i < DUST_POOL_SIZE; i += 1) {
+                const mesh = dustMeshRefs.current[i];
+                if (!mesh) continue;
+                const slot = slots[i];
+                if (slot.life <= 0) {
+                    if (mesh.visible) mesh.visible = false;
+                    continue;
+                }
+                slot.life -= dt;
+                if (slot.life <= 0) {
+                    mesh.visible = false;
+                    continue;
+                }
+                const progress = 1 - slot.life / slot.maxLife;
+                slot.x += slot.vx * dt;
+                slot.y += slot.vy * dt * (1 - progress * 0.55);
+                slot.z += slot.vz * dt;
+                mesh.visible = true;
+                mesh.position.set(slot.x, slot.y, slot.z);
+                const s = 0.65 + progress * 1.15;
+                mesh.scale.set(s, s * 0.72, s);
+                mesh.material.opacity = (1 - progress) * 0.42;
+            }
+        }
     });
 
     const charMeta = getCharacterMeta(characterKey);
@@ -136,17 +235,44 @@ export default function PlayerCharacter({
     const fallback = <SimpleFallback charMeta={charMeta} />;
 
     return (
-        <group ref={groupRef}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-                <circleGeometry args={[0.7, 24]} />
-                <meshBasicMaterial color="#0F172A" transparent opacity={0.25} depthWrite={false} />
-            </mesh>
-            <ModelErrorBoundary key={modelUrl} fallback={fallback}>
-                <Suspense fallback={fallback}>
-                    <GlbCharacter url={modelUrl} isWalking={isWalking} />
-                </Suspense>
-            </ModelErrorBoundary>
-        </group>
+        <>
+            <group ref={groupRef}>
+                <mesh ref={shadowRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+                    <circleGeometry args={[0.7, 24]} />
+                    <meshBasicMaterial color="#0F172A" transparent opacity={0.25} depthWrite={false} />
+                </mesh>
+                <group ref={bodyHopRef}>
+                    <ModelErrorBoundary key={modelUrl} fallback={fallback}>
+                        <Suspense fallback={fallback}>
+                            <GlbCharacter url={modelUrl} isWalking={isWalking} />
+                        </Suspense>
+                    </ModelErrorBoundary>
+                </group>
+            </group>
+
+            {!lowQuality && (
+                <group>
+                    {Array.from({ length: DUST_POOL_SIZE }).map((_, idx) => (
+                        <mesh
+                            key={idx}
+                            ref={(el) => {
+                                dustMeshRefs.current[idx] = el;
+                            }}
+                            geometry={DUST_SHARED_GEO}
+                            visible={false}
+                            frustumCulled={false}
+                        >
+                            <meshBasicMaterial
+                                color="#E6D5B8"
+                                transparent
+                                opacity={0}
+                                depthWrite={false}
+                            />
+                        </mesh>
+                    ))}
+                </group>
+            )}
+        </>
     );
 }
 

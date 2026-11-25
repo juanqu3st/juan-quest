@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Captions, Play, Volume2 } from 'lucide-react';
 import { resolveMediaUrl, resolveStorageUrl } from '../../api/axiosClient';
-import { resolveCachedVideoUrl } from '../../utils/videoCache';
+import { resolveCachedAudioUrl, resolveCachedVideoUrl } from '../../utils/videoCache';
 import { buildTimedCues, buildWebVttText, splitDialogue } from '../../utils/subtitleCues';
 
 function parseClockSec(str) {
@@ -188,17 +188,40 @@ export default function ScenePlaceholderGuide({
     );
     const usePerSceneVoiceover = hasMapVideo && voiceoverMode === 'per_scene' && hasAnySceneVoiceover;
 
-    // Sync Teacher Voice-Over (Whole-Map OR Per-Scene) cleanly with the 3D Animated MP4
+    // Sync Teacher Voice-Over (Whole-Map OR Per-Scene) cleanly with the 3D Animated MP4 (supports offline CacheStorage!)
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !hasMapVideo) return undefined;
 
-        const createVoicePlayer = (url) => {
+        let cancelled = false;
+        const createdBlobUrls = [];
+
+        const createVoicePlayer = (rawUrl) => {
             const el = document.createElement('video');
-            el.src = url;
             el.preload = 'auto';
             el.playsInline = true;
             el.setAttribute('playsinline', '');
+            if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+                el.src = rawUrl;
+            }
+            resolveCachedAudioUrl(rawUrl)
+                .then(({ url, isObjectUrl }) => {
+                    if (cancelled) {
+                        if (isObjectUrl && url) URL.revokeObjectURL(url);
+                        return;
+                    }
+                    if (isObjectUrl && url) {
+                        createdBlobUrls.push(url);
+                        if (el.paused) {
+                            el.src = url;
+                        }
+                    } else if (!el.src && url) {
+                        el.src = url;
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled && !el.src) el.src = rawUrl;
+                });
             return el;
         };
 
@@ -414,6 +437,7 @@ export default function ScenePlaceholderGuide({
         video.addEventListener('ended', onEnded);
 
         return () => {
+            cancelled = true;
             video.removeEventListener('play', onPlay);
             video.removeEventListener('pause', onPause);
             video.removeEventListener('seeked', onSeeked);
@@ -421,9 +445,27 @@ export default function ScenePlaceholderGuide({
             video.removeEventListener('volumechange', onVolumeChange);
             video.removeEventListener('ended', onEnded);
             stopWholeAudio();
-            pauseAllScenePlayers(-1);
+            if (wholeAudioRef.current) {
+                wholeAudioRef.current.removeAttribute('src');
+                wholeAudioRef.current.load?.();
+                wholeAudioRef.current = null;
+            }
+            Object.values(scenePlayersRef.current).forEach((el) => {
+                if (!el) return;
+                el.pause();
+                el.removeAttribute('src');
+                el.load?.();
+            });
             scenePlayersRef.current = {};
+            activeSceneAudioIdxRef.current = -1;
             customAudioActiveRef.current = false;
+            createdBlobUrls.forEach((u) => {
+                try {
+                    URL.revokeObjectURL(u);
+                } catch {
+                    // ignore
+                }
+            });
         };
     }, [
         hasMapVideo,
@@ -523,9 +565,9 @@ export default function ScenePlaceholderGuide({
                         </video>
                         )}
 
-                        {/* Modern bottom-center in-video subtitle (Pure white text, zero black box) */}
+                        {/* Modern bottom-center in-video subtitle (Pure white text, cleared above mobile controls bar!) */}
                         {showCaptions && !isFullscreen && (
-                            <div className="pointer-events-none absolute inset-x-2.5 sm:inset-x-6 bottom-7 sm:bottom-10 z-10 flex justify-center">
+                            <div className="pointer-events-none absolute inset-x-2.5 sm:inset-x-6 bottom-14 sm:bottom-12 z-10 flex justify-center">
                                 <AnimatePresence mode="wait">
                                     {activeCue && (
                                         <motion.div

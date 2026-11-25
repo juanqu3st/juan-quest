@@ -441,6 +441,7 @@ export default function StudentWorldPage() {
                 tourActive={tourActive}
                 guideStep={guideStep}
                 isSessionWaiting={isWaitingSession}
+                hideScores={isOfflineMode}
                 openedMapIds={openedMapIds}
                 unlockingMapId={unlockingStage?.map?.id || null}
                 lockScreenProjectorRef={lockScreenProjectorRef}

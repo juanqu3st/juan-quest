@@ -106,16 +106,32 @@ export default function TeacherSessionsPage() {
     };
 
     const loadIndex = async () => {
-        const res = await teacherApi.listSessions();
-        const list = res.sessions || [];
-        setSessions(list);
-        syncSessionsCache(list);
-        setLessons(res.lessons || []);
-        if (!selectedId && list.length > 0) {
-            setSelectedId(list[0].id);
-        }
-        if (res.lessons?.length > 0 && !createForm.lesson_id) {
-            setCreateForm((f) => ({ ...f, lesson_id: res.lessons[0].id }));
+        try {
+            const res = await teacherApi.listSessions();
+            const list = res.sessions || [];
+            setSessions(list);
+            syncSessionsCache(list);
+            setLessons(res.lessons || []);
+            if (!selectedId && list.length > 0) {
+                setSelectedId(list[0].id);
+            }
+            if (res.lessons?.length > 0 && !createForm.lesson_id) {
+                setCreateForm((f) => ({ ...f, lesson_id: res.lessons[0].id }));
+            }
+        } catch {
+            // Offline fallback: restore cached teacher sessions so Offline Join QR & Unblock QR remain accessible!
+            try {
+                const raw = localStorage.getItem('juanquest_teacher_sessions_cache_v1');
+                const cached = raw ? JSON.parse(raw) : [];
+                if (Array.isArray(cached) && cached.length > 0) {
+                    setSessions(cached);
+                    if (!selectedId) {
+                        setSelectedId(cached[0].id);
+                    }
+                }
+            } catch {
+                // ignore corrupt cache
+            }
         }
     };
 

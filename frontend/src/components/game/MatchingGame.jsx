@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
     DndContext,
     DragOverlay,
@@ -10,6 +12,7 @@ import {
 } from '@dnd-kit/core';
 import { CheckCircle2, GripVertical, Link2, Lock, RotateCcw, X } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
+import { playPairSnap, playUiTap } from '../../utils/gameAudio';
 
 export default function MatchingGame({
     challenges,
@@ -25,21 +28,106 @@ export default function MatchingGame({
     const [pairs, setPairs] = useState(() => savedPairs || {});
     const [lockedIds, setLockedIds] = useState(() => (Array.isArray(savedLockedIds) ? savedLockedIds : []));
     const [selectedLeftId, setSelectedLeftId] = useState(null);
+    const [floatingState, setFloatingState] = useState({ visible: false, top: 64 });
     const [activeDragItem, setActiveDragItem] = useState(null);
+    const [justLockedIds, setJustLockedIds] = useState([]);
+    const [wrongFlashIds, setWrongFlashIds] = useState([]);
     const lastProcessedDetailsRef = useRef(null);
+    const wrongUnlinkTimerRef = useRef(null);
+    const lockedPopTimerRef = useRef(null);
+    const leftCardElsRef = useRef({});
+    const onSavePairsRef = useRef(onSavePairs);
+    const onSaveLockedIdsRef = useRef(onSaveLockedIds);
+    const didMountPairsRef = useRef(false);
+    const didMountLockedRef = useRef(false);
+    onSavePairsRef.current = onSavePairs;
+    onSaveLockedIdsRef.current = onSaveLockedIds;
 
     // Single PointerSensor handles mouse, trackpad, pen, AND mobile touch cleanly with `touch-none`
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
     useEffect(() => {
-        onSavePairs?.(pairs);
-    }, [pairs, onSavePairs]);
+        return () => {
+            clearTimeout(wrongUnlinkTimerRef.current);
+            clearTimeout(lockedPopTimerRef.current);
+        };
+    }, []);
 
     useEffect(() => {
-        onSaveLockedIds?.(lockedIds);
-    }, [lockedIds, onSaveLockedIds]);
+        if (!didMountPairsRef.current) {
+            didMountPairsRef.current = true;
+            return;
+        }
+        onSavePairsRef.current?.(pairs);
+    }, [pairs]);
 
-    // After a wrong check: lock every CORRECT match permanently, and auto-return all WRONG matches back to Hanay B!
+    useEffect(() => {
+        if (!didMountLockedRef.current) {
+            didMountLockedRef.current = true;
+            return;
+        }
+        onSaveLockedIdsRef.current?.(lockedIds);
+    }, [lockedIds]);
+
+    // Native mobile UX: buttery-smooth rAF-coalesced scroll check with hysteresis (zero sliver, zero boundary flicker!)
+    useEffect(() => {
+        if (!selectedLeftId) {
+            setFloatingState((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+            return undefined;
+        }
+        const el = leftCardElsRef.current[String(selectedLeftId)];
+        if (!el) {
+            setFloatingState((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+            return undefined;
+        }
+        const scrollParent = el.closest('main') || null;
+        let rafPending = null;
+
+        const measure = () => {
+            rafPending = null;
+            const rect = el.getBoundingClientRect();
+            const topBound = scrollParent ? scrollParent.getBoundingClientRect().top : 56;
+            const dockTop = Math.max(56, Math.round(topBound)) + 8;
+
+            setFloatingState((prev) => {
+                // 20px hysteresis band: wait until card clears top before showing; require 26px visible before hiding
+                const shouldFloat = prev.visible
+                    ? rect.bottom < topBound + 26
+                    : rect.bottom <= topBound + 6;
+                if (prev.visible === shouldFloat && prev.top === dockTop) return prev;
+                return { visible: shouldFloat, top: dockTop };
+            });
+        };
+
+        const scheduleMeasure = () => {
+            if (rafPending !== null) return;
+            rafPending = requestAnimationFrame(measure);
+        };
+
+        measure();
+
+        // Capture-phase passive listener catches scroll events on ANY scrolling container without blocking 60fps scroll
+        document.addEventListener('scroll', scheduleMeasure, { capture: true, passive: true });
+        window.addEventListener('resize', scheduleMeasure, { passive: true });
+
+        let observer = null;
+        if (typeof IntersectionObserver !== 'undefined') {
+            observer = new IntersectionObserver(scheduleMeasure, {
+                root: scrollParent,
+                threshold: [0, 0.15, 0.5, 1],
+            });
+            observer.observe(el);
+        }
+
+        return () => {
+            if (rafPending !== null) cancelAnimationFrame(rafPending);
+            document.removeEventListener('scroll', scheduleMeasure, { capture: true });
+            window.removeEventListener('resize', scheduleMeasure);
+            observer?.disconnect();
+        };
+    }, [selectedLeftId]);
+
+    // After a wrong check: lock every CORRECT match permanently with emerald pop, and flash+shake WRONG matches before returning them to Hanay B!
     useEffect(() => {
         const statusMap = lastDetails?.pair_status;
         if (!statusMap || lastDetails === lastProcessedDetailsRef.current) return;
@@ -49,25 +137,37 @@ export default function MatchingGame({
         const wrongKeys = Object.keys(statusMap).filter((leftKey) => statusMap[leftKey] === false);
 
         if (newlyCorrect.length > 0) {
-            setLockedIds((prev) => Array.from(new Set([...prev.map(String), ...newlyCorrect.map(String)])));
+            const correctStrs = newlyCorrect.map(String);
+            setLockedIds((prev) => Array.from(new Set([...prev.map(String), ...correctStrs])));
+            setJustLockedIds(correctStrs);
+            clearTimeout(lockedPopTimerRef.current);
+            lockedPopTimerRef.current = setTimeout(() => setJustLockedIds([]), 420);
         }
 
         if (wrongKeys.length > 0) {
-            const wrongSet = new Set(wrongKeys.map(String));
-            setPairs((prev) => {
-                const next = { ...prev };
-                Object.keys(next).forEach((k) => {
-                    if (wrongSet.has(String(k))) {
-                        delete next[k];
-                    }
+            const wrongStrs = wrongKeys.map(String);
+            const wrongSet = new Set(wrongStrs);
+            setWrongFlashIds(wrongStrs);
+            clearTimeout(wrongUnlinkTimerRef.current);
+            wrongUnlinkTimerRef.current = setTimeout(() => {
+                setWrongFlashIds([]);
+                setPairs((prev) => {
+                    const next = { ...prev };
+                    Object.keys(next).forEach((k) => {
+                        if (wrongSet.has(String(k))) {
+                            delete next[k];
+                        }
+                    });
+                    return next;
                 });
-                return next;
-            });
-            setSelectedLeftId((prev) => (prev && wrongSet.has(String(prev)) ? null : prev));
+                setSelectedLeftId((prev) => (prev && wrongSet.has(String(prev)) ? null : prev));
+            }, 440);
         }
     }, [lastDetails]);
 
     const lockedSet = useMemo(() => new Set(lockedIds.map(String)), [lockedIds]);
+    const justLockedSet = useMemo(() => new Set(justLockedIds), [justLockedIds]);
+    const wrongFlashSet = useMemo(() => new Set(wrongFlashIds), [wrongFlashIds]);
 
     if (!challenge) return null;
 
@@ -83,6 +183,7 @@ export default function MatchingGame({
 
     const assignPair = (leftId, rightId) => {
         if (lockedSet.has(String(leftId)) || lockedRightIds.has(rightId)) return;
+        playPairSnap();
         setPairs((prev) => {
             const next = { ...prev };
             Object.keys(next).forEach((k) => {
@@ -98,6 +199,7 @@ export default function MatchingGame({
 
     const unassignPair = (leftId) => {
         if (lockedSet.has(String(leftId))) return;
+        playUiTap();
         setPairs((prev) => {
             const next = { ...prev };
             delete next[leftId];
@@ -139,6 +241,7 @@ export default function MatchingGame({
     const matchedCount = Object.keys(pairs).length;
     const unlockedMatchedCount = Object.keys(pairs).filter((k) => !lockedSet.has(String(k))).length;
     const allMatched = matchedCount === columnA.length && columnA.length > 0;
+    const selectedLeftItem = selectedLeftId ? columnA.find((a) => a.id === selectedLeftId) || null : null;
 
     return (
         <DndContext
@@ -168,11 +271,16 @@ export default function MatchingGame({
                                 {challenge.payload.prompt}
                             </h3>
                             <p className="text-xs sm:text-[13px] text-stone-500">
-                                {selectedLeftId
-                                    ? `Napili ang #${selectedLeftId} sa Hanay A — i-tap ngayon ang katugma sa Hanay B.`
-                                    : lockedSet.size > 0
-                                      ? `Nananatili ang ${lockedSet.size} tamang tugma — itugma muli ang mga natirang aytem (${matchedCount}/${columnA.length}).`
-                                      : `I-tap ang Hanay A at piliin ang katugma sa Hanay B, o i-drag sa handle (${matchedCount}/${columnA.length}).`}
+                                {selectedLeftId ? (
+                                    <>Napili ang #{selectedLeftId} sa Hanay A — i-tap ngayon ang katugma sa Hanay B.</>
+                                ) : lockedSet.size > 0 ? (
+                                    <>Nananatili ang {lockedSet.size} tamang tugma — itugma muli ang mga natirang aytem ({matchedCount}/{columnA.length}).</>
+                                ) : (
+                                    <>
+                                        I-tap ang Hanay A at piliin ang katugma sa Hanay B
+                                        <span className="hidden md:inline">, o i-drag sa handle</span> ({matchedCount}/{columnA.length}).
+                                    </>
+                                )}
                             </p>
                         </div>
                         <button
@@ -185,6 +293,51 @@ export default function MatchingGame({
                             <span>Ulitin</span>
                         </button>
                     </div>
+
+                    {/* Native Mobile Floating Dock: Portaled to document.body so parent transforms/scroll never clip it! */}
+                    {typeof document !== 'undefined' &&
+                        createPortal(
+                            <AnimatePresence>
+                                {selectedLeftItem && floatingState.visible && !busy && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: -18, scale: 0.98 }}
+                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                        exit={{ opacity: 0, y: -14, scale: 0.98 }}
+                                        transition={{ type: 'spring', stiffness: 460, damping: 36, mass: 0.7 }}
+                                        style={{ top: `${floatingState.top}px`, willChange: 'transform, opacity' }}
+                                        className="md:hidden fixed inset-x-0 z-[60] px-3.5 sm:px-6 pointer-events-none"
+                                    >
+                                        <div className="pointer-events-auto max-w-4xl mx-auto p-3.5 rounded-xl border border-[#C2410C] bg-[#FFF8F3]/95 backdrop-blur-sm shadow-md flex items-start justify-between gap-2.5">
+                                            <div className="min-w-0 flex-1 space-y-1">
+                                                <p className="text-[11px] font-semibold text-[#C2410C]">
+                                                    Napili sa Hanay A · Pumili sa Hanay B
+                                                </p>
+                                                <div className="flex items-start gap-2">
+                                                    <span className="text-xs font-bold text-[#C2410C] tabular-nums pt-0.5 shrink-0">
+                                                        {selectedLeftItem.id}.
+                                                    </span>
+                                                    <p className="text-[13px] font-medium text-stone-800 leading-snug">
+                                                        {selectedLeftItem.text}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    playUiTap();
+                                                    setSelectedLeftId(null);
+                                                }}
+                                                aria-label="Kanselahin ang napili"
+                                                className="w-8 h-8 -mt-0.5 -mr-0.5 rounded-lg bg-white border border-stone-200 hover:border-rose-200 hover:bg-rose-50 text-stone-500 hover:text-rose-600 inline-flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>,
+                            document.body
+                        )}
 
                     {/* Two-Column Matching Board */}
                     <div className="grid md:grid-cols-2 gap-4">
@@ -200,10 +353,17 @@ export default function MatchingGame({
                                         key={item.id}
                                         item={item}
                                         isLocked={isLocked}
+                                        justLocked={justLockedSet.has(String(item.id))}
+                                        isWrongFlash={wrongFlashSet.has(String(item.id))}
                                         isSelected={!isLocked && selectedLeftId === item.id}
                                         assignedRight={assignedRight}
+                                        registerEl={(el) => {
+                                            if (el) leftCardElsRef.current[String(item.id)] = el;
+                                            else delete leftCardElsRef.current[String(item.id)];
+                                        }}
                                         onClick={() => {
                                             if (isLocked) return;
+                                            playUiTap();
                                             setSelectedLeftId(selectedLeftId === item.id ? null : item.id);
                                         }}
                                         onUnlink={() => unassignPair(item.id)}
@@ -272,7 +432,17 @@ export default function MatchingGame({
     );
 }
 
-function DroppableLeftSlot({ item, isLocked, isSelected, assignedRight, onClick, onUnlink }) {
+function DroppableLeftSlot({
+    item,
+    isLocked,
+    justLocked,
+    isWrongFlash,
+    isSelected,
+    assignedRight,
+    registerEl,
+    onClick,
+    onUnlink,
+}) {
     const { isOver, setNodeRef } = useDroppable({
         id: `left-${item.id}`,
         disabled: isLocked,
@@ -280,14 +450,19 @@ function DroppableLeftSlot({ item, isLocked, isSelected, assignedRight, onClick,
 
     return (
         <div
-            ref={setNodeRef}
+            ref={(el) => {
+                setNodeRef(el);
+                registerEl?.(el);
+            }}
             onClick={onClick}
-            className={`p-3.5 rounded-xl border transition-colors ${
-                isLocked
-                    ? 'border-emerald-300 bg-emerald-50/70 cursor-default'
-                    : isOver || isSelected
-                      ? 'border-[#C2410C] bg-orange-50/50 cursor-pointer'
-                      : 'border-stone-200 bg-white hover:border-stone-300 cursor-pointer'
+            className={`p-3.5 rounded-xl border transition-[colors,transform] ${
+                isWrongFlash
+                    ? 'border-rose-400 bg-rose-50/80 jq-shake'
+                    : isLocked
+                      ? `border-emerald-300 bg-emerald-50/70 cursor-default ${justLocked ? 'jq-pop' : ''}`
+                      : isOver || isSelected
+                        ? 'border-[#C2410C] bg-orange-50/50 cursor-pointer'
+                        : 'border-stone-200 bg-white hover:border-stone-300 active:scale-[0.99] cursor-pointer'
             }`}
         >
             <div className="flex items-start gap-2.5">
@@ -327,16 +502,23 @@ function DroppableLeftSlot({ item, isLocked, isSelected, assignedRight, onClick,
                                 }}
                                 aria-label={`Alisin ang tugma sa ${item.id}`}
                                 title="Alisin ang tugma"
-                                className="p-0.5 rounded text-stone-400 hover:text-rose-600 transition cursor-pointer shrink-0"
+                                className="w-9 h-9 -my-1.5 -mr-1.5 rounded-lg bg-stone-100/80 hover:bg-rose-50 text-stone-500 hover:text-rose-600 active:scale-90 inline-flex items-center justify-center transition cursor-pointer shrink-0"
                             >
-                                <X className="w-3.5 h-3.5" />
+                                <X className="w-4 h-4" />
                             </button>
                         )}
                     </>
                 ) : (
                     <span className="inline-flex items-center gap-1.5 text-[11px] text-stone-400">
                         <Link2 className="w-3.5 h-3.5 shrink-0" />
-                        {isSelected ? 'Pumili sa Hanay B...' : 'I-drag o i-click ang katugma'}
+                        {isSelected ? (
+                            'Pumili sa Hanay B...'
+                        ) : (
+                            <>
+                                <span className="md:hidden">I-tap upang pumili ng katugma</span>
+                                <span className="hidden md:inline">I-drag o i-click ang katugma</span>
+                            </>
+                        )}
                     </span>
                 )}
             </div>

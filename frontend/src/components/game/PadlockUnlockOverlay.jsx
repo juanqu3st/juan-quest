@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { playUnlockChime } from '../../utils/gameAudio';
+import { getDeviceProfile } from '../../utils/deviceTier';
 
 function easeOutCubic(t) {
     return 1 - Math.pow(1 - t, 3);
@@ -86,6 +87,9 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
     const wrapRef = useRef(null);
     const onRevealRef = useRef(onRevealStage);
     const onCompleteRef = useRef(onComplete);
+    const revealedRef = useRef(false);
+    const completedRef = useRef(false);
+    const cleanupRef = useRef(null);
 
     const [overlayVisible, setOverlayVisible] = useState(false);
     const [phase, setPhase] = useState('flying'); // 'flying' | 'charging' | 'opened' | 'dissolving'
@@ -97,7 +101,37 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
         onCompleteRef.current = onComplete;
     }, [onRevealStage, onComplete]);
 
+    const triggerRevealOnce = useCallback(() => {
+        if (revealedRef.current) return;
+        revealedRef.current = true;
+        onRevealRef.current?.();
+    }, []);
+
+    const triggerCompleteOnce = useCallback(() => {
+        if (completedRef.current) return;
+        completedRef.current = true;
+        onCompleteRef.current?.();
+    }, []);
+
+    const handleSkipNow = useCallback(() => {
+        cleanupRef.current?.();
+        setPhase('dissolving');
+        setAuraOpacity(0);
+        setRaysVisible(false);
+        setOverlayVisible(false);
+        triggerRevealOnce();
+        triggerCompleteOnce();
+    }, [triggerCompleteOnce, triggerRevealOnce]);
+
     useEffect(() => {
+        // Respect OS reduced-motion preference by opening immediately with gentle chime
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+            playUnlockChime();
+            triggerRevealOnce();
+            const quickId = setTimeout(() => triggerCompleteOnce(), 60);
+            return () => clearTimeout(quickId);
+        }
+
         const canvas = canvasRef.current;
         const wrap = wrapRef.current;
         if (!canvas || !wrap) return undefined;
@@ -106,11 +140,23 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
         const sprites = getGoldSprites();
         const starSprites = [sprites.starWhite, sprites.starGold, sprites.starAmber];
         const dotSprites = [sprites.dotBright, sprites.dotGold];
+        const particleScale = getDeviceProfile().isLowEnd ? 0.5 : 1;
 
         const timers = [];
         let rafId = null;
         let fxActive = true;
         const particles = [];
+
+        const stopAllFx = () => {
+            fxActive = false;
+            timers.forEach((id) => clearTimeout(id));
+            timers.length = 0;
+            if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+        };
+        cleanupRef.current = stopAllFx;
 
         // Keep particle canvas at 1x CSS pixels (soft glowing sparks look identical & 4x faster on Retina/mobile!)
         let viewW = window.innerWidth;
@@ -152,7 +198,8 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
         };
 
         const spawnConvergeSparks = (cx, cy) => {
-            for (let i = 0; i < 22; i++) {
+            const total = Math.max(8, Math.round(22 * particleScale));
+            for (let i = 0; i < total; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 74 + Math.random() * 68;
                 const isStar = Math.random() > 0.4;
@@ -173,8 +220,10 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
         };
 
         const spawnRichGoldBurst = (cx, cy, count = 48, bokehCount = 16) => {
-            for (let i = 0; i < count; i++) {
-                const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.25;
+            const scaledCount = Math.max(12, Math.round(count * particleScale));
+            const scaledBokeh = Math.max(6, Math.round(bokehCount * particleScale));
+            for (let i = 0; i < scaledCount; i++) {
+                const angle = (Math.PI * 2 * i) / scaledCount + (Math.random() - 0.5) * 0.25;
                 const spd = 2.4 + Math.random() * 6.6;
                 const isStar = Math.random() > 0.34;
                 particles.push({
@@ -194,7 +243,7 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
                     phase: Math.random() * 6.28,
                 });
             }
-            for (let i = 0; i < bokehCount; i++) {
+            for (let i = 0; i < scaledBokeh; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 20 + Math.random() * 105;
                 particles.push({
@@ -325,7 +374,7 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
                 setAuraOpacity(0);
                 setRaysVisible(false);
                 setOverlayVisible(false);
-                onRevealRef.current?.();
+                triggerRevealOnce();
             }, 1420)
         );
 
@@ -333,16 +382,16 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
         timers.push(
             setTimeout(() => {
                 fxActive = false;
-                onCompleteRef.current?.();
+                triggerCompleteOnce();
             }, 1820)
         );
 
         return () => {
             window.removeEventListener('resize', resize);
-            timers.forEach((id) => clearTimeout(id));
-            if (rafId) cancelAnimationFrame(rafId);
+            stopAllFx();
+            cleanupRef.current = null;
         };
-    }, [origin]);
+    }, [origin, triggerCompleteOnce, triggerRevealOnce]);
 
     const isCharging = phase === 'charging';
     const isOpened = phase === 'opened';
@@ -358,8 +407,17 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
 
     return (
         <div
-            aria-hidden="true"
-            className={`fixed inset-0 z-[60] transition-opacity duration-300 ${
+            role="button"
+            tabIndex={0}
+            aria-label="Laktawan ang animasyon ng kandado"
+            onClick={handleSkipNow}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+                    e.preventDefault();
+                    handleSkipNow();
+                }
+            }}
+            className={`fixed inset-0 z-[60] transition-opacity duration-300 cursor-pointer select-none ${
                 overlayVisible ? 'opacity-100' : 'opacity-0'
             } ${isDissolving ? 'pointer-events-none' : 'pointer-events-auto'}`}
             style={{
@@ -576,6 +634,14 @@ export default function PadlockUnlockOverlay({ origin, onRevealStage, onComplete
                     </svg>
                 </div>
             </div>
+
+            {!isDissolving && (
+                <div className="absolute inset-x-0 bottom-8 sm:bottom-10 flex justify-center pointer-events-none">
+                    <span className="px-3.5 py-1.5 rounded-full bg-stone-950/45 border border-amber-200/15 text-[11px] font-medium text-amber-100/70 tracking-wide">
+                        I-tap kahit saan upang laktawan
+                    </span>
+                </div>
+            )}
         </div>
     );
 }

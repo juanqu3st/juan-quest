@@ -66,15 +66,24 @@ function writeJsonStorage(key, val) {
     }
 }
 
+function countCompletedMaps(row) {
+    if (typeof row?.completed_maps === 'number') return row.completed_maps;
+    const ms = row?.map_scores || {};
+    return [1, 2, 3, 4, 5].filter((m) => ms[m] !== null && ms[m] !== undefined && ms[m] !== '').length;
+}
+
 function sortAndRankRows(rows) {
+    // Matches backend RankingMonitorService tie-breakers: score desc -> completed_maps desc -> time asc -> hearts desc
     const sorted = [...rows].sort((a, b) => {
         if ((b.total_score || 0) !== (a.total_score || 0)) {
             return (b.total_score || 0) - (a.total_score || 0);
         }
-        if ((b.hearts_remaining || 0) !== (a.hearts_remaining || 0)) {
-            return (b.hearts_remaining || 0) - (a.hearts_remaining || 0);
+        const compDiff = countCompletedMaps(b) - countCompletedMaps(a);
+        if (compDiff !== 0) return compDiff;
+        if ((a.total_time_seconds || 0) !== (b.total_time_seconds || 0)) {
+            return (a.total_time_seconds || 0) - (b.total_time_seconds || 0);
         }
-        return (a.total_time_seconds || 0) - (b.total_time_seconds || 0);
+        return (b.hearts_remaining || 0) - (a.hearts_remaining || 0);
     });
     return sorted.map((r, idx) => ({ ...r, rank: idx + 1 }));
 }
@@ -82,17 +91,21 @@ function sortAndRankRows(rows) {
 function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHearts = 15) {
     if (!pendingQueue || pendingQueue.length === 0) return baseRows;
 
-    const existingNames = new Set(
-        baseRows.map((r) => String(isGroupMode ? r.leader_name : r.name || '').trim().toLowerCase())
-    );
-    const additions = [];
+    const merged = [...baseRows];
+    const indexByName = new Map();
+    merged.forEach((r, i) => {
+        const key = String(isGroupMode ? r.leader_name : r.name || '').trim().toLowerCase();
+        if (key) indexByName.set(key, i);
+    });
+
+    let changed = false;
 
     pendingQueue.forEach((item, idx) => {
         const d = item.qr_payload || {};
         const leader = String(d.l || '').trim();
+        if (!leader) return;
+        const leaderKey = leader.toLowerCase();
         const groupName = String(d.g || '').trim() || leader;
-        if (existingNames.has(leader.toLowerCase())) return;
-        existingNames.add(leader.toLowerCase());
 
         const scores = Array.isArray(d.s) ? d.s.map((v) => Number(v || 0)) : [0, 0, 0, 0, 0];
         const hearts = Array.isArray(d.h) ? d.h.map((v) => Number(v || 0)) : [0, 0, 0, 0, 0];
@@ -108,14 +121,15 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
         const totalHearts = hearts.reduce((a, b) => a + b, 0);
         const totalTime = times.reduce((a, b) => a + b, 0);
 
-        if (isGroupMode) {
-            additions.push({
-                group_id: `pending-${d.id || idx}`,
-                leader_user_id: `pending-u-${d.id || idx}`,
-                group_name: groupName,
-                leader_name: leader,
-                member_names: d.mb || null,
+        const existingIdx = indexByName.get(leaderKey);
+        if (existingIdx !== undefined) {
+            // Update existing cached row cleanly so Online->Offline failover & teacher-unblocked retakes reflect immediately!
+            const prev = merged[existingIdx];
+            merged[existingIdx] = {
+                ...prev,
+                ...(isGroupMode ? { group_name: groupName || prev.group_name, member_names: d.mb || prev.member_names } : {}),
                 current_map_number: 5,
+                completed_maps: 5,
                 activity_status: 'completed',
                 map_scores: mapScores,
                 hearts_remaining: totalHearts,
@@ -124,26 +138,51 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
                 total_score: totalScore,
                 source: 'offline_qr',
                 pending_sync: true,
-            });
-        } else {
-            additions.push({
-                user_id: `pending-u-${d.id || idx}`,
-                name: leader,
-                current_map_number: 5,
-                activity_status: 'completed',
-                map_scores: mapScores,
-                hearts_remaining: totalHearts,
-                max_total_hearts: maxTotalHearts,
-                total_time_seconds: totalTime,
-                total_score: totalScore,
-                source: 'offline_qr',
-                pending_sync: true,
-            });
+            };
+            changed = true;
+            return;
         }
+
+        const newRow = isGroupMode
+            ? {
+                  group_id: `pending-${d.id || idx}`,
+                  leader_user_id: `pending-u-${d.id || idx}`,
+                  group_name: groupName,
+                  leader_name: leader,
+                  member_names: d.mb || null,
+                  current_map_number: 5,
+                  completed_maps: 5,
+                  activity_status: 'completed',
+                  map_scores: mapScores,
+                  hearts_remaining: totalHearts,
+                  max_total_hearts: maxTotalHearts,
+                  total_time_seconds: totalTime,
+                  total_score: totalScore,
+                  source: 'offline_qr',
+                  pending_sync: true,
+              }
+            : {
+                  user_id: `pending-u-${d.id || idx}`,
+                  name: leader,
+                  current_map_number: 5,
+                  completed_maps: 5,
+                  activity_status: 'completed',
+                  map_scores: mapScores,
+                  hearts_remaining: totalHearts,
+                  max_total_hearts: maxTotalHearts,
+                  total_time_seconds: totalTime,
+                  total_score: totalScore,
+                  source: 'offline_qr',
+                  pending_sync: true,
+              };
+
+        indexByName.set(leaderKey, merged.length);
+        merged.push(newRow);
+        changed = true;
     });
 
-    if (additions.length === 0) return baseRows;
-    return sortAndRankRows([...baseRows, ...additions]);
+    if (!changed) return baseRows;
+    return sortAndRankRows(merged);
 }
 
 function buildLocalCsv(rows, isGroupMode, maxTotalScore = 50, maxTotalHearts = 15) {
@@ -391,6 +430,8 @@ export default function TeacherMonitorPage() {
         setSyncingQueue(true);
         const remaining = [];
         let syncedCount = 0;
+        let droppedInvalid = 0;
+        let transientErrors = 0;
 
         for (const item of pendingQueue) {
             try {
@@ -405,9 +446,13 @@ export default function TeacherMonitorPage() {
                 }
                 syncedCount += 1;
             } catch (err) {
-                // Drop permanent 422 errors only if clearly invalid; keep network errors
-                if (!err?.response) {
+                const status = err?.response?.status;
+                // ONLY drop permanently invalid 422 payloads; ALWAYS preserve queue items on network drops, 502/503 cold starts, 429, 500, or 401!
+                if (status === 422) {
+                    droppedInvalid += 1;
+                } else {
                     remaining.push(item);
+                    transientErrors += 1;
                 }
             }
         }
@@ -416,6 +461,15 @@ export default function TeacherMonitorPage() {
         setSyncingQueue(false);
         if (syncedCount > 0) {
             showToast('success', `Na-sync na ang ${syncedCount} offline result sa Live Monitor.`, 'Na-sync sa Cloud.');
+        }
+        if (transientErrors > 0) {
+            showToast(
+                'warning',
+                `Naka-save pa rin sa queue ang ${remaining.length} resulta dahil abala o nagwa-warm up ang server. Subukan muli makalipas ang ilang segundo.`,
+                'Naka-queue pa rin.'
+            );
+        } else if (droppedInvalid > 0 && syncedCount === 0) {
+            showToast('error', `May ${droppedInvalid} hindi valid na offline QR sa queue na nilaktawan.`);
         }
     };
 
@@ -449,7 +503,8 @@ export default function TeacherMonitorPage() {
 
         if (!navigator.onLine || pendingQueue.length > 0) {
             const csv = buildLocalCsv(rows, isGroupMode, maxTotalScore, maxTotalHearts);
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            // Prepend UTF-8 BOM so Windows Excel renders Filipino characters (ñ, em-dash) cleanly
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

@@ -20,9 +20,19 @@ use Illuminate\Support\Facades\DB;
 
 class SessionGroupingController extends Controller
 {
-    public function index(): JsonResponse
+    private function ensureOwnsSession(Request $request, GameSession $session): void
     {
-        $sessions = GameSession::with('lesson:id,title')->orderByDesc('id')->get();
+        if ((int) $session->teacher_id !== (int) $request->user()->id) {
+            abort(403, 'Walang pahintulot na buksan o baguhin ang sesyong ito.');
+        }
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $sessions = GameSession::with('lesson:id,title')
+            ->where('teacher_id', $request->user()->id)
+            ->orderByDesc('id')
+            ->get();
         $lessons = Lesson::select('id', 'title')->get();
 
         return response()->json([
@@ -42,6 +52,8 @@ class SessionGroupingController extends Controller
 
     public function show(Request $request, GameSession $session, GroupingService $grouping): JsonResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         $version = GroupingService::sessionVersion($session->id, false);
         $sinceVer = $request->query('since_ver');
 
@@ -59,8 +71,10 @@ class SessionGroupingController extends Controller
         ]);
     }
 
-    public function destroy(GameSession $session, GroupingService $grouping): JsonResponse
+    public function destroy(Request $request, GameSession $session, GroupingService $grouping): JsonResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         $sessionId = $session->id;
         $joinCode = strtoupper(trim((string) $session->join_code));
 
@@ -82,10 +96,19 @@ class SessionGroupingController extends Controller
                 $orphanGuestIds = $participantUserIds->diff($stillReferencedIds);
 
                 if ($orphanGuestIds->isNotEmpty()) {
-                    User::whereIn('id', $orphanGuestIds)
+                    $deletableGuestIds = User::whereIn('id', $orphanGuestIds)
                         ->where('role', 'student')
                         ->whereNull('email')
-                        ->delete();
+                        ->pluck('id');
+
+                    if ($deletableGuestIds->isNotEmpty()) {
+                        DB::table('personal_access_tokens')
+                            ->where('tokenable_type', User::class)
+                            ->whereIn('tokenable_id', $deletableGuestIds)
+                            ->delete();
+
+                        User::whereIn('id', $deletableGuestIds)->delete();
+                    }
                 }
             }
         });
@@ -101,8 +124,10 @@ class SessionGroupingController extends Controller
         ]);
     }
 
-    public function toggleLock(GameSession $session, GroupingService $grouping): JsonResponse
+    public function toggleLock(Request $request, GameSession $session, GroupingService $grouping): JsonResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         $session->update(['groups_locked' => ! $session->groups_locked]);
         $grouping->forgetSessionCaches($session);
 
@@ -113,6 +138,8 @@ class SessionGroupingController extends Controller
 
     public function updateStatus(Request $request, GameSession $session, GroupingService $grouping): JsonResponse
     {
+        $this->ensureOwnsSession($request, $session);
+
         $validated = $request->validate([
             'status' => ['required', 'in:waiting,active,finished'],
         ]);
@@ -129,6 +156,10 @@ class SessionGroupingController extends Controller
     {
         $group->loadMissing('gameSession');
         $session = $group->gameSession;
+        if (! $session) {
+            abort(404);
+        }
+        $this->ensureOwnsSession($request, $session);
 
         $updatedGroup = $grouping->renameGroup(
             $group,

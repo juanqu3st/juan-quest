@@ -123,7 +123,14 @@ class OfflinePackController extends Controller
 
         $versionFingerprint = substr(hash('sha256', json_encode([
             'lesson_updated' => $lesson->updated_at?->timestamp,
-            'maps' => $lesson->maps->map(fn ($m) => [$m->id, $m->updated_at?->timestamp, $m->challenges->count()])->values(),
+            'maps' => $mapsPayload->map(fn ($m) => [
+                $m['id'],
+                count($m['challenges']),
+                collect($m['challenges'])->map(fn ($c) => [$c['id'], $c['answer_hash'], $c['payload']])->values(),
+            ])->values(),
+            'challenge_timestamps' => $lesson->maps->flatMap(
+                fn ($m) => $m->challenges->map(fn ($c) => [$c->id, $c->updated_at?->timestamp])
+            )->values(),
             'videos' => $videos,
             'images' => $images,
             'audio' => $audio,

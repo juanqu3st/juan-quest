@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Delete, RotateCcw } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
+import { playUiTap } from '../../utils/gameAudio';
 
 function LineArtIllustration({ orderIndex, slot }) {
     const variant = (orderIndex + slot) % 4;
@@ -51,9 +52,19 @@ export default function FourPicsWordGame({
     );
     const [currentIndex, setCurrentIndex] = useState(firstPendingIdx);
     const [pickedByChallenge, setPickedByChallenge] = useState(() => savedPickedByChallenge || {});
+    const [wordFeedback, setWordFeedback] = useState(''); // '' | 'wrong' | 'right'
     const onSavePickedRef = useRef(onSavePickedByChallenge);
     const didMountPickedRef = useRef(false);
+    const clearTimerRef = useRef(null);
+    const advanceTimerRef = useRef(null);
     onSavePickedRef.current = onSavePickedByChallenge;
+
+    useEffect(() => {
+        return () => {
+            clearTimeout(clearTimerRef.current);
+            clearTimeout(advanceTimerRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         if (!didMountPickedRef.current) {
@@ -66,7 +77,12 @@ export default function FourPicsWordGame({
     useEffect(() => {
         const nextIdx = challenges.findIndex((c) => !completedChallengeIds.includes(c.id));
         if (nextIdx !== -1 && nextIdx !== currentIndex) {
-            setCurrentIndex(nextIdx);
+            clearTimeout(advanceTimerRef.current);
+            // Brief emerald pop before gliding smoothly to the next puzzle
+            advanceTimerRef.current = setTimeout(() => {
+                setWordFeedback('');
+                setCurrentIndex(nextIdx);
+            }, 320);
         }
     }, [completedChallengeIds, challenges, currentIndex]);
 
@@ -80,6 +96,8 @@ export default function FourPicsWordGame({
     const updatePicked = useCallback(
         (updater) => {
             if (!current) return;
+            clearTimeout(clearTimerRef.current);
+            setWordFeedback('');
             setPickedByChallenge((prev) => {
                 const curList = prev[current.id] || [];
                 const nextList = typeof updater === 'function' ? updater(curList) : updater;
@@ -90,12 +108,19 @@ export default function FourPicsWordGame({
     );
 
     const handleSubmitWord = useCallback(async () => {
-        if (!current || busy || currentWord.length < word_length) return;
+        if (!current || busy || wordFeedback === 'right' || currentWord.length < word_length) return;
         const res = await onSubmit(current.id, { word: currentWord });
-        if (res && !res.is_correct && !res.level_ended) {
-            setTimeout(() => updatePicked([]), 360);
+        if (res?.is_correct) {
+            setWordFeedback('right');
+        } else if (res && !res.is_correct && !res.level_ended) {
+            setWordFeedback('wrong');
+            clearTimeout(clearTimerRef.current);
+            clearTimerRef.current = setTimeout(() => {
+                setWordFeedback('');
+                updatePicked([]);
+            }, 420);
         }
-    }, [busy, current, currentWord, onSubmit, updatePicked, word_length]);
+    }, [busy, current, currentWord, onSubmit, updatePicked, wordFeedback, word_length]);
 
     useEffect(() => {
         if (!current) return undefined;
@@ -129,7 +154,8 @@ export default function FourPicsWordGame({
     if (!current) return null;
 
     const handlePickTile = (idx) => {
-        if (pickedIndices.includes(idx) || pickedIndices.length >= word_length) return;
+        if (wordFeedback === 'right' || pickedIndices.includes(idx) || pickedIndices.length >= word_length) return;
+        playUiTap();
         updatePicked((prev) => [...prev, idx]);
     };
 
@@ -194,7 +220,7 @@ export default function FourPicsWordGame({
                 <div
                     className={`flex items-center justify-center ${
                         isLongWord ? 'flex-nowrap gap-1 sm:gap-2' : 'flex-wrap gap-1.5 sm:gap-2'
-                    }`}
+                    } ${wordFeedback === 'wrong' ? 'jq-shake' : wordFeedback === 'right' ? 'jq-pop' : ''}`}
                 >
                     {Array.from({ length: word_length }).map((_, i) => {
                         const tileIdx = pickedIndices[i];
@@ -203,10 +229,11 @@ export default function FourPicsWordGame({
 
                         return (
                             <button
-                                key={i}
+                                key={`${i}-${tileIdx ?? 'empty'}`}
                                 type="button"
                                 onClick={() => {
-                                    if (tileIdx !== undefined) {
+                                    if (tileIdx !== undefined && wordFeedback !== 'right') {
+                                        playUiTap();
                                         updatePicked((prev) => prev.filter((_, idx) => idx !== i));
                                     }
                                 }}
@@ -216,11 +243,17 @@ export default function FourPicsWordGame({
                                         ? 'w-7 h-9 min-[390px]:w-8 min-[390px]:h-10 sm:w-11 sm:h-12 text-xs min-[390px]:text-sm sm:text-base'
                                         : 'w-10 h-11 sm:w-11 sm:h-12 text-base'
                                 } rounded-lg border font-bold flex items-center justify-center transition-colors shrink-0 ${
-                                    letter
-                                        ? 'bg-[#1C1917] text-white border-[#1C1917] hover:bg-rose-700 hover:border-rose-700 cursor-pointer'
-                                        : isNextActive
-                                          ? 'bg-white text-stone-400 border-[#C2410C]'
-                                          : 'bg-white text-stone-400 border-stone-300'
+                                    letter ? 'jq-tile-in ' : ''
+                                }${
+                                    wordFeedback === 'right' && letter
+                                        ? 'bg-[#15803D] text-white border-[#15803D] cursor-default'
+                                        : wordFeedback === 'wrong' && letter
+                                          ? 'bg-rose-600 text-white border-rose-600 cursor-default'
+                                          : letter
+                                            ? 'bg-[#1C1917] text-white border-[#1C1917] hover:bg-rose-700 hover:border-rose-700 active:scale-95 cursor-pointer'
+                                            : isNextActive
+                                              ? 'bg-white text-stone-400 border-[#C2410C]'
+                                              : 'bg-white text-stone-400 border-stone-300'
                                 }`}
                             >
                                 {letter}
@@ -237,12 +270,12 @@ export default function FourPicsWordGame({
                             <button
                                 key={idx}
                                 type="button"
-                                disabled={used || pickedIndices.length >= word_length}
+                                disabled={used || pickedIndices.length >= word_length || wordFeedback === 'right'}
                                 onClick={() => handlePickTile(idx)}
-                                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border font-bold text-sm transition-colors ${
+                                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border font-bold text-sm transition-[colors,transform] ${
                                     used
-                                        ? 'bg-stone-100 text-transparent border-stone-200 cursor-not-allowed'
-                                        : 'bg-white text-stone-900 border-stone-300 hover:border-stone-900 hover:bg-stone-50 cursor-pointer disabled:opacity-50'
+                                        ? 'bg-stone-100 text-transparent border-stone-200 cursor-not-allowed scale-95'
+                                        : 'bg-white text-stone-900 border-stone-300 hover:border-stone-900 hover:bg-stone-50 active:scale-90 cursor-pointer disabled:opacity-50'
                                 }`}
                             >
                                 {letter}
@@ -255,9 +288,12 @@ export default function FourPicsWordGame({
                 <div className="flex items-center gap-2 pt-2 border-t border-stone-200/80">
                     <button
                         type="button"
-                        disabled={pickedIndices.length === 0 || busy}
-                        onClick={() => updatePicked((prev) => prev.slice(0, -1))}
-                        className="min-h-[46px] px-3 sm:px-4 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 text-xs sm:text-sm font-semibold text-stone-700 disabled:opacity-40 inline-flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shrink-0"
+                        disabled={pickedIndices.length === 0 || busy || wordFeedback === 'right'}
+                        onClick={() => {
+                            playUiTap();
+                            updatePicked((prev) => prev.slice(0, -1));
+                        }}
+                        className="min-h-[46px] px-3 sm:px-4 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 active:scale-95 text-xs sm:text-sm font-semibold text-stone-700 disabled:opacity-40 inline-flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shrink-0"
                     >
                         <Delete className="w-4 h-4" />
                         <span>Bura</span>
@@ -265,9 +301,12 @@ export default function FourPicsWordGame({
 
                     <button
                         type="button"
-                        disabled={pickedIndices.length === 0 || busy}
-                        onClick={() => updatePicked([])}
-                        className="min-h-[46px] px-3 sm:px-4 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 text-xs sm:text-sm font-semibold text-stone-700 disabled:opacity-40 inline-flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shrink-0"
+                        disabled={pickedIndices.length === 0 || busy || wordFeedback === 'right'}
+                        onClick={() => {
+                            playUiTap();
+                            updatePicked([]);
+                        }}
+                        className="min-h-[46px] px-3 sm:px-4 rounded-xl bg-white border border-stone-200 hover:border-stone-300 hover:bg-stone-50 active:scale-95 text-xs sm:text-sm font-semibold text-stone-700 disabled:opacity-40 inline-flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shrink-0"
                     >
                         <RotateCcw className="w-4 h-4" />
                         <span className="hidden min-[390px]:inline">Reset</span>
@@ -275,10 +314,10 @@ export default function FourPicsWordGame({
 
                     <button
                         type="button"
-                        disabled={busy || !isWordComplete}
+                        disabled={busy || !isWordComplete || wordFeedback === 'right'}
                         onClick={handleSubmitWord}
-                        className={`min-h-[46px] flex-1 px-4 sm:px-6 rounded-xl font-semibold text-xs sm:text-sm transition ${
-                            busy || !isWordComplete
+                        className={`min-h-[46px] flex-1 px-4 sm:px-6 rounded-xl font-semibold text-xs sm:text-sm transition active:scale-[0.99] ${
+                            busy || !isWordComplete || wordFeedback === 'right'
                                 ? 'bg-stone-200 text-stone-500 cursor-not-allowed'
                                 : 'bg-[#C2410C] hover:bg-[#9A3412] text-white cursor-pointer'
                         }`}

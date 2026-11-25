@@ -66,7 +66,7 @@ function drawCheck(ctx, cx, cy, s, color) {
  * Small name tag that floats above a map's buildings (drawn on a canvas, no DOM).
  * Same look as the old HTML tag: name + score chip (star, check when done, lock when locked).
  */
-export default function MapLabelSprite({ title, state, score, maxScore = 10, position, height = 1.0 }) {
+export default function MapLabelSprite({ title, state, score, maxScore = 10, hideScore = false, position, height = 1.0 }) {
     const { texture, aspect } = useMemo(() => {
         const st = STYLES[state];
         const font = '800 64px Inter, "Segoe UI", Arial, sans-serif';
@@ -75,7 +75,7 @@ export default function MapLabelSprite({ title, state, score, maxScore = 10, pos
         measure.font = font;
         const titleW = measure.measureText(title).width;
         measure.font = chipFont;
-        const chipText = state === 'locked' ? '' : `${score}/${maxScore}`;
+        const chipText = state === 'locked' || hideScore ? '' : `${score}/${maxScore}`;
         const chipTextW = chipText ? measure.measureText(chipText).width : 0;
         const chipW = 70 + chipTextW + (chipText ? 26 : 0);
 
@@ -105,10 +105,10 @@ export default function MapLabelSprite({ title, state, score, maxScore = 10, pos
         ctx.fillStyle = st.chipBg;
         roundRect(ctx, cx, cy - 38, chipW, 76, 20);
         ctx.fill();
-        const iconX = cx + 38;
+        const iconX = chipText ? cx + 38 : cx + chipW / 2;
         if (state === 'done') drawCheck(ctx, iconX, cy, 40, st.chipText);
         else if (state === 'open') drawStar(ctx, iconX, cy, 24, '#F59E0B');
-        else drawLock(ctx, iconX + (chipW - 76) / 2, cy, 44, st.chipText);
+        else drawLock(ctx, cx + chipW / 2, cy, 44, st.chipText);
         if (chipText) {
             ctx.font = chipFont;
             ctx.fillStyle = st.chipText;
@@ -119,7 +119,7 @@ export default function MapLabelSprite({ title, state, score, maxScore = 10, pos
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = 4;
         return { texture: tex, aspect: W / H };
-    }, [title, state, score, maxScore]);
+    }, [title, state, score, maxScore, hideScore]);
 
     useEffect(() => () => texture.dispose(), [texture]);
 
