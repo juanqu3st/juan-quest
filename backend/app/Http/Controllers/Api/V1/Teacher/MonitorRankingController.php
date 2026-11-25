@@ -18,9 +18,21 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MonitorRankingController extends Controller
 {
-    public function show(GameSession $session, RankingMonitorService $monitor): JsonResponse
+    public function show(Request $request, GameSession $session, RankingMonitorService $monitor): JsonResponse
     {
+        $version = GroupingService::sessionVersion($session->id, $session->status !== 'finished');
+        $sinceVer = $request->query('since_ver');
+
+        if (is_string($sinceVer) && $sinceVer !== '' && $sinceVer === $version) {
+            return response()->json([
+                'unchanged' => true,
+                'version' => $version,
+            ]);
+        }
+
         return response()->json([
+            'unchanged' => false,
+            'version' => $version,
             'monitor' => $monitor->getMonitorData($session),
         ]);
     }
@@ -44,6 +56,7 @@ class MonitorRankingController extends Controller
 
         return response()->json([
             'imported' => $imported,
+            'version' => GroupingService::sessionVersion($session->id, $session->status !== 'finished'),
             'monitor' => $monitor->getMonitorData($session),
         ]);
     }
@@ -107,6 +120,7 @@ class MonitorRankingController extends Controller
         return response()->json([
             'ok' => true,
             'reset_map_number' => $mapNumber,
+            'version' => GroupingService::sessionVersion($session->id, $session->status !== 'finished'),
             'monitor' => $monitor->getMonitorData($session),
         ]);
     }

@@ -463,23 +463,7 @@ export default function ScenePlaceholderGuide({
 
     // 1. Built-in 3D Animated Story MP4 Player (with modern YouTube-style in-video subtitles!)
     if (hasMapVideo) {
-        const activeSceneIdx = Math.max(
-            0,
-            timedScenes.findIndex((s) => currentTime >= s._start && currentTime < s._end)
-        );
         const activeCue = timedCues.find((c) => currentTime >= c.start && currentTime <= c.end) || null;
-
-        const jumpToScene = (scene) => {
-            const video = videoRef.current;
-            if (!video) return;
-            try {
-                video.currentTime = scene._start;
-                setCurrentTime(scene._start);
-                video.play().catch(() => {});
-            } catch {
-                // ignore seek error before metadata
-            }
-        };
 
         return (
             <div className="max-w-3xl mx-auto w-full flex-1 flex flex-col justify-between gap-4">
@@ -568,33 +552,6 @@ export default function ScenePlaceholderGuide({
                             </div>
                         )}
                     </div>
-
-                    {/* Horizontally scrollable Scene Chapter Pills on mobile, wrapped on sm+ */}
-                    {timedScenes.length > 1 && (
-                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5 sm:flex-wrap">
-                            {timedScenes.map((sc, i) => {
-                                const isCurrent = i === activeSceneIdx;
-                                const cleanTitle = String(sc.scene_title || `Eksena ${i + 1}`).replace(
-                                    /^Scene\s*\d+:\s*/i,
-                                    ''
-                                );
-                                return (
-                                    <button
-                                        key={i}
-                                        type="button"
-                                        onClick={() => jumpToScene(sc)}
-                                        className={`shrink-0 min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                                            isCurrent
-                                                ? 'bg-[#C2410C] text-white border-[#C2410C]'
-                                                : 'bg-white text-stone-600 border-stone-200 hover:border-stone-300'
-                                        }`}
-                                    >
-                                        Eksena {i + 1}: {cleanTitle}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    )}
                 </div>
 
                 {/* Anchored Thumb-Zone Continue Bar */}

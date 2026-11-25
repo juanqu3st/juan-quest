@@ -4,6 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { cameraOffset, CHAR_SCALE, getWalkHeight, MAP_NODE_STOPS, WALK_SPEED } from './worldConfig';
+import { getCharacterMeta } from '../../utils/characters';
 
 const FEET_LIFT = 0.14; // stands on top of the sandy road / plaza
 
@@ -130,8 +131,9 @@ export default function PlayerCharacter({
         g.rotation.y = yawRef.current;
     });
 
-    const modelUrl = characterKey === 'pedro' ? '/models/pedro.glb' : '/models/juan.glb';
-    const fallback = <SimpleFallback characterKey={characterKey} />;
+    const charMeta = getCharacterMeta(characterKey);
+    const modelUrl = charMeta.modelUrl;
+    const fallback = <SimpleFallback charMeta={charMeta} />;
 
     return (
         <group ref={groupRef}>
@@ -290,9 +292,9 @@ function GlbCharacter({ url, isWalking }) {
 }
 
 /** Shown only while the GLB loads (or if it cannot load). */
-function SimpleFallback({ characterKey }) {
-    const shirt = characterKey === 'pedro' ? '#3F72B5' : '#E6D8B8';
-    const pants = characterKey === 'pedro' ? '#3B342D' : '#8A5A36';
+function SimpleFallback({ charMeta }) {
+    const shirt = charMeta?.shirtColor || '#E6D8B8';
+    const pants = charMeta?.pantsColor || '#8A5A36';
     return (
         <group scale={CHAR_SCALE}>
             <mesh position={[0, 0.2, 0]}>
@@ -312,4 +314,3 @@ function SimpleFallback({ characterKey }) {
 }
 
 useGLTF.preload('/models/juan.glb', '/draco/');
-useGLTF.preload('/models/pedro.glb', '/draco/');

@@ -8,17 +8,37 @@ use App\Http\Resources\V1\MapResource;
 use App\Models\Lesson;
 use App\Models\SessionParticipant;
 use App\Models\StudentProgress;
+use App\Services\GroupingService;
 use App\Services\OfflineQrService;
 use App\Services\RankingMonitorService;
 use App\Services\ScoringService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class WorldMapController extends Controller
 {
     public function index(Request $request, ScoringService $scoring, RankingMonitorService $monitor): JsonResponse
     {
         $student = $request->user();
+
+        // Zero-SQL conditional fast-path for students waiting in lobby:
+        // returns ~36-byte { unchanged: true } when session state/groups have not changed!
+        $sinceVer = $request->query('since_ver');
+        if (is_string($sinceVer) && $sinceVer !== '') {
+            $cachedSid = Cache::remember(
+                "juanquest:user:{$student->id}:sid",
+                now()->addMinutes(5),
+                fn () => SessionParticipant::where('user_id', $student->id)->latest('joined_at')->value('game_session_id')
+            );
+            $currentVer = $cachedSid ? GroupingService::sessionVersion((int) $cachedSid, false) : null;
+            if ($currentVer !== null && $sinceVer === $currentVer) {
+                return response()->json([
+                    'unchanged' => true,
+                    'version' => $currentVer,
+                ]);
+            }
+        }
 
         $progressByMap = StudentProgress::where('user_id', $student->id)
             ->get()
@@ -67,7 +87,13 @@ class WorldMapController extends Controller
         $completedCount = $progressByMap->where('is_completed', true)->count();
         $maxTotalScore = $lesson ? (int) $lesson->maps->sum('perfect_score') : 50;
 
+        if ($gameSession) {
+            Cache::put("juanquest:user:{$student->id}:sid", $gameSession->id, now()->addMinutes(5));
+        }
+
         return response()->json([
+            'unchanged' => false,
+            'version' => $gameSession ? GroupingService::sessionVersion($gameSession->id, false) : null,
             'lesson' => $lesson ? new LessonResource($lesson) : null,
             'maps' => $mapsPayload,
             'total_score' => $totalScore,

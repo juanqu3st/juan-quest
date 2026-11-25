@@ -23,12 +23,47 @@ class GroupingService
         });
     }
 
+    public static function sessionVersion(?int $sessionId, bool $withPresenceBucket = false): string
+    {
+        if (! $sessionId) {
+            return '0';
+        }
+
+        $key = "juanquest:session:{$sessionId}:ver";
+        $ver = Cache::get($key);
+        if ($ver === null) {
+            $ver = 1;
+            Cache::put($key, $ver, now()->addHours(24));
+        }
+
+        if ($withPresenceBucket) {
+            // 30s presence bucket ensures >45s disconnected badges flip cleanly even when no new events arrive
+            return "{$ver}-" . (int) floor(time() / 30);
+        }
+
+        return (string) $ver;
+    }
+
+    public static function bumpSessionVersion(?int $sessionId): string
+    {
+        if (! $sessionId) {
+            return '0';
+        }
+
+        $key = "juanquest:session:{$sessionId}:ver";
+        $next = ((int) Cache::get($key, 1)) + 1;
+        Cache::put($key, $next, now()->addHours(24));
+
+        return (string) $next;
+    }
+
     public function forgetSessionCaches(GameSession $session): void
     {
         Cache::forget("juanquest:session:code:{$session->join_code}");
         Cache::forget("juanquest:session:{$session->id}:lobby");
         Cache::forget("juanquest:session:{$session->id}:monitor");
         Cache::forget("juanquest:session:{$session->id}:leaderboard");
+        self::bumpSessionVersion($session->id);
     }
 
     /**
@@ -64,6 +99,8 @@ class GroupingService
      */
     public function assignOnJoin(GameSession $session, SessionParticipant $participant): void
     {
+        Cache::forget("juanquest:user:{$participant->user_id}:sid");
+
         if (! $session->isGroupMode()) {
             $this->forgetSessionCaches($session);
 

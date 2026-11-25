@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, CheckCircle2, FastForward, LogOut, Pencil, QrCode, Star, Trophy, User, Users, WifiOff } from 'lucide-react';
+import { Award, CheckCircle2, ChevronDown, FastForward, HelpCircle, LogOut, Pencil, QrCode, Star, Trophy, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
 import { useToast } from '../../context/ToastContext';
+import { useSmartPoll } from '../../hooks/useSmartPoll';
 import { clearStageResume, loadStageResume } from '../../utils/stageResume';
 import { activateMidGameOfflineFailover } from '../../utils/offlineEngine';
 import { unlockAudio } from '../../utils/gameAudio';
+import { getCharacterMeta, normalizeCharacterKey } from '../../utils/characters';
 import WorldMapCanvas from '../../components/three/WorldMapCanvas';
 import StageModal from '../../components/game/StageModal';
 import PadlockUnlockOverlay from '../../components/game/PadlockUnlockOverlay';
 import LeaderboardDrawer from '../../components/game/LeaderboardDrawer';
 import GameCompletionModal from '../../components/game/GameCompletionModal';
 import MyGroupModal from '../../components/game/MyGroupModal';
+import StudentOnboardingGuide from '../../components/game/StudentOnboardingGuide';
+import CharacterPickerModal from '../../components/game/CharacterPickerModal';
 
 function loadOpenedMapIds(storageKey) {
     try {
@@ -65,6 +69,7 @@ export default function StudentWorldPage() {
     const [resumePayload, setResumePayload] = useState(null);
     const [completionOpen, setCompletionOpen] = useState(false);
     const [groupModalOpen, setGroupModalOpen] = useState(false);
+    const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
     const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     const openOnArrivalRef = useRef(false);
     const lockScreenProjectorRef = useRef(new Map());
@@ -84,16 +89,33 @@ export default function StudentWorldPage() {
     }, [openedStorageKey, world]);
 
     const tourKey = `juanquest_tour_seen_${user?.id}`;
+    const guideSeenKey = `juanquest_guide_seen_${user?.id}`;
     const [tourActive, setTourActive] = useState(() => {
         if (loadStageResume(user?.id)) return false;
         return !localStorage.getItem(tourKey);
     });
+    const [guideOpen, setGuideOpen] = useState(() => {
+        if (loadStageResume(user?.id)) return false;
+        const sawTour = Boolean(localStorage.getItem(tourKey));
+        const sawGuide = Boolean(localStorage.getItem(guideSeenKey));
+        return sawTour && !sawGuide;
+    });
+    const [guideStep, setGuideStep] = useState(null);
     const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 
-    const loadWorld = useCallback(async () => {
+    const worldVersionRef = useRef(null);
+
+    const loadWorld = useCallback(async ({ conditional = false } = {}) => {
         try {
             lastWorldFetchRef.current = Date.now();
-            const data = await studentApi.getWorld();
+            const sinceVer = conditional ? worldVersionRef.current : null;
+            const data = await studentApi.getWorld(sinceVer);
+            if (data?.version) {
+                worldVersionRef.current = data.version;
+            }
+            if (data?.unchanged) {
+                return null;
+            }
             setWorld(data);
 
             const nextStatus = data.session?.status || null;
@@ -122,6 +144,7 @@ export default function StudentWorldPage() {
                 );
                 if (canPlaySession && activeServerMap) {
                     setTourActive(false);
+                    setGuideOpen(false);
                     setCharMapNumber(activeServerMap.map_number);
                     setTargetMapNumber(activeServerMap.map_number);
                     setResumePayload(saved?.mapId === activeServerMap.id ? saved : null);
@@ -135,6 +158,7 @@ export default function StudentWorldPage() {
                     );
                     if (savedMap && ['scene_guide', 'pre_game_lobby'].includes(saved.step)) {
                         setTourActive(false);
+                        setGuideOpen(false);
                         setCharMapNumber(savedMap.map_number);
                         setTargetMapNumber(savedMap.map_number);
                         setResumePayload(saved);
@@ -163,16 +187,20 @@ export default function StudentWorldPage() {
         };
     }, [loadWorld]);
 
-    // While session is waiting, quietly poll every 3s so group assignments, renames, and Teacher Start appear live
-    useEffect(() => {
-        if (world?.session?.status !== 'waiting' || activeStageMapId || completionOpen) {
-            return undefined;
-        }
-        const timer = setInterval(() => {
-            loadWorld().catch(() => {});
-        }, 3000);
-        return () => clearInterval(timer);
-    }, [world?.session?.status, activeStageMapId, completionOpen, loadWorld]);
+    // Smart conditional poll ONLY while waiting in lobby & tab is visible:
+    // sends ?since_ver= so 100 waiting students trigger 0 MySQL queries until Teacher clicks Start or updates groups!
+    useSmartPoll({
+        enabled: Boolean(
+            world?.session?.status === 'waiting' &&
+                !world?.offline_mode &&
+                !activeStageMapId &&
+                !completionOpen
+        ),
+        baseIntervalMs: 3000,
+        maxIntervalMs: 12000,
+        resetKey: world?.session?.id || null,
+        onTick: async () => Boolean(await loadWorld({ conditional: true })),
+    });
 
     // Lightweight 20s heartbeat while online so Teacher Live Monitor immediately detects disconnected devices (>45s)
     useEffect(() => {
@@ -221,14 +249,25 @@ export default function StudentWorldPage() {
     const finishTour = () => {
         setTourActive(false);
         localStorage.setItem(tourKey, '1');
+        if (!localStorage.getItem(guideSeenKey)) {
+            setGuideOpen(true);
+        }
     };
 
+    const finishGuide = () => {
+        setGuideOpen(false);
+        localStorage.setItem(guideSeenKey, '1');
+    };
+
+    const activeCharMeta = getCharacterMeta(user?.selected_character);
+
     const handleSwitchCharacter = async (char) => {
-        if ((user.selected_character || 'juan') === char) return;
-        updateUser({ selected_character: char });
-        const label = char === 'pedro' ? 'Pedro' : 'Juan';
-        showToast('info', `Si ${label} na ang gamit mong karakter.`);
-        await studentApi.updateCharacter(char).catch(() => {});
+        const nextKey = normalizeCharacterKey(char);
+        if (normalizeCharacterKey(user?.selected_character) === nextKey) return;
+        updateUser({ selected_character: nextKey });
+        const meta = getCharacterMeta(nextKey);
+        showToast('info', `Si ${meta.name} na ang gamit mong karakter.`);
+        await studentApi.updateCharacter(nextKey).catch(() => {});
     };
 
     const walkTo = (mapNumber, openWhenThere) => {
@@ -282,7 +321,7 @@ export default function StudentWorldPage() {
     }, [unlockingStage]);
 
     const handleEnterMap = (map, screenOrigin) => {
-        if (tourActive || activeStageMapId || unlockingStage || completionOpen || groupModalOpen) return;
+        if (tourActive || guideOpen || activeStageMapId || unlockingStage || completionOpen || groupModalOpen) return;
 
         const sessionStatus = world?.session?.status;
         if (sessionStatus === 'waiting') {
@@ -399,6 +438,7 @@ export default function StudentWorldPage() {
                 targetMapNumber={targetMapNumber}
                 isWalking={isWalking}
                 tourActive={tourActive}
+                guideStep={guideStep}
                 isSessionWaiting={isWaitingSession}
                 openedMapIds={openedMapIds}
                 unlockingMapId={unlockingStage?.map?.id || null}
@@ -410,10 +450,11 @@ export default function StudentWorldPage() {
                 onTourFinish={finishTour}
             />
 
-            {/* Single-Row Responsive Top HUD (Zero overlap with Dynamic Island or Top-Center Toast) */}
+            {/* Single-Row Responsive Top HUD (Hidden during onboarding guide to prevent overlap with Laktawan) */}
+            {!guideOpen && (
             <div className="pointer-events-none fixed top-0 inset-x-0 z-20 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-4 flex items-start justify-between gap-2">
                 {/* Left Dock: Identity + ONLY ONE Clickable Group Chip + Score */}
-                <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2 sm:gap-3 min-w-0 max-w-[calc(100%-108px)] sm:max-w-none">
+                <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2 sm:gap-3 min-w-0 max-w-[calc(100%-148px)] sm:max-w-none">
                     <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-orange-50 border border-orange-200/80 text-[#C2410C] text-[10px] sm:text-[11px] font-extrabold flex items-center justify-center shrink-0">
                         {getInitials(user.name)}
                     </div>
@@ -508,25 +549,23 @@ export default function StudentWorldPage() {
                     </div>
                 </div>
 
-                {/* Right Dock: Compact 40px+ Icons on Phone; Full Switcher + Labels on Tablet/Desktop */}
+                {/* Right Dock: Compact 40px+ Icons on Phone; Character Picker + Labels on Tablet/Desktop */}
                 <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl p-1 flex items-center gap-1 shrink-0">
-                    <div className="hidden sm:flex bg-stone-100/90 rounded-xl p-0.5 items-center gap-0.5">
-                        {['juan', 'pedro'].map((char) => (
-                            <button
-                                key={char}
-                                type="button"
-                                onClick={() => handleSwitchCharacter(char)}
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold capitalize inline-flex items-center gap-1 transition cursor-pointer ${
-                                    (user.selected_character || 'juan') === char
-                                        ? 'bg-[#C2410C] text-white shadow-2xs'
-                                        : 'text-stone-600 hover:text-stone-900'
-                                }`}
-                            >
-                                <User className="w-3.5 h-3.5" />
-                                {char}
-                            </button>
-                        ))}
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setCharacterPickerOpen(true)}
+                        aria-label="Pumili ng Karakter"
+                        title="Pumili ng Karakter"
+                        className="hidden sm:inline-flex items-center gap-1.5 min-h-[34px] pl-1.5 pr-2.5 py-1 rounded-xl bg-[#FAF5EB] hover:bg-orange-50 border border-stone-200/90 hover:border-[#C2410C]/40 text-stone-800 text-xs font-bold transition cursor-pointer"
+                    >
+                        <img
+                            src={activeCharMeta.portraitUrl}
+                            alt={activeCharMeta.name}
+                            className="w-6 h-6 rounded-lg object-contain bg-[#F2E6D0] shrink-0"
+                        />
+                        <span>{activeCharMeta.shortName}</span>
+                        <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+                    </button>
 
                     {allMapsCompleted && (
                         <button
@@ -560,6 +599,17 @@ export default function StudentWorldPage() {
                         </button>
                     )}
 
+                    <button
+                        type="button"
+                        onClick={() => setGuideOpen(true)}
+                        aria-label="Gabay sa Paglalaro"
+                        title="Gabay sa Paglalaro"
+                        className="min-w-[38px] min-h-[38px] sm:min-h-[34px] px-2 sm:px-2.5 py-1.5 rounded-xl hover:bg-orange-50 text-stone-700 hover:text-[#C2410C] text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                    >
+                        <HelpCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#C2410C]" />
+                        <span className="hidden sm:inline">Gabay</span>
+                    </button>
+
                     <div className="hidden sm:block h-5 w-px bg-stone-200/90 mx-0.5" />
 
                     <button
@@ -574,6 +624,7 @@ export default function StudentWorldPage() {
                     </button>
                 </div>
             </div>
+            )}
 
             {/* Single Sleek Bottom Thumb-Zone Dock (NO duplicate Edit Pangkat button!) */}
             <div className="pointer-events-none fixed bottom-0 inset-x-0 z-20 px-3 pb-[max(0.85rem,env(safe-area-inset-bottom))] flex justify-center">
@@ -587,7 +638,7 @@ export default function StudentWorldPage() {
                         <span>Laktawan</span>
                     </button>
                 ) : (
-                    !isWalking && !completionOpen && (
+                    !isWalking && !completionOpen && !guideOpen && (
                         <div className="pointer-events-auto w-full max-w-md sm:w-auto sm:max-w-xl bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-md rounded-2xl px-3.5 py-2 flex items-center justify-between sm:justify-center gap-3 text-xs">
                             <span className="inline-flex items-center gap-2 font-semibold text-stone-700 min-w-0">
                                 {isWaitingSession && (
@@ -606,27 +657,31 @@ export default function StudentWorldPage() {
                                 </span>
                             </span>
 
-                            {/* Mobile Thumb-Zone Character Switcher (Hidden on sm+ where it's in top-right) */}
-                            <div className="sm:hidden bg-stone-100 rounded-xl p-0.5 inline-flex items-center gap-0.5 shrink-0">
-                                {['juan', 'pedro'].map((char) => (
-                                    <button
-                                        key={char}
-                                        type="button"
-                                        onClick={() => handleSwitchCharacter(char)}
-                                        className={`min-h-[34px] px-3 rounded-lg text-xs font-bold capitalize transition cursor-pointer ${
-                                            (user.selected_character || 'juan') === char
-                                                ? 'bg-[#C2410C] text-white shadow-2xs'
-                                                : 'text-stone-600'
-                                        }`}
-                                    >
-                                        {char}
-                                    </button>
-                                ))}
-                            </div>
+                            {/* Mobile Thumb-Zone Character Picker Trigger (Hidden on sm+ where it's in top-right) */}
+                            <button
+                                type="button"
+                                onClick={() => setCharacterPickerOpen(true)}
+                                className="sm:hidden min-h-[36px] pl-1.5 pr-2.5 py-1 rounded-xl bg-[#FAF5EB] border border-stone-200 text-stone-800 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                            >
+                                <img
+                                    src={activeCharMeta.portraitUrl}
+                                    alt={activeCharMeta.name}
+                                    className="w-6 h-6 rounded-lg object-contain bg-[#F2E6D0] shrink-0"
+                                />
+                                <span>{activeCharMeta.shortName}</span>
+                                <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+                            </button>
                         </div>
                     )
                 )}
             </div>
+
+            <CharacterPickerModal
+                open={characterPickerOpen}
+                selectedKey={user?.selected_character || 'juan'}
+                onSelect={handleSwitchCharacter}
+                onClose={() => setCharacterPickerOpen(false)}
+            />
 
             {!isOfflineMode && isGroupMode && (
                 <MyGroupModal
@@ -698,6 +753,12 @@ export default function StudentWorldPage() {
                     onComplete={() => setUnlockingStage(null)}
                 />
             )}
+
+            <StudentOnboardingGuide
+                open={guideOpen && !tourActive && !activeStageMap && !unlockingStage && !completionOpen && !logoutConfirmOpen}
+                onClose={finishGuide}
+                onStepChange={setGuideStep}
+            />
 
             {/* Logout Confirmation Modal (Prevents accidental loss of offline progress or unsent Result QR) */}
             {logoutConfirmOpen && (

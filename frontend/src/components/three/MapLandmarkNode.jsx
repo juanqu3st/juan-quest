@@ -20,8 +20,8 @@ const LANDMARK_LAYOUT = {
         yaw: 0.16,
         scale: 1.48,
         guards: [
-            // Original Mapa 1 Pulis Guard with glowing lantern, standing clear beside the Munisipyo/notice board (off the dirt road!)
-            { pos: [1.55, 0, -4.45], rot: [0, 0.25, 0], uniformColor: '#1E3A8A', hatColor: '#1E293B', lantern: true },
+            // Mapa 1 Pulis Guard with glowing lantern, standing clear beside the Munisipyo/notice board
+            { guardType: 'pulis', pos: [1.55, 0, -4.45], rot: [0, 0.25, 0], uniformColor: '#1E3A8A', hatColor: '#1E293B', lantern: true },
         ],
     },
     2: {
@@ -29,9 +29,9 @@ const LANDMARK_LAYOUT = {
         yaw: 0.62,
         scale: 1.50,
         guards: [
-            // Original Mapa 2 Twin Military Guwardiya flanking Kuwartel entrance
-            { pos: [-4.6, 0, -0.6], rot: [0, 0.72, 0], uniformColor: '#3F6212', hatColor: '#365314', lantern: false },
-            { pos: [0.6, 0, -4.6], rot: [0, 0.45, 0], uniformColor: '#3F6212', hatColor: '#365314', lantern: false },
+            // Mapa 2 Twin Military Guwardiya flanking Kuwartel entrance
+            { guardType: 'guwardya', pos: [-4.6, 0, -0.6], rot: [0, 0.72, 0], uniformColor: '#3F6212', hatColor: '#365314', lantern: false },
+            { guardType: 'guwardya', pos: [0.6, 0, -4.6], rot: [0, 0.45, 0], uniformColor: '#3F6212', hatColor: '#365314', lantern: false },
         ],
     },
     3: {
@@ -39,8 +39,8 @@ const LANDMARK_LAYOUT = {
         yaw: 0.0,
         scale: 1.48,
         guards: [
-            // Original Mapa 3 Roadside Pulis Guard beside milestone
-            { pos: [-3.6, 0, -1.8], rot: [0, 0.45, 0], uniformColor: '#1E3A8A', hatColor: '#1E293B', lantern: false },
+            // Mapa 3 Roadside Pulis Guard beside milestone
+            { guardType: 'pulis', pos: [-3.6, 0, -1.8], rot: [0, 0.45, 0], uniformColor: '#1E3A8A', hatColor: '#1E293B', lantern: false },
         ],
     },
     4: {
@@ -246,16 +246,17 @@ export default function MapLandmarkNode({
                 {map.map_number === 1 && !lowQuality && isUnlocked && (
                     <pointLight position={[-1.69, 2.55, 1.12]} color="#FDE68A" intensity={2.4} distance={14} />
                 )}
-                {map.map_number === 2 && <AnimatedGarrisonFlag isUnlocked={isUnlocked} />}
+                {map.map_number === 2 && <AnimatedGarrisonFlag isUnlocked={isUnlocked} lowQuality={lowQuality} />}
                 {map.map_number === 5 && (
                     <AnimatedCampfireFlame isUnlocked={isUnlocked} lowQuality={lowQuality} />
                 )}
             </group>
 
-            {/* Restored Original Adult Guard NPCs (Mapa 1 Pulis, Mapa 2 Twin Guwardiya, Mapa 3 Pulis) */}
+            {/* Upgraded Pixar 3D Guard NPCs (Mapa 1 Pulis, Mapa 2 Twin Guwardiya, Mapa 3 Pulis) */}
             {layout.guards.map((g, idx) => (
                 <GuardFigure
                     key={idx}
+                    guardType={g.guardType}
                     position={g.pos}
                     rotation={g.rot}
                     scale={1.92}
@@ -313,23 +314,163 @@ function ArchitecturalLandmarkGlb({ mapNumber, isUnlocked, lowQuality }) {
     return <primitive object={clonedScene} />;
 }
 
-function AnimatedGarrisonFlag({ isUnlocked }) {
-    const flagRef = useRef();
-    useFrame(({ clock }) => {
-        if (flagRef.current) {
-            flagRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 3.8) * 0.24;
+function createPhilippineFlagTexture() {
+    if (typeof document === 'undefined') return null;
+    const W = 512;
+    const H = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // 1) Official 1:2 Royal Blue (top) & Crimson Red (bottom) horizontal bands
+    ctx.fillStyle = '#0038A8';
+    ctx.fillRect(0, 0, W, H / 2);
+    ctx.fillStyle = '#CE1126';
+    ctx.fillRect(0, H / 2, W, H / 2);
+
+    // 2) White equilateral hoist triangle (height = H, apex x = H * sqrt(3)/2)
+    const apexX = H * (Math.sqrt(3) / 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, H);
+    ctx.lineTo(apexX, H / 2);
+    ctx.closePath();
+    ctx.fill();
+
+    // 3) Golden 8-ray Philippine Sun (center at centroid of white triangle)
+    const sunX = apexX * 0.34;
+    const sunY = H / 2;
+    const sunR = 23;
+    ctx.fillStyle = '#FCD116';
+
+    for (let i = 0; i < 8; i += 1) {
+        const angle = (i * Math.PI) / 4;
+        ctx.save();
+        ctx.translate(sunX, sunY);
+        ctx.rotate(angle);
+
+        // Main central ray
+        ctx.beginPath();
+        ctx.moveTo(sunR - 2, -4.2);
+        ctx.lineTo(sunR + 27, 0);
+        ctx.lineTo(sunR - 2, 4.2);
+        ctx.closePath();
+        ctx.fill();
+
+        // Twin flanking thinner rays
+        for (const side of [-1, 1]) {
+            ctx.save();
+            ctx.rotate(side * 0.175);
+            ctx.beginPath();
+            ctx.moveTo(sunR - 1, -2.0);
+            ctx.lineTo(sunR + 21, 0);
+            ctx.lineTo(sunR - 1, 2.0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
         }
+        ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 4) Three 5-pointed golden stars near the 3 vertices of the white triangle
+    const drawStar = (cx, cy, outerR, innerR, rotOffset) => {
+        ctx.beginPath();
+        for (let i = 0; i < 10; i += 1) {
+            const r = i % 2 === 0 ? outerR : innerR;
+            const a = rotOffset + (i * Math.PI) / 5;
+            const px = cx + Math.cos(a) * r;
+            const py = cy + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+    };
+
+    drawStar(27, 38, 13.5, 5.5, -Math.PI / 2 - 0.3);
+    drawStar(27, H - 38, 13.5, 5.5, Math.PI / 2 + 0.3);
+    drawStar(apexX - 36, H / 2, 13.5, 5.5, 0);
+
+    // Subtle fabric weave & hoist edge shading for natural cloth realism
+    const hoistGrad = ctx.createLinearGradient(0, 0, 14, 0);
+    hoistGrad.addColorStop(0, 'rgba(15, 23, 42, 0.22)');
+    hoistGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
+    ctx.fillStyle = hoistGrad;
+    ctx.fillRect(0, 0, 14, H);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+}
+
+function AnimatedGarrisonFlag({ isUnlocked, lowQuality = false }) {
+    const meshRef = useRef();
+    const flagW = 1.12;
+    const flagH = 0.56;
+
+    const { geometry, texture } = useMemo(() => {
+        const geo = new THREE.PlaneGeometry(flagW, flagH, 18, 4);
+        // Pin left hoist edge at x = 0 so the flag attaches flush to the flagpole!
+        geo.translate(flagW / 2, 0, 0);
+        // Pre-bake a natural cloth ripple so lowQuality static flag still looks sculpted & breezy with 0 CPU/GPU uploads!
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i += 1) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+            const pin = x / flagW;
+            const wave = Math.sin(x * 5.2 - 1.1 + y * 1.4) * 0.075 * pin;
+            pos.setZ(i, wave);
+        }
+        geo.computeVertexNormals();
+        const tex = createPhilippineFlagTexture();
+        return { geometry: geo, texture: tex };
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            geometry.dispose();
+            texture?.dispose();
+        };
+    }, [geometry, texture]);
+
+    useFrame(({ clock }) => {
+        if (lowQuality) return;
+        const mesh = meshRef.current;
+        if (!mesh) return;
+        const pos = mesh.geometry.attributes.position;
+        const t = clock.getElapsedTime();
+        for (let i = 0; i < pos.count; i += 1) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+            const pin = x / flagW; // 0 at flagpole, 1 at trailing fly edge
+            const wave =
+                Math.sin(x * 5.2 - t * 4.4 + y * 1.4) * 0.085 * pin +
+                Math.sin(x * 9.6 - t * 6.8) * 0.022 * pin * pin;
+            pos.setZ(i, wave);
+        }
+        pos.needsUpdate = true;
+        mesh.geometry.computeVertexNormals();
     });
 
     return (
-        <group ref={flagRef} position={[-1.38, 3.35, -0.32]}>
-            <mesh position={[0.52, 0, 0]} castShadow>
-                <boxGeometry args={[1.04, 0.56, 0.03]} />
-                <meshStandardMaterial color={isUnlocked ? '#DC2626' : '#64748B'} roughness={0.62} />
-            </mesh>
-            <mesh position={[0.18, 0.14, 0.01]}>
-                <boxGeometry args={[0.36, 0.28, 0.035]} />
-                <meshStandardMaterial color={isUnlocked ? '#2563EB' : '#94A3B8'} roughness={0.62} />
+        <group position={[-1.38, 3.35, -0.32]}>
+            <mesh ref={meshRef} geometry={geometry} castShadow={!lowQuality}>
+                <meshStandardMaterial
+                    map={texture}
+                    color={isUnlocked ? '#FFFFFF' : '#CBD5E1'}
+                    roughness={0.68}
+                    metalness={0.02}
+                    side={THREE.DoubleSide}
+                />
             </mesh>
         </group>
     );

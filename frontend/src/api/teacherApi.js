@@ -3,7 +3,10 @@ import axiosClient from './axiosClient';
 export const teacherApi = {
     listSessions: () => axiosClient.get('/teacher/sessions').then((r) => r.data),
     createSession: (payload) => axiosClient.post('/teacher/sessions', payload).then((r) => r.data),
-    getSessionLobby: (sessionId) => axiosClient.get(`/teacher/sessions/${sessionId}`).then((r) => r.data),
+    getSessionLobby: (sessionId, sinceVer = null) =>
+        axiosClient
+            .get(`/teacher/sessions/${sessionId}`, sinceVer ? { params: { since_ver: sinceVer } } : undefined)
+            .then((r) => r.data),
     deleteSession: (sessionId) => axiosClient.delete(`/teacher/sessions/${sessionId}`).then((r) => r.data),
     toggleLock: (sessionId) => axiosClient.post(`/teacher/sessions/${sessionId}/lock`).then((r) => r.data),
     updateSessionStatus: (sessionId, status) =>
@@ -13,7 +16,10 @@ export const teacherApi = {
         return axiosClient.patch(`/teacher/groups/${groupId}`, body).then((r) => r.data);
     },
 
-    getMonitor: (sessionId) => axiosClient.get(`/teacher/sessions/${sessionId}/monitor`).then((r) => r.data),
+    getMonitor: (sessionId, sinceVer = null) =>
+        axiosClient
+            .get(`/teacher/sessions/${sessionId}/monitor`, sinceVer ? { params: { since_ver: sinceVer } } : undefined)
+            .then((r) => r.data),
     importOfflineResult: (sessionId, qr_payload, allow_manual = false) =>
         axiosClient
             .post(`/teacher/sessions/${sessionId}/offline-import`, { qr_payload, allow_manual })

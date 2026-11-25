@@ -11,7 +11,9 @@ use Illuminate\Console\Command;
 
 class SyncMediaToCloudinary extends Command
 {
-    protected $signature = 'juanquest:sync-cloudinary {--dry-run : List local media paths without uploading}';
+    protected $signature = 'juanquest:sync-cloudinary
+        {--dry-run : List local media paths without uploading}
+        {--replace-story-videos : Re-upload local built-in mapa1..mapa5 MP4 story videos, update maps.story_video_path, and delete old Cloudinary videos}';
 
     protected $description = 'Upload all local built-in videos, challenge images, and audio to Cloudinary and update DB URLs.';
 
@@ -21,11 +23,16 @@ class SyncMediaToCloudinary extends Command
     public function handle(MediaStorageService $media, ScoringService $scoring): int
     {
         $dryRun = (bool) $this->option('dry-run');
+        $replaceStoryVideos = (bool) $this->option('replace-story-videos');
 
         if (! $dryRun && ! $media->usesCloudinary()) {
             $this->error('Cloudinary is not active. Set MEDIA_STORAGE_DRIVER=cloudinary, CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET first.');
 
             return self::FAILURE;
+        }
+
+        if ($replaceStoryVideos) {
+            return $this->handleReplaceStoryVideos($media, $scoring, $dryRun);
         }
 
         $updatedCount = 0;
@@ -161,6 +168,95 @@ class SyncMediaToCloudinary extends Command
             $uniqueUploads = count($this->uploadedCache);
             $this->info("Done! Uploaded {$uniqueUploads} unique file(s) to Cloudinary and updated {$updatedCount} DB reference(s).");
         }
+
+        return self::SUCCESS;
+    }
+
+    private function handleReplaceStoryVideos(MediaStorageService $media, ScoringService $scoring, bool $dryRun): int
+    {
+        $builtInVideos = [
+            1 => 'videos/mapa1_curfew.mp4',
+            2 => 'videos/mapa2_kuwartel.mp4',
+            3 => 'videos/mapa3_kariton.mp4',
+            4 => 'videos/mapa4_pinto.mp4',
+            5 => 'videos/mapa5_magnanakaw.mp4',
+        ];
+
+        $maps = Map::whereIn('map_number', array_keys($builtInVideos))
+            ->orderBy('lesson_id')
+            ->orderBy('map_number')
+            ->get();
+
+        if ($maps->isEmpty()) {
+            $this->warn('No maps (1..5) found in database.');
+
+            return self::SUCCESS;
+        }
+
+        $oldUrlsToDelete = [];
+        $updatedMaps = 0;
+
+        foreach ($maps as $map) {
+            $relPath = $builtInVideos[(int) $map->map_number] ?? null;
+            if (! $relPath) {
+                continue;
+            }
+
+            $absolute = storage_path('app/public/'.str_replace('/', DIRECTORY_SEPARATOR, $relPath));
+            if (! is_file($absolute)) {
+                $this->error("Missing local optimized video: {$absolute}");
+
+                return self::FAILURE;
+            }
+
+            $sizeMb = round(filesize($absolute) / 1048576, 2);
+            $oldPath = (string) ($map->story_video_path ?? '');
+
+            if ($dryRun) {
+                $this->line("[dry-run] Map {$map->map_number} (id={$map->id}): {$relPath} ({$sizeMb} MB) would replace: {$oldPath}");
+                continue;
+            }
+
+            if (! isset($this->uploadedCache[$relPath])) {
+                $this->info("Uploading {$relPath} ({$sizeMb} MB) -> Cloudinary (juanquest/videos)...");
+                $this->uploadedCache[$relPath] = $media->uploadLocalFileToCloudinary($absolute, 'video', 'juanquest/videos');
+            }
+
+            $newUrl = $this->uploadedCache[$relPath];
+            $map->story_video_path = $newUrl;
+            $map->save();
+            $scoring->forgetLessonWorldCache($map->lesson_id);
+            $updatedMaps++;
+
+            $this->line("Updated Map {$map->map_number} (id={$map->id}) -> {$newUrl}");
+
+            if (
+                $oldPath !== ''
+                && $oldPath !== $newUrl
+                && (str_starts_with($oldPath, 'http://') || str_starts_with($oldPath, 'https://'))
+            ) {
+                $oldUrlsToDelete[$oldPath] = true;
+            }
+        }
+
+        if ($dryRun) {
+            $this->info('Dry run complete for --replace-story-videos.');
+
+            return self::SUCCESS;
+        }
+
+        // Safely destroy replaced old Cloudinary videos only if no remaining Map references them
+        $destroyed = 0;
+        foreach (array_keys($oldUrlsToDelete) as $oldUrl) {
+            if (! Map::where('story_video_path', $oldUrl)->exists()) {
+                $this->line("Deleting replaced Cloudinary video: {$oldUrl}");
+                $media->deletePublicPath($oldUrl);
+                $destroyed++;
+            }
+        }
+
+        $uniqueUploaded = count($this->uploadedCache);
+        $this->info("Done! Uploaded {$uniqueUploaded} video(s), updated {$updatedMaps} map row(s), and cleaned up {$destroyed} replaced Cloudinary video(s).");
 
         return self::SUCCESS;
     }

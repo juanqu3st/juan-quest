@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Archive,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { teacherApi } from '../../api/teacherApi';
 import { useToast } from '../../context/ToastContext';
+import { useSmartPoll } from '../../hooks/useSmartPoll';
 import QrCodeImage from '../../components/qr/QrCodeImage';
 import TeacherLayout from './TeacherLayout';
 
@@ -118,16 +119,28 @@ export default function TeacherSessionsPage() {
         }
     };
 
-    const loadLobby = async (id) => {
-        if (!id) return;
+    const lobbyVersionRef = useRef(null);
+
+    const loadLobby = async (id, { conditional = false } = {}) => {
+        if (!id) return false;
         try {
-            const res = await teacherApi.getSessionLobby(id);
-            setLobby(res.session);
-            try {
-                localStorage.setItem(`juanquest_teacher_lobby_${id}`, JSON.stringify(res.session));
-            } catch {
-                // ignore storage quota
+            const sinceVer = conditional ? lobbyVersionRef.current : null;
+            const res = await teacherApi.getSessionLobby(id, sinceVer);
+            if (res?.version) {
+                lobbyVersionRef.current = res.version;
             }
+            if (res?.unchanged) {
+                return false;
+            }
+            if (res?.session) {
+                setLobby(res.session);
+                try {
+                    localStorage.setItem(`juanquest_teacher_lobby_${id}`, JSON.stringify(res.session));
+                } catch {
+                    // ignore storage quota
+                }
+            }
+            return true;
         } catch {
             try {
                 const cached = localStorage.getItem(`juanquest_teacher_lobby_${id}`);
@@ -135,6 +148,7 @@ export default function TeacherSessionsPage() {
             } catch {
                 // ignore
             }
+            return false;
         }
     };
 
@@ -143,13 +157,18 @@ export default function TeacherSessionsPage() {
     }, []);
 
     useEffect(() => {
+        lobbyVersionRef.current = null;
         if (!selectedId) return;
-        loadLobby(selectedId);
-        const timer = setInterval(() => {
-            teacherApi.getSessionLobby(selectedId).then((r) => setLobby(r.session)).catch(() => {});
-        }, 3000);
-        return () => clearInterval(timer);
+        loadLobby(selectedId, { conditional: false });
     }, [selectedId]);
+
+    useSmartPoll({
+        enabled: Boolean(selectedId && lobby?.status !== 'finished'),
+        baseIntervalMs: 3000,
+        maxIntervalMs: 15000,
+        resetKey: selectedId,
+        onTick: () => loadLobby(selectedId, { conditional: true }),
+    });
 
     const handleCreateSession = async (e) => {
         e.preventDefault();

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { PerformanceMonitor, Sky } from '@react-three/drei';
 import * as THREE from 'three';
+import { getDeviceProfile } from '../../utils/deviceTier';
 import { createWorldCurve, WORLD_SCALE } from './worldConfig';
 import TerrainAndWater from './TerrainAndWater';
 import SteppingStonePath from './SteppingStonePath';
@@ -20,6 +21,7 @@ export default function WorldMapCanvas({
     targetMapNumber,
     isWalking,
     tourActive,
+    guideStep = null,
     isSessionWaiting = false,
     openedMapIds,
     unlockingMapId = null,
@@ -30,34 +32,33 @@ export default function WorldMapCanvas({
     onTourCardChange,
     onTourFinish,
 }) {
-    const isMobileDevice = useMemo(() => {
-        if (typeof window === 'undefined') return false;
-        return Boolean(
-            window.matchMedia?.('(pointer: coarse)')?.matches ||
-                /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
-        );
-    }, []);
-    const isLowCorePhone = useMemo(() => {
-        if (typeof navigator === 'undefined') return false;
-        return isMobileDevice && (navigator.hardwareConcurrency || 8) <= 4;
-    }, [isMobileDevice]);
+    const device = useMemo(() => getDeviceProfile(), []);
+    const isMobileDevice = device.isMobile;
+    const isLowEndDevice = device.isLowEnd;
 
-    const [quality, setQuality] = useState(() => (isLowCorePhone ? 'low' : 'balanced'));
+    const [quality, setQuality] = useState(() => (isLowEndDevice ? 'low' : 'balanced'));
     const controlsRef = useRef();
     const playerPosRef = useRef(new THREE.Vector3());
     const curve = useMemo(() => createWorldCurve(), []);
     const lowQuality = quality === 'low';
     const S = WORLD_SCALE;
     const shadowSize = isMobileDevice ? 512 : 1024;
-    const dprRange = lowQuality ? [0.75, 1] : isMobileDevice ? [1, 1.25] : [1, 1.5];
+    // Scalar DPR in lowQuality guarantees genuine pixel reduction (vs [0.75, 1] clamping to 1.0 on 2x-3x budget phones!)
+    const activeDpr = lowQuality
+        ? guideStep !== null
+            ? 0.6
+            : 0.72
+        : isMobileDevice
+          ? [1, 1.25]
+          : [1, 1.5];
 
     return (
         <Canvas
             frameloop={paused ? 'never' : 'always'}
             shadows={!lowQuality}
-            dpr={dprRange}
+            dpr={activeDpr}
             gl={{
-                antialias: !isLowCorePhone,
+                antialias: !isLowEndDevice,
                 powerPreference: isMobileDevice ? 'default' : 'high-performance',
                 toneMapping: THREE.ACESFilmicToneMapping,
                 toneMappingExposure: 1.15,
@@ -126,7 +127,8 @@ export default function WorldMapCanvas({
             ))}
 
             <PinoyBarrioProps lowQuality={lowQuality} />
-            <BarrioLivingWorld lowQuality={lowQuality} />
+            {/* Skip heavy multi-part background crowd (~180 draw calls) in lowQuality so budget phones stay 50-60 FPS */}
+            {!lowQuality && <BarrioLivingWorld lowQuality={false} />}
 
             <PlayerCharacter
                 characterKey={characterKey}
@@ -145,6 +147,7 @@ export default function WorldMapCanvas({
             <CameraRig
                 controlsRef={controlsRef}
                 tourActive={tourActive}
+                guideStep={guideStep}
                 isWalking={isWalking}
                 startMapNumber={startMapNumber ?? currentMapNumber}
                 onTourCardChange={onTourCardChange}

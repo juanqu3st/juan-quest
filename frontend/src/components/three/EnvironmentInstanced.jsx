@@ -534,8 +534,8 @@ function InstancedSculptedTrees({ trees, bananas, lowQuality, playerPosRef, tour
     const acacia = useGLTF('/models/tree_acacia.glb', '/draco/');
     const banana = useGLTF('/models/tree_banana.glb', '/draco/');
 
-    const treeCount = lowQuality ? Math.min(48, trees.length) : trees.length;
-    const bananaCount = lowQuality ? Math.min(26, bananas.length) : bananas.length;
+    const treeCount = lowQuality ? Math.min(28, trees.length) : trees.length;
+    const bananaCount = lowQuality ? Math.min(14, bananas.length) : bananas.length;
 
     const acaciaParts = useMemo(() => {
         const list = [];
@@ -601,10 +601,10 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
 
     useEffect(() => () => grassGeo.dispose(), [grassGeo]);
 
-    const grassCount = lowQuality ? Math.min(95, grassTufts.length) : grassTufts.length;
+    const grassCount = lowQuality ? Math.min(45, grassTufts.length) : grassTufts.length;
     const fenceCount = fences.length;
-    const flowerCount = lowQuality ? Math.min(40, flowers.length) : flowers.length;
-    const cloudList = lowQuality ? CLOUD_CLUSTERS.slice(0, 4) : CLOUD_CLUSTERS;
+    const flowerCount = lowQuality ? 0 : flowers.length;
+    const cloudList = lowQuality ? CLOUD_CLUSTERS.slice(0, 3) : CLOUD_CLUSTERS;
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
 
@@ -664,7 +664,7 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
     }, [grassCount, fenceCount, flowerCount, grassTufts, fences, flowers, dummy]);
 
     useFrame(({ clock }) => {
-        if (!cloudsGroupRef.current) return;
+        if (lowQuality || !cloudsGroupRef.current) return;
         const t = clock.getElapsedTime();
         cloudsGroupRef.current.children.forEach((cloud, i) => {
             const base = cloudList[i];
@@ -706,10 +706,12 @@ export default function EnvironmentInstanced({ lowQuality, playerPosRef, tourAct
             </instancedMesh>
 
             {/* Meadow Wildflowers */}
-            <instancedMesh ref={flowerRef} args={[null, null, flowers.length]} frustumCulled={false}>
-                <sphereGeometry args={[1, 6, 6]} />
-                <meshStandardMaterial roughness={0.65} />
-            </instancedMesh>
+            {flowerCount > 0 && (
+                <instancedMesh ref={flowerRef} args={[null, null, flowers.length]} frustumCulled={false}>
+                    <sphereGeometry args={[1, 6, 6]} />
+                    <meshStandardMaterial roughness={0.65} />
+                </instancedMesh>
+            )}
 
             {/* Warm Fluffy Tropical Cumulus Clouds */}
             <group ref={cloudsGroupRef}>

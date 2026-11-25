@@ -19,11 +19,15 @@ function isNetworkDisconnectError(err) {
 }
 
 export const studentApi = {
-    getWorld: async () => {
+    getWorld: async (sinceVer = null) => {
         if (isOfflineUser()) return getOfflineWorld();
         try {
-            const data = await axiosClient.get('/student/world').then((r) => r.data);
-            snapshotOnlineWorldForFailover(data);
+            const data = await axiosClient
+                .get('/student/world', sinceVer ? { params: { since_ver: sinceVer } } : undefined)
+                .then((r) => r.data);
+            if (!data?.unchanged) {
+                snapshotOnlineWorldForFailover(data);
+            }
             return data;
         } catch (err) {
             if (isNetworkDisconnectError(err)) {

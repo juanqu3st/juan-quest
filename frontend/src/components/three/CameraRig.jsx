@@ -29,6 +29,7 @@ function standPoint(mapNumber) {
 export default function CameraRig({
     controlsRef,
     tourActive,
+    guideStep = null,
     isWalking,
     startMapNumber,
     onTourCardChange,
@@ -37,19 +38,22 @@ export default function CameraRig({
     const { camera, size } = useThree();
     const aspect = size.width / Math.max(1, size.height);
     const elapsedRef = useRef(0);
+    const guideTimeRef = useRef(0);
     const lastStageRef = useRef(0);
     const snappedInitialRef = useRef(false);
+    const guideTmpPos = useRef(new THREE.Vector3());
+    const guideTmpLook = useRef(new THREE.Vector3());
     const totalDuration = 13.5;
 
     useEffect(() => {
-        if (!tourActive && !snappedInitialRef.current && controlsRef?.current) {
+        if (!tourActive && guideStep === null && !snappedInitialRef.current && controlsRef?.current) {
             const p = standPoint(startMapNumber);
             camera.position.copy(p).add(cameraOffset(aspect));
             controlsRef.current.target.copy(p);
             controlsRef.current.update();
             snappedInitialRef.current = true;
         }
-    }, [tourActive, startMapNumber, camera, controlsRef]);
+    }, [tourActive, guideStep, startMapNumber, camera, controlsRef]);
 
     useEffect(() => {
         if (tourActive) {
@@ -60,6 +64,55 @@ export default function CameraRig({
     }, [tourActive]);
 
     useFrame((_, delta) => {
+        const dt = Math.min(delta, 0.05);
+
+        // Live cinematic camera transitions synced to Juan Osong's 5-step onboarding tutorial!
+        if (!tourActive && guideStep !== null) {
+            guideTimeRef.current += dt;
+            const gt = guideTimeRef.current;
+            const dstPos = guideTmpPos.current;
+            const dstLook = guideTmpLook.current;
+
+            if (guideStep === 0) {
+                // Step 1: Warm welcoming shot framing Mapa 1 & Juan
+                const p = standPoint(1);
+                dstPos.copy(p).add(cameraOffset(aspect));
+                dstPos.x += Math.sin(gt * 0.45) * 1.6;
+                dstLook.copy(p);
+            } else if (guideStep === 1) {
+                // Step 2: Panoramic sunlit overview framing ALL 5 COLORFUL 3D BUILDINGS along the barrio trail!
+                const pan = Math.sin(gt * 0.55) * 14;
+                const zoomK = aspect < 1 ? 1.32 : 1.0;
+                dstPos.set(pan, 34 * zoomK, 68 * zoomK);
+                dstLook.set(pan * 0.25, 2.2, 8);
+            } else if (guideStep === 2) {
+                // Step 3: Smooth close-in on Mapa 1: Ang Curfew (Bahay na Bato)
+                const m1 = standPoint(1);
+                dstPos.set(m1.x - 4.5, m1.y + 7.5, m1.z + 13.5);
+                dstLook.set(m1.x - 1.8, m1.y + 1.5, m1.z - 2.2);
+            } else if (guideStep === 3) {
+                // Step 4: Gentle barrio showcase framing Mapa 2 (Kuwartel) & trail
+                const m2 = standPoint(2);
+                dstPos.set(m2.x - 4 + Math.sin(gt * 0.5) * 2.5, m2.y + 10.5, m2.z + 18);
+                dstLook.set(m2.x, m2.y + 1.2, m2.z - 1.5);
+            } else {
+                // Step 5: Smoothly land right back on Mapa 1 gameplay angle for zero-jump start!
+                const p = standPoint(startMapNumber || 1);
+                dstPos.copy(p).add(cameraOffset(aspect));
+                dstLook.copy(p);
+            }
+
+            const ease = Math.min(1, dt * 3.2);
+            camera.position.lerp(dstPos, ease);
+            if (controlsRef?.current) {
+                controlsRef.current.target.lerp(dstLook, ease);
+                controlsRef.current.update();
+            } else {
+                camera.lookAt(dstLook);
+            }
+            return;
+        }
+
         if (!tourActive) return;
 
         elapsedRef.current += delta;
@@ -99,7 +152,7 @@ export default function CameraRig({
     return (
         <OrbitControls
             ref={controlsRef}
-            enabled={!tourActive && !isWalking}
+            enabled={!tourActive && guideStep === null && !isWalking}
             enablePan={false}
             enableDamping
             dampingFactor={0.08}

@@ -28,6 +28,7 @@ import {
 import { teacherApi } from '../../api/teacherApi';
 import { useToast } from '../../context/ToastContext';
 import { usePwa } from '../../context/PwaContext';
+import { useSmartPoll } from '../../hooks/useSmartPoll';
 import { verifyOfflineResultSignature } from '../../utils/offlineEngine';
 import { decodeQrFromImageFile } from '../../utils/qrImageDecode';
 import { playFeedbackAudio } from '../../utils/gameAudio';
@@ -337,25 +338,44 @@ export default function TeacherMonitorPage() {
         }
     }, [selectedId]);
 
-    const fetchMonitor = async (id) => {
-        if (!id) return;
+    const monitorVersionRef = useRef(null);
+
+    const fetchMonitor = async (id, { conditional = false } = {}) => {
+        if (!id) return false;
         try {
-            const res = await teacherApi.getMonitor(id);
-            setMonitor(res.monitor);
-            writeJsonStorage(monitorCacheKey(id), res.monitor);
+            const sinceVer = conditional ? monitorVersionRef.current : null;
+            const res = await teacherApi.getMonitor(id, sinceVer);
+            if (res?.version) {
+                monitorVersionRef.current = res.version;
+            }
+            if (res?.unchanged) {
+                return false;
+            }
+            if (res?.monitor) {
+                setMonitor(res.monitor);
+                writeJsonStorage(monitorCacheKey(id), res.monitor);
+            }
+            return true;
         } catch {
             // Keep cached view on offline / transient errors
             setMonitor((prev) => prev || readJsonStorage(monitorCacheKey(id), null));
+            return false;
         }
     };
 
     useEffect(() => {
+        monitorVersionRef.current = null;
         if (!selectedId) return;
-        fetchMonitor(selectedId);
-        if (!polling || !isOnline || isFinishedSession) return;
-        const timer = setInterval(() => fetchMonitor(selectedId), 5000);
-        return () => clearInterval(timer);
-    }, [selectedId, polling, isOnline, isFinishedSession]);
+        fetchMonitor(selectedId, { conditional: false });
+    }, [selectedId]);
+
+    useSmartPoll({
+        enabled: Boolean(selectedId && polling && isOnline && !isFinishedSession),
+        baseIntervalMs: 5000,
+        maxIntervalMs: 30000,
+        resetKey: selectedId,
+        onTick: () => fetchMonitor(selectedId, { conditional: true }),
+    });
 
     const savePendingQueue = (sessionId, nextQueue) => {
         setPendingQueue(nextQueue);

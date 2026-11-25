@@ -100,7 +100,10 @@ class GameplayController extends Controller
         ]);
 
         $user = $request->user();
-        $nextStatus = ($user->activity_status === 'completed' && $validated['activity_status'] === 'exploring_world')
+        $prevStatus = $user->activity_status;
+        $wasOffline = ! $user->last_seen_at || $user->last_seen_at->lt(now()->subSeconds(40));
+
+        $nextStatus = ($prevStatus === 'completed' && $validated['activity_status'] === 'exploring_world')
             ? 'completed'
             : $validated['activity_status'];
 
@@ -109,8 +112,12 @@ class GameplayController extends Controller
             'last_seen_at' => now(),
         ]);
 
-        $sessionId = SessionParticipant::where('user_id', $user->id)->latest('joined_at')->value('game_session_id');
-        $scoring->invalidateSessionTelemetry($sessionId);
+        // Only invalidate monitor cache & bump session version on real status transitions or reconnects
+        // (prevents 100 steady 20s heartbeats from triggering unnecessary teacher monitor rebuilds!)
+        if ($prevStatus !== $nextStatus || $wasOffline) {
+            $sessionId = SessionParticipant::where('user_id', $user->id)->latest('joined_at')->value('game_session_id');
+            $scoring->invalidateSessionTelemetry($sessionId);
+        }
 
         return response()->json(['activity_status' => $user->activity_status]);
     }

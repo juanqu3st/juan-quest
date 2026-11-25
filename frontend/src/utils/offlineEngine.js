@@ -597,10 +597,20 @@ export async function getOfflineWorld() {
     };
 }
 
+const OFFLINE_VALID_CHARACTERS = new Set([
+    'juan',
+    'pedro',
+    'alkalde',
+    'pulis',
+    'guwardya',
+    'magnanakaw',
+    'maria',
+]);
+
 export async function updateOfflineCharacter(selected_character) {
     const state = loadOfflineState();
     if (state) {
-        state.character = selected_character === 'pedro' ? 'pedro' : 'juan';
+        state.character = OFFLINE_VALID_CHARACTERS.has(selected_character) ? selected_character : 'juan';
         saveOfflineState(state);
     }
     return { selected_character: state?.character || 'juan' };

@@ -1,7 +1,7 @@
 // Reliable Browser Cache API wrapper for per-map MP4 story videos & audio.
 // Guarantees full 200 OK binary caching (never truncated partial 206 streams) for 100% offline playback.
 
-export const VIDEO_CACHE_NAME = 'juanquest-story-videos-v2';
+export const VIDEO_CACHE_NAME = 'juanquest-story-videos-v6';
 
 // Automatically purge outdated video cache buckets when upgraded videos ship
 if (typeof window !== 'undefined' && 'caches' in window) {
@@ -21,7 +21,7 @@ export async function hasCachedVideo(rawUrl) {
     if (!rawUrl || typeof window === 'undefined' || !('caches' in window)) return false;
     try {
         const cache = await caches.open(VIDEO_CACHE_NAME);
-        const match = (await cache.match(rawUrl)) || (await caches.match(rawUrl));
+        const match = await cache.match(rawUrl);
         if (!match) return false;
         const cl = Number(match.headers.get('content-length') || 0);
         if (cl > 0) return true;
@@ -108,7 +108,7 @@ export async function resolveCachedVideoUrl(rawUrl) {
 
     try {
         const cache = await caches.open(VIDEO_CACHE_NAME);
-        const cached = (await cache.match(rawUrl)) || (await caches.match(rawUrl));
+        const cached = await cache.match(rawUrl);
         if (cached) {
             const blob = await cached.blob();
             if (blob.size > 0) {

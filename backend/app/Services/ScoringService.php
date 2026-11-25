@@ -577,6 +577,7 @@ class ScoringService
         Cache::forget("juanquest:session:{$sessionId}:monitor");
         Cache::forget("juanquest:session:{$sessionId}:leaderboard");
         Cache::forget("juanquest:session:{$sessionId}:lobby");
+        GroupingService::bumpSessionVersion($sessionId);
     }
 
     private function assertSessionActiveForStudent(User $student): void

@@ -40,9 +40,21 @@ class SessionGroupingController extends Controller
         ], 201);
     }
 
-    public function show(GameSession $session, GroupingService $grouping): JsonResponse
+    public function show(Request $request, GameSession $session, GroupingService $grouping): JsonResponse
     {
+        $version = GroupingService::sessionVersion($session->id, false);
+        $sinceVer = $request->query('since_ver');
+
+        if (is_string($sinceVer) && $sinceVer !== '' && $sinceVer === $version) {
+            return response()->json([
+                'unchanged' => true,
+                'version' => $version,
+            ]);
+        }
+
         return response()->json([
+            'unchanged' => false,
+            'version' => $version,
             'session' => $grouping->getCachedLobbyPayload($session),
         ]);
     }

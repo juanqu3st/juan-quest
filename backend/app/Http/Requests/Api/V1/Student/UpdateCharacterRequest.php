@@ -17,7 +17,7 @@ class UpdateCharacterRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'selected_character' => ['required', 'in:juan,pedro'],
+            'selected_character' => ['required', 'in:juan,pedro,alkalde,pulis,guwardya,magnanakaw,maria'],
         ];
     }
 }
