@@ -1,4 +1,4 @@
-import axiosClient, { resolveMediaUrl, resolveStorageUrl } from '../api/axiosClient';
+import axiosClient, { resolveMediaUrl } from '../api/axiosClient';
 import { areAllVideosCached, cacheMediaWithRetry, VIDEO_CACHE_NAME } from './videoCache';
 
 const PACK_STORAGE_KEY = 'juanquest_offline_pack_v1';
@@ -189,7 +189,7 @@ async function runSharedSync({ includeVideos = true } = {}) {
     }
 
     const imageUrls = (pack.media_manifest?.images || [])
-        .map((p) => resolveStorageUrl(p))
+        .map((p) => resolveMediaUrl(p))
         .filter(Boolean);
     const audioUrls = (pack.media_manifest?.audio || [])
         .map((p) => resolveMediaUrl(p))

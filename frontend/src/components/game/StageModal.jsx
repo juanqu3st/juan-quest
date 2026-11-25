@@ -298,7 +298,7 @@ export default function StageModal({
     }, [step, map?.id, perQuestionTimer]);
 
     const handleDraftChange = useCallback((key, value) => {
-        setDrafts((prev) => ({ ...prev, [key]: value }));
+        setDrafts((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
     }, []);
 
     const handleStartGame = async () => {

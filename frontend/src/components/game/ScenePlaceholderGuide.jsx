@@ -91,17 +91,21 @@ export default function ScenePlaceholderGuide({
 
     // Line-by-line timed cues (for crisp bottom-center overlay + native WebVTT fullscreen track)
     const timedCues = useMemo(() => buildTimedCues(timedScenes), [timedScenes]);
-    const vttTrackUrl = useMemo(() => {
-        if (!timedCues.length || typeof URL === 'undefined') return null;
-        const blob = new Blob([buildWebVttText(timedCues)], { type: 'text/vtt;charset=utf-8' });
-        return URL.createObjectURL(blob);
-    }, [timedCues]);
+    const [vttTrackUrl, setVttTrackUrl] = useState(null);
 
+    // Create & revoke WebVTT blob URL inside the same useEffect so React StrictMode double-mount never uses a revoked URL
     useEffect(() => {
+        if (!timedCues.length || typeof URL === 'undefined') {
+            setVttTrackUrl(null);
+            return undefined;
+        }
+        const blob = new Blob([buildWebVttText(timedCues)], { type: 'text/vtt;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        setVttTrackUrl(url);
         return () => {
-            if (vttTrackUrl) URL.revokeObjectURL(vttTrackUrl);
+            URL.revokeObjectURL(url);
         };
-    }, [vttTrackUrl]);
+    }, [timedCues]);
 
     // Track fullscreen transitions so native <track> shows ONLY in fullscreen (preventing duplicate captions)
     useEffect(() => {

@@ -73,33 +73,47 @@ export default function CameraRig({
             const dstPos = guideTmpPos.current;
             const dstLook = guideTmpLook.current;
 
+            const isPortrait = aspect < 1;
+
             if (guideStep === 0) {
-                // Step 1: Warm welcoming shot framing Mapa 1 & Juan
+                // Step 1: Warm welcoming shot framing Mapa 1 & Pulis cleanly in the center window
                 const p = standPoint(1);
                 dstPos.copy(p).add(cameraOffset(aspect));
-                dstPos.x += Math.sin(gt * 0.45) * 1.6;
+                dstPos.x += Math.sin(gt * 0.45) * 1.4;
                 dstLook.copy(p);
+                if (isPortrait) dstLook.y -= 0.4;
             } else if (guideStep === 1) {
-                // Step 2: Panoramic sunlit overview framing ALL 5 COLORFUL 3D BUILDINGS along the barrio trail!
-                const pan = Math.sin(gt * 0.55) * 14;
-                const zoomK = aspect < 1 ? 1.32 : 1.0;
+                // Step 2: Panoramic sunlit overview framing the barrio & patintero kids cleanly below the 5-map card
+                const pan = Math.sin(gt * 0.55) * (isPortrait ? 10 : 14);
+                const zoomK = isPortrait ? 1.38 : 1.0;
                 dstPos.set(pan, 34 * zoomK, 68 * zoomK);
-                dstLook.set(pan * 0.25, 2.2, 8);
+                dstLook.set(pan * 0.22, isPortrait ? 1.4 : 2.2, isPortrait ? 9 : 8);
             } else if (guideStep === 2) {
-                // Step 3: Smooth close-in on Mapa 1: Ang Curfew (Bahay na Bato)
+                // Step 3: Smooth close-in on Mapa 1: Ang Curfew (Bahay na Bato + Pulis) — pulled back slightly on portrait mobile
                 const m1 = standPoint(1);
-                dstPos.set(m1.x - 4.5, m1.y + 7.5, m1.z + 13.5);
-                dstLook.set(m1.x - 1.8, m1.y + 1.5, m1.z - 2.2);
+                if (isPortrait) {
+                    dstPos.set(m1.x - 4.8, m1.y + 9.4, m1.z + 18.6);
+                    dstLook.set(m1.x - 1.4, m1.y + 0.9, m1.z - 2.0);
+                } else {
+                    dstPos.set(m1.x - 4.5, m1.y + 7.5, m1.z + 13.5);
+                    dstLook.set(m1.x - 1.8, m1.y + 1.5, m1.z - 2.2);
+                }
             } else if (guideStep === 3) {
-                // Step 4: Gentle barrio showcase framing Mapa 2 (Kuwartel) & trail
+                // Step 4: Gentle barrio showcase framing Mapa 2 (Kuwartel + Flag + Guwardiya) centered between cards
                 const m2 = standPoint(2);
-                dstPos.set(m2.x - 4 + Math.sin(gt * 0.5) * 2.5, m2.y + 10.5, m2.z + 18);
-                dstLook.set(m2.x, m2.y + 1.2, m2.z - 1.5);
+                if (isPortrait) {
+                    dstPos.set(m2.x - 4.2 + Math.sin(gt * 0.5) * 2.0, m2.y + 11.4, m2.z + 21.8);
+                    dstLook.set(m2.x - 0.6, m2.y + 0.9, m2.z - 1.5);
+                } else {
+                    dstPos.set(m2.x - 4 + Math.sin(gt * 0.5) * 2.5, m2.y + 10.5, m2.z + 18);
+                    dstLook.set(m2.x, m2.y + 1.2, m2.z - 1.5);
+                }
             } else {
-                // Step 5: Smoothly land right back on Mapa 1 gameplay angle for zero-jump start!
-                const p = standPoint(startMapNumber || 1);
+                // Step 5: Smoothly frame Mapa 1 (matches "Unang Hamon: Mapa 1" narration & card!)
+                const p = standPoint(1);
                 dstPos.copy(p).add(cameraOffset(aspect));
                 dstLook.copy(p);
+                if (isPortrait) dstLook.y -= 0.35;
             }
 
             const ease = Math.min(1, dt * 3.2);

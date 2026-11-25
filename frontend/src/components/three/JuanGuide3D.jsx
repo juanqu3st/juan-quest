@@ -27,9 +27,11 @@ class PortraitErrorBoundary extends React.Component {
  * - When speech finishes while waiting for tap, smoothly relaxes into a warm breathing standing idle.
  * - Live Web Audio AnalyserNode 3D talking mouth + periodic 3D eye blink locked directly to `bones.head`.
  */
-function AnimatedJuanFullBody({ stepIdx, isTalkingRef, audioLevelRef, stepProgressRef }) {
+function AnimatedJuanFullBody({ stepIdx, isTalkingRef, audioLevelRef, stepProgressRef, onReady }) {
     const { scene } = useGLTF('/models/juan.glb', '/draco/');
     const model = useMemo(() => cloneSkinned(scene), [scene]);
+    const readyFiredRef = useRef(false);
+    const frameCountRef = useRef(0);
 
     const rig = useMemo(() => {
         const canonical = (s) => (s || '').replace(/[._\-\s]/g, '').toLowerCase();
@@ -581,56 +583,190 @@ function AnimatedJuanFullBody({ stepIdx, isTalkingRef, audioLevelRef, stepProgre
         applyBone('upperarmr', c.armRx, c.armRy, c.armRz);
         applyBone('forearmr', c.foreRx, c.foreRy, c.foreRz);
         applyBone('handr', c.handRx, c.handRy, c.handRz);
+
+        // Notify parent right after the first actual rendered WebGL frame so voice & typing start in 100% sync!
+        if (!readyFiredRef.current) {
+            frameCountRef.current += 1;
+            if (frameCountRef.current >= 2) {
+                readyFiredRef.current = true;
+                onReady?.();
+            }
+        }
     });
 
     return <primitive object={model} position={[0, 0, 0]} rotation={[0, 0.14, 0]} />;
 }
 
-export default function JuanGuide3D({ stepIdx, isTalkingRef, audioLevelRef, stepProgressRef }) {
+/**
+ * Zero-WebGL 60 FPS voice-reactive half-body Pixar Juan portrait:
+ * - Used on mobile portrait (`variant="bust"`, seamlessly front-faded into the warm dialogue card with zero box!)
+ *   and on low-end laptops/phones (`isLowEnd`) so background WorldMapCanvas stays buttery smooth at 60 FPS.
+ */
+function LowEndJuanPortrait({ stepIdx, isTalkingRef, audioLevelRef, onReady, fadedBust = false }) {
+    const wrapRef = useRef(null);
+    const readySentRef = useRef(false);
+
+    const signalReady = () => {
+        if (!readySentRef.current) {
+            readySentRef.current = true;
+            onReady?.();
+        }
+    };
+
+    useEffect(() => {
+        // Fallback so even cached instant images trigger ready cleanly on mount
+        const t = setTimeout(signalReady, 40);
+        return () => clearTimeout(t);
+    }, []);
+
+    useEffect(() => {
+        let rafId = 0;
+        let smoothVoice = 0;
+        const t0 = performance.now();
+
+        const loop = (now) => {
+            const el = wrapRef.current;
+            if (el) {
+                const sec = (now - t0) * 0.001;
+                const talking = Boolean(isTalkingRef?.current);
+                const rawVoice = talking ? Math.min(1, (audioLevelRef?.current || 0) * 4.2) : 0;
+                smoothVoice += (rawVoice - smoothVoice) * 0.28;
+
+                // Subtle organic breathing + lively voice-reactive bounce + gentle lean
+                const amp = fadedBust ? 0.65 : 1.0;
+                const breathY = Math.sin(sec * 2.4) * 1.8 * amp;
+                const talkBounceY = talking
+                    ? (-smoothVoice * 3.8 - Math.abs(Math.sin(sec * 8.5)) * 1.2) * amp
+                    : 0;
+                const stepTilt = stepIdx === 1 || stepIdx === 2 || stepIdx === 3 ? 2.0 : stepIdx === 4 ? -1.2 : 0;
+                const talkTilt = talking
+                    ? Math.sin(sec * 5.2) * (1.0 + smoothVoice * 1.5)
+                    : Math.sin(sec * 1.3) * 0.55;
+                const scaleY = 1 + smoothVoice * 0.018;
+
+                el.style.transform = `translate3d(0, ${(breathY + talkBounceY).toFixed(1)}px, 0) rotate(${(stepTilt + talkTilt).toFixed(2)}deg) scaleY(${scaleY.toFixed(3)})`;
+            }
+            rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(rafId);
+    }, [stepIdx, isTalkingRef, audioLevelRef, fadedBust]);
+
+    const bustMaskStyle = fadedBust
+        ? {
+              // Crisp solid body (0-89% full opacity) — only softens the bottommost cutoff edge so Juan stays vibrant!
+              WebkitMaskImage:
+                  'linear-gradient(to bottom, #000 0%, #000 89%, rgba(0,0,0,0.45) 96%, transparent 100%)',
+              maskImage:
+                  'linear-gradient(to bottom, #000 0%, #000 89%, rgba(0,0,0,0.45) 96%, transparent 100%)',
+              filter: 'drop-shadow(0 6px 10px rgba(35, 22, 12, 0.24))',
+          }
+        : undefined;
+
+    return (
+        <div
+            ref={wrapRef}
+            className="w-full h-full flex items-end justify-center will-change-transform origin-bottom"
+            style={
+                fadedBust
+                    ? undefined
+                    : { filter: 'drop-shadow(0 8px 14px rgba(15, 23, 42, 0.34))' }
+            }
+        >
+            <img
+                src="/images/characters/juan.png"
+                alt="Si Juan Osong"
+                draggable={false}
+                onLoad={signalReady}
+                onError={signalReady}
+                style={bustMaskStyle}
+                className={
+                    fadedBust
+                        ? 'w-full h-full object-contain object-bottom select-none'
+                        : 'w-[92%] h-[92%] object-contain object-bottom select-none'
+                }
+            />
+        </div>
+    );
+}
+
+export default function JuanGuide3D({
+    stepIdx,
+    isTalkingRef,
+    audioLevelRef,
+    stepProgressRef,
+    onReady,
+    variant = 'full',
+}) {
+    const { isLowEnd, isSoftwareGpu } = useMemo(() => getDeviceProfile(), []);
+    const isBust = variant === 'bust';
+
+    // Only skip WebGL on true software rasterizers (SwiftShader/llvmpipe); hardware GPUs run lightweight 3D Juan with full hand actions!
+    if (isSoftwareGpu) {
+        return (
+            <LowEndJuanPortrait
+                stepIdx={stepIdx}
+                isTalkingRef={isTalkingRef}
+                audioLevelRef={audioLevelRef}
+                onReady={onReady}
+                fadedBust={isBust}
+            />
+        );
+    }
+
     const fallbackImg = (
-        <img
-            src="/images/tutorial/juan_guide.png"
-            alt="Si Juan Osong"
-            draggable={false}
-            className="w-full h-full object-contain select-none"
+        <LowEndJuanPortrait
+            stepIdx={stepIdx}
+            isTalkingRef={isTalkingRef}
+            audioLevelRef={audioLevelRef}
+            onReady={onReady}
+            fadedBust={isBust}
         />
     );
 
-    const { isLowEnd } = useMemo(() => getDeviceProfile(), []);
+    const cameraConfig = isBust
+        ? { position: [0.10, 0.80, 1.64], fov: 31, near: 0.1, far: 25 }
+        : { position: [0.09, 0.63, 2.86], fov: 29, near: 0.1, far: 25 };
+
+    const lookTarget = isBust ? [0.09, 0.77, 0] : [0.07, 0.59, 0];
+
+    // Keep Juan's torso, kerchief & moving hands 100% solid & vibrant; gently feather ONLY the very bottom waist seam!
+    const bustContainerStyle = isBust
+        ? {
+              filter: 'drop-shadow(0 6px 12px rgba(24, 16, 10, 0.28))',
+              WebkitMaskImage:
+                  'linear-gradient(to bottom, #000 0%, #000 89%, rgba(0,0,0,0.45) 96%, transparent 100%)',
+              maskImage:
+                  'linear-gradient(to bottom, #000 0%, #000 89%, rgba(0,0,0,0.45) 96%, transparent 100%)',
+          }
+        : {
+              filter: 'drop-shadow(0 10px 18px rgba(15, 23, 42, 0.38))',
+          };
 
     return (
         <PortraitErrorBoundary fallback={fallbackImg}>
-            <div
-                className="w-full h-full relative"
-                style={{
-                    // Full 5-pass die-cut white sticker halo on mid/high devices; lightweight single shadow on low-end phones to prevent compositor stalls!
-                    filter: isLowEnd
-                        ? 'drop-shadow(0 8px 14px rgba(15, 23, 42, 0.35))'
-                        : 'drop-shadow(2px 0 0 #FFFFFF) drop-shadow(-2px 0 0 #FFFFFF) drop-shadow(0 2px 0 #FFFFFF) drop-shadow(0 -2px 0 #FFFFFF) drop-shadow(0 12px 20px rgba(15, 23, 42, 0.45))',
-                }}
-            >
+            <div className="w-full h-full relative" style={bustContainerStyle}>
                 <Canvas
-                    dpr={isLowEnd ? 0.85 : [1, 1.5]}
+                    dpr={isLowEnd ? 0.85 : 1}
                     shadows={false}
                     gl={{
                         alpha: true,
                         antialias: !isLowEnd,
                         powerPreference: 'default',
                         toneMapping: THREE.ACESFilmicToneMapping,
-                        toneMappingExposure: 1.08,
+                        toneMappingExposure: 1.12,
                     }}
-                    camera={{ position: [0.09, 0.63, 2.86], fov: 29, near: 0.1, far: 25 }}
+                    camera={cameraConfig}
                     onCreated={({ camera, gl }) => {
-                        camera.lookAt(0.07, 0.59, 0);
+                        camera.lookAt(lookTarget[0], lookTarget[1], lookTarget[2]);
                         gl.setClearColor(0x000000, 0);
                     }}
                     style={{ width: '100%', height: '100%', background: 'transparent' }}
                 >
-                    <ambientLight intensity={0.70} color="#FFFAF0" />
-                    <hemisphereLight args={['#FFFDF5', '#8C5E3C', 0.94]} />
-                    <directionalLight position={[2.4, 3.8, 4.4]} intensity={1.50} color="#FFF6E5" />
-                    <directionalLight position={[-2.8, 1.8, 3.2]} intensity={0.62} color="#E0F2FE" />
-                    <directionalLight position={[0, 2.6, -3.4]} intensity={0.78} color="#FDE68A" />
+                    {/* Streamlined light studio rig (fast first-frame PBR shader compile, warm Pixar look) */}
+                    <hemisphereLight args={['#FFFDF5', '#9A6B46', 1.42]} />
+                    <directionalLight position={[2.2, 3.6, 4.4]} intensity={1.55} color="#FFF6E5" />
+                    {!isLowEnd && <directionalLight position={[-1.4, 2.4, -3.2]} intensity={0.85} color="#FDE68A" />}
 
                     <Suspense fallback={null}>
                         <AnimatedJuanFullBody
@@ -638,6 +774,7 @@ export default function JuanGuide3D({ stepIdx, isTalkingRef, audioLevelRef, step
                             isTalkingRef={isTalkingRef}
                             audioLevelRef={audioLevelRef}
                             stepProgressRef={stepProgressRef}
+                            onReady={onReady}
                         />
                     </Suspense>
                 </Canvas>
@@ -645,3 +782,5 @@ export default function JuanGuide3D({ stepIdx, isTalkingRef, audioLevelRef, step
         </PortraitErrorBoundary>
     );
 }
+
+useGLTF.preload('/models/juan.glb', '/draco/');

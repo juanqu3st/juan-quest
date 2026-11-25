@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Delete, RotateCcw } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
@@ -51,6 +51,17 @@ export default function FourPicsWordGame({
     );
     const [currentIndex, setCurrentIndex] = useState(firstPendingIdx);
     const [pickedByChallenge, setPickedByChallenge] = useState(() => savedPickedByChallenge || {});
+    const onSavePickedRef = useRef(onSavePickedByChallenge);
+    const didMountPickedRef = useRef(false);
+    onSavePickedRef.current = onSavePickedByChallenge;
+
+    useEffect(() => {
+        if (!didMountPickedRef.current) {
+            didMountPickedRef.current = true;
+            return;
+        }
+        onSavePickedRef.current?.(pickedByChallenge);
+    }, [pickedByChallenge]);
 
     useEffect(() => {
         const nextIdx = challenges.findIndex((c) => !completedChallengeIds.includes(c.id));
@@ -72,12 +83,10 @@ export default function FourPicsWordGame({
             setPickedByChallenge((prev) => {
                 const curList = prev[current.id] || [];
                 const nextList = typeof updater === 'function' ? updater(curList) : updater;
-                const next = { ...prev, [current.id]: nextList };
-                onSavePickedByChallenge?.(next);
-                return next;
+                return { ...prev, [current.id]: nextList };
             });
         },
-        [current, onSavePickedByChallenge]
+        [current]
     );
 
     const handleSubmitWord = useCallback(async () => {

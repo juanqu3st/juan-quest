@@ -98,6 +98,20 @@ export default defineConfig({
                         },
                     },
                     {
+                        urlPattern: /\/api\/v1\/media\/.*\.(?:png|jpe?g|webp|gif|svg)$/i,
+                        handler: 'CacheFirst',
+                        options: {
+                            cacheName: 'juanquest-offline-images-v1',
+                            expiration: {
+                                maxEntries: 120,
+                                maxAgeSeconds: 60 * 60 * 24 * 60,
+                            },
+                            cacheableResponse: {
+                                statuses: [0, 200],
+                            },
+                        },
+                    },
+                    {
                         urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
                         handler: 'StaleWhileRevalidate',
                         options: {

@@ -20,6 +20,17 @@ export default function MultipleChoiceGame({
     const [solvedLetter, setSolvedLetter] = useState(null);
     const [wrongByChallenge, setWrongByChallenge] = useState(() => savedWrongByChallenge || {});
     const advanceTimerRef = useRef(null);
+    const onSaveWrongRef = useRef(onSaveWrongByChallenge);
+    const didMountWrongRef = useRef(false);
+    onSaveWrongRef.current = onSaveWrongByChallenge;
+
+    useEffect(() => {
+        if (!didMountWrongRef.current) {
+            didMountWrongRef.current = true;
+            return;
+        }
+        onSaveWrongRef.current?.(wrongByChallenge);
+    }, [wrongByChallenge]);
 
     useEffect(() => {
         return () => clearTimeout(advanceTimerRef.current);
@@ -55,13 +66,11 @@ export default function MultipleChoiceGame({
                 setWrongByChallenge((prev) => {
                     const prevList = prev[current.id] || [];
                     if (prevList.includes(letter)) return prev;
-                    const next = { ...prev, [current.id]: [...prevList, letter] };
-                    onSaveWrongByChallenge?.(next);
-                    return next;
+                    return { ...prev, [current.id]: [...prevList, letter] };
                 });
             }
         },
-        [busy, current, onSaveWrongByChallenge, onSubmit, solvedLetter, wrongLetters]
+        [busy, current, onSubmit, solvedLetter, wrongLetters]
     );
 
     useEffect(() => {

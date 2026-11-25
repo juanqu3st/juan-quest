@@ -122,6 +122,7 @@ export default function WorldMapCanvas({
                     lockScreenProjectorRef={lockScreenProjectorRef}
                     onEnterMap={onEnterMap}
                     tourActive={tourActive}
+                    guideActive={guideStep !== null}
                     lowQuality={lowQuality}
                 />
             ))}

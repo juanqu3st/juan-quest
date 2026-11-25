@@ -80,6 +80,7 @@ export default function MapLandmarkNode({
     lockScreenProjectorRef,
     onEnterMap,
     tourActive,
+    guideActive = false,
     lowQuality,
 }) {
     const stop = MAP_NODE_STOPS[map.map_number];
@@ -267,8 +268,8 @@ export default function MapLandmarkNode({
                 />
             ))}
 
-            {/* Ultra-Lightweight GPU Canvas Sprite Signboard (Zero DOM overhead for low-end mobile!) */}
-            {!tourActive && (
+            {/* Ultra-Lightweight GPU Canvas Sprite Signboard (hidden during flythrough & onboarding guide!) */}
+            {!tourActive && !guideActive && (
                 <MapLabelSprite
                     title={`Mapa ${map.map_number}: ${map.title}`}
                     state={labelState}
