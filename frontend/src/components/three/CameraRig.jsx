@@ -1,25 +1,45 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { cameraOffset, getWalkHeight, MAP_NODE_STOPS, WORLD_SCALE } from './worldConfig';
+import { cameraOffset, getTerrainHeight, getWalkHeight, MAP_NODE_STOPS, WORLD_SCALE } from './worldConfig';
 
 const S = WORLD_SCALE;
-const H = 1.6;
 
-// First-visit fly-over (base positions scaled to the bigger world)
-const FLYTHROUGH_WAYPOINTS = [
-    { pos: [0, 22, 34], look: [0, 1, 2], mapIndex: 0 },
-    { pos: [-27, 7.5, 21], look: [-24, 1.5, 13], mapIndex: 1 },
-    { pos: [-14, 7.5, 11], look: [-11, 1.5, 2], mapIndex: 2 },
-    { pos: [1, 7.5, 2], look: [2, 1.5, -8], mapIndex: 3 },
-    { pos: [13, 7.5, 13], look: [14, 1.5, 4], mapIndex: 4 },
-    { pos: [26, 8.5, 21], look: [25, 1.5, 12], mapIndex: 5 },
-].map((w) => ({
-    pos: new THREE.Vector3(w.pos[0] * S, w.pos[1] * H, w.pos[2] * S),
-    look: new THREE.Vector3(w.look[0] * S, w.look[1] * H, w.look[2] * S),
-    mapIndex: w.mapIndex,
-}));
+// Visual centers (offset from MAP_NODE_STOPS) + base scenic desktop camera offsets for each tour stop
+const TOUR_MAP_STOPS = [
+    { mapIndex: 1, centerOffset: [-1.2, 2.2, -3.2], camOffset: [-6.5, 11.5, 19.5] },
+    { mapIndex: 2, centerOffset: [-2.2, 2.4, -3.0], camOffset: [-6.5, 12.0, 21.0] },
+    { mapIndex: 3, centerOffset: [-1.0, 2.0, -3.0], camOffset: [-3.0, 11.5, 20.5] },
+    { mapIndex: 4, centerOffset: [1.8, 2.2, -3.2], camOffset: [-4.0, 11.5, 20.0] },
+    { mapIndex: 5, centerOffset: [0.3, 2.4, -3.4], camOffset: [3.5, 12.0, 21.0] },
+];
+
+function buildFlythroughWaypoints(aspect) {
+    // On narrow portrait phones (aspect ~0.46), horizontal FOV shrinks to ~21 deg — zoom out ~2.1x so every building + guard fits cleanly!
+    const isPortrait = aspect < 1;
+    const stopZoom = isPortrait ? Math.min(2.2, Math.max(1.28, 0.96 / Math.max(0.42, aspect))) : 1.05;
+    const overviewZoom = isPortrait ? Math.min(1.55, Math.max(1.15, 0.72 / Math.max(0.42, aspect))) : 1.0;
+
+    const overviewLook = new THREE.Vector3(0, 2.0, 4 * S);
+    const overviewPos = new THREE.Vector3(0, 32 * overviewZoom, 62 * overviewZoom);
+
+    const stopWaypoints = TOUR_MAP_STOPS.map(({ mapIndex, centerOffset, camOffset }) => {
+        const stop = MAP_NODE_STOPS[mapIndex] || MAP_NODE_STOPS[1];
+        const groundY = getTerrainHeight(stop.x, stop.z);
+        const look = new THREE.Vector3(
+            stop.x + centerOffset[0],
+            groundY + centerOffset[1],
+            stop.z + centerOffset[2]
+        );
+        const pos = look
+            .clone()
+            .add(new THREE.Vector3(camOffset[0] * stopZoom, camOffset[1] * stopZoom, camOffset[2] * stopZoom));
+        return { pos, look, mapIndex };
+    });
+
+    return [{ pos: overviewPos, look: overviewLook, mapIndex: 0 }, ...stopWaypoints];
+}
 
 function standPoint(mapNumber) {
     const stop = MAP_NODE_STOPS[mapNumber] || MAP_NODE_STOPS[1];
@@ -39,11 +59,18 @@ export default function CameraRig({
     const aspect = size.width / Math.max(1, size.height);
     const elapsedRef = useRef(0);
     const guideTimeRef = useRef(0);
-    const lastStageRef = useRef(0);
+    const lastStageRef = useRef(-1);
     const snappedInitialRef = useRef(false);
     const guideTmpPos = useRef(new THREE.Vector3());
     const guideTmpLook = useRef(new THREE.Vector3());
-    const totalDuration = 13.5;
+    const tourTmpLook = useRef(new THREE.Vector3());
+    const totalDuration = 14.5;
+
+    const tourWaypoints = useMemo(() => {
+        const endLook = standPoint(startMapNumber);
+        const endPos = endLook.clone().add(cameraOffset(aspect));
+        return [...buildFlythroughWaypoints(aspect), { pos: endPos, look: endLook, mapIndex: 0 }];
+    }, [aspect, startMapNumber]);
 
     useEffect(() => {
         if (!tourActive && guideStep === null && !snappedInitialRef.current && controlsRef?.current) {
@@ -53,7 +80,7 @@ export default function CameraRig({
             controlsRef.current.update();
             snappedInitialRef.current = true;
         }
-    }, [tourActive, guideStep, startMapNumber, camera, controlsRef]);
+    }, [tourActive, guideStep, startMapNumber, camera, controlsRef, aspect]);
 
     useEffect(() => {
         if (tourActive) {
@@ -61,7 +88,7 @@ export default function CameraRig({
             lastStageRef.current = 0;
             onTourCardChange?.(0);
         }
-    }, [tourActive]);
+    }, [tourActive, onTourCardChange]);
 
     useFrame((_, delta) => {
         const dt = Math.min(delta, 0.05);
@@ -132,10 +159,7 @@ export default function CameraRig({
         elapsedRef.current += delta;
         const progress = Math.min(1, elapsedRef.current / totalDuration);
 
-        const endLook = standPoint(startMapNumber);
-        const endPos = endLook.clone().add(cameraOffset(aspect));
-        const all = [...FLYTHROUGH_WAYPOINTS, { pos: endPos, look: endLook, mapIndex: 0 }];
-
+        const all = tourWaypoints;
         const scaled = progress * (all.length - 1);
         const idx = Math.min(all.length - 2, Math.floor(scaled));
         const localT = scaled - idx;
@@ -144,7 +168,7 @@ export default function CameraRig({
         const to = all[idx + 1];
 
         camera.position.lerpVectors(from.pos, to.pos, smoothT);
-        const look = new THREE.Vector3().lerpVectors(from.look, to.look, smoothT);
+        const look = tourTmpLook.current.lerpVectors(from.look, to.look, smoothT);
         if (controlsRef?.current) {
             controlsRef.current.target.copy(look);
             controlsRef.current.update();
@@ -152,7 +176,7 @@ export default function CameraRig({
             camera.lookAt(look);
         }
 
-        const card = to.mapIndex || from.mapIndex;
+        const card = localT > 0.38 ? to.mapIndex : from.mapIndex;
         if (card !== lastStageRef.current) {
             lastStageRef.current = card;
             onTourCardChange?.(card);

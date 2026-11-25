@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, CheckCircle2, ChevronDown, FastForward, HelpCircle, LogOut, Pencil, QrCode, Star, Trophy, Users, WifiOff } from 'lucide-react';
+import { Award, CheckCircle2, ChevronDown, HelpCircle, LogOut, Pencil, QrCode, Star, Trophy, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
@@ -94,6 +94,7 @@ export default function StudentWorldPage() {
         if (loadStageResume(user?.id)) return false;
         return !localStorage.getItem(tourKey);
     });
+    const [tourMapIndex, setTourMapIndex] = useState(0);
     const [guideOpen, setGuideOpen] = useState(() => {
         if (loadStageResume(user?.id)) return false;
         const sawTour = Boolean(localStorage.getItem(tourKey));
@@ -446,12 +447,36 @@ export default function StudentWorldPage() {
                 paused={Boolean(activeStageMap || canvasPausedForUnlock || completionOpen || groupModalOpen)}
                 onEnterMap={handleEnterMap}
                 onArrived={handleArrived}
-                onTourCardChange={() => {}}
+                onTourCardChange={setTourMapIndex}
                 onTourFinish={finishTour}
             />
 
-            {/* Single-Row Responsive Top HUD (Hidden during onboarding guide to prevent overlap with Laktawan) */}
-            {!guideOpen && (
+            {/* Minimal Typography-Only Caption During First-Visit Fly-Over Tour */}
+            {tourActive && (
+                <div
+                    className="pointer-events-none fixed inset-x-0 z-20 flex justify-center px-4"
+                    style={{ top: 'max(18px, env(safe-area-inset-top))' }}
+                >
+                    <div
+                        className="px-4 py-1.5 rounded-full text-xs sm:text-[13px] font-semibold text-[#FAF8F5] tracking-tight"
+                        style={{
+                            backgroundColor: 'rgba(20, 18, 16, 0.58)',
+                            border: '1px solid rgba(255, 255, 255, 0.16)',
+                            backdropFilter: 'blur(10px)',
+                            WebkitBackdropFilter: 'blur(10px)',
+                        }}
+                    >
+                        {(() => {
+                            if (!tourMapIndex) return 'Barrio ni Juan Osong';
+                            const found = maps.find((m) => m.map_number === tourMapIndex);
+                            return found ? `Mapa ${found.map_number} · ${found.title}` : `Mapa ${tourMapIndex}`;
+                        })()}
+                    </div>
+                </div>
+            )}
+
+            {/* Single-Row Responsive Top HUD (Hidden during tour & onboarding guide for clean framing) */}
+            {!guideOpen && !tourActive && (
             <div className="pointer-events-none fixed top-0 inset-x-0 z-20 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-4 flex items-start justify-between gap-2">
                 {/* Left Dock: Identity + ONLY ONE Clickable Group Chip + Score */}
                 <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2 sm:gap-3 min-w-0 max-w-[calc(100%-148px)] sm:max-w-none">
@@ -632,10 +657,15 @@ export default function StudentWorldPage() {
                     <button
                         type="button"
                         onClick={finishTour}
-                        className="pointer-events-auto min-h-[44px] px-5 py-2.5 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs sm:text-sm inline-flex items-center gap-2 shadow-md cursor-pointer transition"
+                        className="pointer-events-auto min-h-[42px] px-6 rounded-full text-[#FAF8F5] font-semibold text-xs sm:text-[13px] shadow-md cursor-pointer transition hover:opacity-100 active:scale-95"
+                        style={{
+                            backgroundColor: 'rgba(20, 18, 16, 0.72)',
+                            border: '1px solid rgba(255, 255, 255, 0.22)',
+                            backdropFilter: 'blur(10px)',
+                            WebkitBackdropFilter: 'blur(10px)',
+                        }}
                     >
-                        <FastForward className="w-4 h-4" />
-                        <span>Laktawan</span>
+                        Laktawan
                     </button>
                 ) : (
                     !isWalking && !completionOpen && !guideOpen && (
