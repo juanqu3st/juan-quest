@@ -79,7 +79,7 @@ export const PAHINGAHAN_ZONE = {
     hammockSpan: 4.95,
     kuboOffset: [4.2, 0, -4.5],
     kuboYaw: -0.62,
-    treeOffset: [-4.9, 0, -2.0],
+    treeOffset: [-5.8, 0, -2.6],
     askalOffset: [1.85, 0, 1.45],
 };
 

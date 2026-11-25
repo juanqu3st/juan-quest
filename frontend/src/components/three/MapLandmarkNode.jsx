@@ -6,6 +6,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { getTerrainHeight, MAP_NODE_STOPS } from './worldConfig';
 import GuardFigure from './GuardFigure';
 import MapLabelSprite from './MapLabelSprite';
+import CameraFadeGroup from './CameraFadeGroup';
 
 for (let m = 1; m <= 5; m++) {
     useGLTF.preload(`/models/map${m}.glb`, '/draco/');
@@ -198,6 +199,7 @@ export default function MapLandmarkNode({
     hasBeenOpened = false,
     isUnlocking = false,
     lockScreenProjectorRef,
+    playerPosRef,
     onEnterMap,
     tourActive,
     guideActive = false,
@@ -318,6 +320,7 @@ export default function MapLandmarkNode({
                 if (typeof document !== 'undefined') document.body.style.cursor = '';
             }}
             onClick={(e) => {
+                if (e.delta > 6) return;
                 e.stopPropagation();
                 tapBounceRef.current = 0.22;
                 const screenOrigin = lockScreenProjectorRef?.current?.get(map.map_number)?.();
@@ -373,31 +376,41 @@ export default function MapLandmarkNode({
                 </group>
             )}
 
-            {/* Main Architectural Landmark Grounded Directly on the Natural Pinoy Clearing */}
-            <group
-                ref={buildingRef}
-                position={[layout.offset[0], 0.01, layout.offset[1]]}
-                rotation={[0, layout.yaw, 0]}
-                scale={layout.scale}
+            {/* Main Architectural Landmark Grounded Directly on the Natural Pinoy Clearing (fades smoothly if blocking camera!) */}
+            <CameraFadeGroup
+                key={`landmark-fade-${map.map_number}-${isUnlocked ? 'open' : 'locked'}`}
+                playerPosRef={playerPosRef}
+                tourActive={tourActive}
+                pad={map.map_number === 5 ? 0.95 : 0.55}
+                lensMargin={map.map_number === 5 ? 2.4 : 1.9}
+                fadeOpacity={0.08}
+                nearOpacity={0.03}
             >
-                <LandmarkErrorBoundary>
-                    <Suspense fallback={null}>
-                        <ArchitecturalLandmarkGlb
-                            mapNumber={map.map_number}
-                            isUnlocked={isUnlocked}
-                            lowQuality={lowQuality}
-                        />
-                    </Suspense>
-                </LandmarkErrorBoundary>
+                <group
+                    ref={buildingRef}
+                    position={[layout.offset[0], 0.01, layout.offset[1]]}
+                    rotation={[0, layout.yaw, 0]}
+                    scale={layout.scale}
+                >
+                    <LandmarkErrorBoundary>
+                        <Suspense fallback={null}>
+                            <ArchitecturalLandmarkGlb
+                                mapNumber={map.map_number}
+                                isUnlocked={isUnlocked}
+                                lowQuality={lowQuality}
+                            />
+                        </Suspense>
+                    </LandmarkErrorBoundary>
 
-                {map.map_number === 1 && !lowQuality && isUnlocked && (
-                    <pointLight position={[-1.69, 2.55, 1.12]} color="#FDE68A" intensity={2.4} distance={14} />
-                )}
-                {map.map_number === 2 && <AnimatedGarrisonFlag isUnlocked={isUnlocked} lowQuality={lowQuality} />}
-                {map.map_number === 5 && (
-                    <AnimatedCampfireFlame isUnlocked={isUnlocked} lowQuality={lowQuality} />
-                )}
-            </group>
+                    {map.map_number === 1 && !lowQuality && isUnlocked && (
+                        <pointLight position={[-1.69, 2.55, 1.12]} color="#FDE68A" intensity={2.4} distance={14} />
+                    )}
+                    {map.map_number === 2 && <AnimatedGarrisonFlag isUnlocked={isUnlocked} lowQuality={lowQuality} />}
+                    {map.map_number === 5 && (
+                        <AnimatedCampfireFlame isUnlocked={isUnlocked} lowQuality={lowQuality} />
+                    )}
+                </group>
+            </CameraFadeGroup>
 
             {/* Upgraded Pixar 3D Guard NPCs (Mapa 1 Pulis, Mapa 2 Twin Guwardiya, Mapa 3 Pulis) */}
             {layout.guards.map((g, idx) => (

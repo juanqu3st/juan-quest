@@ -308,11 +308,11 @@ export default function PlayerCharacter({
                 <group ref={pendulumRef}>
                     <group ref={bodyHopRef}>
                         <group
-                            position={isResting ? [0.28, -0.96, 0.02] : [0, 0, 0]}
+                            position={isResting ? [0.16, -1.01, 0.02] : [0, 0, 0]}
                             rotation={isResting ? [0.16, Math.PI / 2, 0] : [0, 0, 0]}
                         >
-                            <group rotation={isResting ? [-Math.PI / 2 + 0.14, 0, 0] : [0, 0, 0]}>
-                                <group position={isResting ? [0, -1.18, 0] : [0, 0, 0]}>
+                            <group rotation={isResting ? [-Math.PI / 2 + 0.02, 0, 0] : [0, 0, 0]}>
+                                <group position={isResting ? [0, -1.16, 0] : [0, 0, 0]}>
                                     <ModelErrorBoundary key={modelUrl} fallback={fallback}>
                                         <Suspense fallback={fallback}>
                                             <GlbCharacter
@@ -575,15 +575,15 @@ function GlbCharacter({ url, isWalking, isResting = false }) {
         const napBreath = Math.sin(st.idleT * 1.45);
         const lazyFootBob = Math.sin(st.idleT * 1.85) * 0.12;
 
-        // Left Leg: walk stride OR relaxed bent siesta knee in hammock
-        const thighL = (-sinL * 0.78 - 0.06) * w + -0.42 * r;
-        const shinL = (Math.pow(liftL, 1.15) * 1.15 + 0.06) * w + 0.72 * r;
-        const footL = (-sinL * 0.30 - liftL * 0.14) * w + 0.16 * r;
+        // Left Leg: walk stride OR relaxed knee kept cleanly ABOVE the rising hammock sling (zero foot clipping!)
+        const thighL = (-sinL * 0.78 - 0.06) * w + -0.58 * r;
+        const shinL = (Math.pow(liftL, 1.15) * 1.15 + 0.06) * w + 0.44 * r;
+        const footL = (-sinL * 0.30 - liftL * 0.14) * w + -0.06 * r;
 
-        // Right Leg: opposite walk stride OR higher lazily bobbing knee in hammock
-        const thighR = (-sinR * 0.78 - 0.06) * w + -0.68 * r;
-        const shinR = (Math.pow(liftR, 1.15) * 1.15 + 0.06) * w + 1.06 * r;
-        const footR = (-sinR * 0.30 - liftR * 0.14) * w + (0.14 + lazyFootBob) * r;
+        // Right Leg: opposite walk stride OR propped cozy siesta knee resting cleanly ON TOP of the hammock cloth
+        const thighR = (-sinR * 0.78 - 0.06) * w + -0.88 * r;
+        const shinR = (Math.pow(liftR, 1.15) * 1.15 + 0.06) * w + 0.76 * r;
+        const footR = (-sinR * 0.30 - liftR * 0.14) * w + (-0.08 + lazyFootBob * 0.65) * r;
 
         applyBone('thighl', thighL);
         applyBone('shinl', shinL);
@@ -592,16 +592,16 @@ function GlbCharacter({ url, isWalking, isResting = false }) {
         applyBone('shinr', shinR);
         applyBone('footr', footR);
 
-        // Opposite-phase Arm Swing (walk), gentle Idle breathing, OR hands folded lazily over tummy in hammock
+        // Opposite-phase Arm Swing (walk), gentle Idle breathing, OR arms dropped naturally flat at sides by gravity in hammock!
         const idleBreath = Math.sin(st.idleT * 2.2) * idleW;
-        const armL = sinL * 0.68 * w + idleBreath * 0.04 + (-0.30 + napBreath * 0.025) * r;
-        const armR = sinR * 0.68 * w - idleBreath * 0.04 + (-0.30 + napBreath * 0.025) * r;
-        const elbowL = (-0.24 - Math.max(0, -sinL) * 0.56) * w - 0.10 * idleW + -1.24 * r;
-        const elbowR = (-0.24 - Math.max(0, -sinR) * 0.56) * w - 0.10 * idleW + -1.24 * r;
+        const armL = sinL * 0.68 * w + idleBreath * 0.04 + (0.08 + napBreath * 0.02) * r;
+        const armR = sinR * 0.68 * w - idleBreath * 0.04 + (0.08 + napBreath * 0.02) * r;
+        const elbowL = (-0.24 - Math.max(0, -sinL) * 0.56) * w - 0.10 * idleW + -0.14 * r;
+        const elbowR = (-0.24 - Math.max(0, -sinR) * 0.56) * w - 0.10 * idleW + -0.14 * r;
 
-        applyBone('upperarml', armL, 0, idleBreath * 0.03);
+        applyBone('upperarml', armL, -0.18 * r, idleBreath * 0.03 + 0.08 * r);
         applyBone('forearml', elbowL);
-        applyBone('upperarmr', armR, 0, -idleBreath * 0.03);
+        applyBone('upperarmr', armR, 0.18 * r, -idleBreath * 0.03 - 0.08 * r);
         applyBone('forearmr', elbowR);
 
         // Real-life Double-Bounce Hip Lift during walk; steady gentle rise in hammock
@@ -623,7 +623,7 @@ function GlbCharacter({ url, isWalking, isResting = false }) {
         const idleTiltX = Math.sin(st.idleT * 1.4) * 0.04 * idleW;
         applyBone(
             'head',
-            0.09 * w + idleTiltX + (-0.24 + napBreath * 0.035) * r,
+            0.09 * w + idleTiltX + (-0.34 + napBreath * 0.035) * r,
             idleLookY + -0.14 * r,
             0
         );

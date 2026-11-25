@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { FINISH_ARCH_T, getTerrainHeight } from './worldConfig';
 import { getPbrTextures } from './pbrTextures';
+import CameraFadeGroup from './CameraFadeGroup';
 
 /**
  * Builds a terrain-hugging curved Pinoy dirt road ribbon (lupa) with a gentle crown
@@ -72,7 +73,7 @@ function buildDirtTrailRibbon(curve) {
     return geo;
 }
 
-export default function SteppingStonePath({ curve, maps = [], lowQuality = false }) {
+export default function SteppingStonePath({ curve, maps = [], lowQuality = false, playerPosRef, tourActive = false }) {
     const { dirtMap, dirtBump } = useMemo(() => getPbrTextures(), []);
     const roadGeo = useMemo(() => buildDirtTrailRibbon(curve), [curve]);
 
@@ -106,13 +107,15 @@ export default function SteppingStonePath({ curve, maps = [], lowQuality = false
                 />
             </mesh>
 
-            {/* Pinoy Bamboo Finish Arch with Fiesta Banderitas after Mapa 5 */}
-            <PinoyFinishArch
-                position={finishTransform.position}
-                yaw={finishTransform.yaw}
-                done={allDone}
-                lowQuality={lowQuality}
-            />
+            {/* Pinoy Bamboo Finish Arch with Fiesta Banderitas after Mapa 5 (fades cleanly when blocking camera!) */}
+            <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.55} lensMargin={1.8}>
+                <PinoyFinishArch
+                    position={finishTransform.position}
+                    yaw={finishTransform.yaw}
+                    done={allDone}
+                    lowQuality={lowQuality}
+                />
+            </CameraFadeGroup>
         </group>
     );
 }
@@ -197,11 +200,31 @@ function PinoyFinishArch({ position, yaw, done, lowQuality }) {
                 <meshStandardMaterial color="#C89B54" roughness={0.76} />
             </mesh>
 
-            {/* Traditional Mini Nipa Awning Cap on top of the Arch */}
-            <mesh position={[0, 5.75, 0]} rotation={[0, Math.PI / 4, 0]} scale={[2.6, 0.72, 0.85]} castShadow={!lowQuality}>
-                <coneGeometry args={[1.4, 1.35, 4]} />
-                <meshStandardMaterial color="#A87A3A" roughness={0.92} />
-            </mesh>
+            {/* Clean Symmetric Pitched Pinoy Nipa Gable Awning perched cleanly ABOVE the "TAGUMPAY!" signboard */}
+            <group position={[0, 5.95, 0]}>
+                {/* Twin short bamboo roof riser struts connecting pillars to the awning */}
+                {[-2.85, 2.85].map((xPos, idx) => (
+                    <mesh key={idx} position={[xPos, -0.22, 0]} castShadow={!lowQuality}>
+                        <cylinderGeometry args={[0.1, 0.11, 1.05, 8]} />
+                        <meshStandardMaterial color="#B58946" roughness={0.78} />
+                    </mesh>
+                ))}
+                {/* Front pitched nipa slope (lowest eave sits at y = 5.90, completely clear of the y = 5.60 sign!) */}
+                <mesh position={[0, 0.30, 0.56]} rotation={[0.50, 0, 0]} castShadow={!lowQuality}>
+                    <boxGeometry args={[6.9, 0.14, 1.32]} />
+                    <meshStandardMaterial color="#A87A3A" roughness={0.92} />
+                </mesh>
+                {/* Back pitched nipa slope */}
+                <mesh position={[0, 0.30, -0.56]} rotation={[-0.50, 0, 0]} castShadow={!lowQuality}>
+                    <boxGeometry args={[6.9, 0.14, 1.32]} />
+                    <meshStandardMaterial color="#966A2E" roughness={0.92} />
+                </mesh>
+                {/* Top bamboo ridge cap beam */}
+                <mesh position={[0, 0.62, 0]} rotation={[0, 0, Math.PI / 2]} castShadow={!lowQuality}>
+                    <cylinderGeometry args={[0.11, 0.11, 7.05, 8]} />
+                    <meshStandardMaterial color="#C89B54" roughness={0.78} />
+                </mesh>
+            </group>
 
             {/* Fiesta Wooden Plaque Signboard ("TAGUMPAY!" / "DULO NG LAKBAY") */}
             <mesh position={[0, 5.12, 0.24]} castShadow={!lowQuality}>

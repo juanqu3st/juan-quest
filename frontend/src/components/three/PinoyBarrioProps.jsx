@@ -2,6 +2,7 @@ import React, { Suspense, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { BARRIO_ASKALS, BARRIO_KUBOS, BARRIO_TINDAHANS, getTerrainHeight } from './worldConfig';
+import CameraFadeGroup from './CameraFadeGroup';
 
 useGLTF.preload('/models/kubo_bg.glb', '/draco/');
 useGLTF.preload('/models/tindahan.glb', '/draco/');
@@ -58,35 +59,49 @@ function ClonedGlb({ url, position, yaw = 0, scale = 1, castShadow = true, anima
  * - 9 Scattered Background Bahay Kubo Huts across rolling hills (5 on low-end mobile)
  * - 4 Friendly Pinoy Askals (standing + napping in the shade)
  */
-export default function PinoyBarrioProps({ lowQuality }) {
+export default function PinoyBarrioProps({ lowQuality, playerPosRef, tourActive = false }) {
     const kubos = lowQuality ? BARRIO_KUBOS.slice(0, 5) : BARRIO_KUBOS;
 
     return (
         <BarrioErrorBoundary>
             <Suspense fallback={null}>
                 <group>
-                    {/* Roadside Pinoy Sari-Sari Stores (Tindahan) */}
+                    {/* Roadside Pinoy Sari-Sari Stores (Tindahan) — fade cleanly when blocking camera */}
                     {BARRIO_TINDAHANS.map((st, idx) => (
-                        <ClonedGlb
+                        <CameraFadeGroup
                             key={`tindahan-${idx}`}
-                            url="/models/tindahan.glb"
-                            position={[st.x, getTerrainHeight(st.x, st.z), st.z]}
-                            yaw={st.yaw}
-                            scale={st.scale}
-                            castShadow={!lowQuality}
-                        />
+                            playerPosRef={playerPosRef}
+                            tourActive={tourActive}
+                            pad={0.55}
+                            lensMargin={1.8}
+                        >
+                            <ClonedGlb
+                                url="/models/tindahan.glb"
+                                position={[st.x, getTerrainHeight(st.x, st.z), st.z]}
+                                yaw={st.yaw}
+                                scale={st.scale}
+                                castShadow={!lowQuality}
+                            />
+                        </CameraFadeGroup>
                     ))}
 
-                    {/* Scattered Hillside & Valley Background Bahay Kubo Huts */}
+                    {/* Scattered Hillside & Valley Background Bahay Kubo Huts — fade cleanly when blocking camera */}
                     {kubos.map((kb, idx) => (
-                        <ClonedGlb
+                        <CameraFadeGroup
                             key={`kubo-${idx}`}
-                            url="/models/kubo_bg.glb"
-                            position={[kb.x, getTerrainHeight(kb.x, kb.z), kb.z]}
-                            yaw={kb.yaw}
-                            scale={kb.scale}
-                            castShadow={!lowQuality}
-                        />
+                            playerPosRef={playerPosRef}
+                            tourActive={tourActive}
+                            pad={0.55}
+                            lensMargin={1.8}
+                        >
+                            <ClonedGlb
+                                url="/models/kubo_bg.glb"
+                                position={[kb.x, getTerrainHeight(kb.x, kb.z), kb.z]}
+                                yaw={kb.yaw}
+                                scale={kb.scale}
+                                castShadow={!lowQuality}
+                            />
+                        </CameraFadeGroup>
                     ))}
 
                     {/* Friendly Pinoy Askals (Standing + Napping near Tindahans & Kubos) */}

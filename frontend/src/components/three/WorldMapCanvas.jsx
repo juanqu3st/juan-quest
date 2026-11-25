@@ -156,7 +156,13 @@ export default function WorldMapCanvas({
 
             <TerrainAndWater lowQuality={lowQuality} />
 
-            <SteppingStonePath curve={curve} maps={maps} lowQuality={lowQuality} />
+            <SteppingStonePath
+                curve={curve}
+                maps={maps}
+                lowQuality={lowQuality}
+                playerPosRef={playerPosRef}
+                tourActive={tourActive}
+            />
 
             {maps.map((map) => (
                 <MapLandmarkNode
@@ -167,6 +173,7 @@ export default function WorldMapCanvas({
                     hasBeenOpened={Boolean(openedMapIds?.has(map.id) || map.progress)}
                     isUnlocking={unlockingMapId === map.id}
                     lockScreenProjectorRef={lockScreenProjectorRef}
+                    playerPosRef={playerPosRef}
                     onEnterMap={onEnterMap}
                     tourActive={tourActive}
                     guideActive={guideStep !== null}
@@ -175,7 +182,7 @@ export default function WorldMapCanvas({
                 />
             ))}
 
-            <PinoyBarrioProps lowQuality={lowQuality} />
+            <PinoyBarrioProps lowQuality={lowQuality} playerPosRef={playerPosRef} tourActive={tourActive} />
             {/* Skip heavy multi-part background crowd (~180 draw calls) in lowQuality so budget phones stay 50-60 FPS */}
             {!lowQuality && <BarrioLivingWorld lowQuality={false} />}
 
@@ -186,6 +193,7 @@ export default function WorldMapCanvas({
                 tourActive={tourActive}
                 guideActive={guideStep !== null}
                 lowQuality={lowQuality}
+                playerPosRef={playerPosRef}
                 onSelectPahingahan={onSelectPahingahan}
             />
 

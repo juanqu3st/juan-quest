@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { getHammockSwingAngle, getTerrainHeight, PAHINGAHAN_ZONE } from './worldConfig';
 import { getCharacterMeta } from '../../utils/characters';
 import MapLabelSprite from './MapLabelSprite';
+import CameraFadeGroup from './CameraFadeGroup';
 
 useGLTF.preload('/models/kubo_bg.glb', '/draco/');
 useGLTF.preload('/models/tree_acacia.glb', '/draco/');
@@ -110,10 +111,10 @@ function createYardClearingTexture() {
  * (pivot at y = 0, spreader bars at x = ±1.92, y = -0.58, deepest center at y = -1.24).
  */
 function buildHammockSlingGeo() {
-    const segX = 26;
-    const segZ = 10;
+    const segX = 28;
+    const segZ = 12;
     const halfLen = 1.92;
-    const halfW = 0.66;
+    const halfW = 0.74;
     const positions = [];
     const uvs = [];
     const indices = [];
@@ -122,16 +123,16 @@ function buildHammockSlingGeo() {
         const uNorm = ix / segX; // 0..1
         const u = uNorm * 2 - 1; // -1..1
         const x = u * halfLen;
-        const baseY = -0.58 - (1 - u * u) * 0.66;
-        // Gently taper width near the spreader bars while keeping a full cozy center
-        const widthFactor = 0.88 + 0.16 * (1 - u * u);
+        // Deep plush catenary sag cradling the entire character cleanly underneath (zero shoe/back poking!)
+        const baseY = -0.58 - (1 - u * u) * 0.72;
+        const widthFactor = 0.86 + 0.18 * (1 - u * u);
 
         for (let iz = 0; iz <= segZ; iz++) {
             const vNorm = iz / segZ; // 0..1
             const v = vNorm * 2 - 1; // -1..1
             const z = v * halfW * widthFactor;
-            // Curved cradle lip along front & back edges
-            const edgeLift = v * v * 0.24 * (1 - 0.35 * u * u);
+            // Raised cozy cradle lips along front & back edges
+            const edgeLift = v * v * 0.21 * (1 - 0.32 * u * u);
             const y = baseY + edgeLift;
 
             positions.push(x, y, z);
@@ -251,76 +252,154 @@ const DREAM_THOUGHTS = [
 ];
 
 function drawCloudThoughtBubble(lines) {
-    const W = 960;
-    const H = 370;
+    const W = 1024;
+    const H = 480;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    // Soft warm drop shadow for cloud & trailing dream dots
-    ctx.save();
-    ctx.shadowColor = 'rgba(28, 25, 23, 0.28)';
-    ctx.shadowBlur = 16;
-    ctx.shadowOffsetY = 7;
+    // Offscreen cloud canvas so all shading stays cleanly clipped inside ONE seamless fluffy silhouette (zero seams, zero edge clipping!)
+    const cloudCanvas = document.createElement('canvas');
+    cloudCanvas.width = W;
+    cloudCanvas.height = H;
+    const cctx = cloudCanvas.getContext('2d');
 
-    // 3 trailing dream thought dots curving down-left toward the sleeping character's head
-    const dots = [
-        { x: 226, y: 340, r: 13 },
-        { x: 274, y: 306, r: 19 },
-        { x: 328, y: 268, r: 26 },
-    ];
-    for (const d of dots) {
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fill();
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = '#9A3412';
-        ctx.stroke();
-    }
-
-    // Fluffy high-contrast cartoon dream cloud silhouette
+    // Generous margins on all sides (top >= 40px, left >= 80px, right <= 940px) so puffs NEVER slice flat
     const lobes = [
-        [152, 136, 78],
-        [278, 88, 92],
-        [456, 72, 102],
-        [648, 86, 94],
-        [802, 134, 80],
-        [734, 186, 76],
-        [548, 198, 82],
-        [346, 194, 78],
-        [204, 182, 68],
+        [158, 224, 72],
+        [236, 154, 78],
+        [368, 128, 86],
+        [520, 124, 88],
+        [668, 134, 82],
+        [792, 168, 76],
+        [858, 232, 70],
+        [774, 272, 66],
+        [640, 282, 70],
+        [486, 284, 72],
+        [332, 278, 68],
+        [218, 266, 62],
     ];
 
-    // Outer terracotta border pass
-    ctx.fillStyle = '#9A3412';
+    // 1. Unified seamless cloud silhouette mask
+    cctx.fillStyle = '#FFFFFF';
     for (const [cx, cy, r] of lobes) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 7, 0, Math.PI * 2);
-        ctx.fill();
+        cctx.beginPath();
+        cctx.arc(cx, cy, r, 0, Math.PI * 2);
+        cctx.fill();
     }
-    ctx.fillRect(150, 74, 654, 134);
+    cctx.beginPath();
+    cctx.ellipse(508, 212, 330, 88, 0, 0, Math.PI * 2);
+    cctx.fill();
+
+    // 2. Volumetric 3D cotton-cloud shading clipped strictly inside silhouette
+    cctx.globalCompositeOperation = 'source-atop';
+
+    // Warm sunlit top -> soft cool-sky pillowy underside
+    const bodyGrad = cctx.createLinearGradient(0, 36, 0, 356);
+    bodyGrad.addColorStop(0, '#FFFFFF');
+    bodyGrad.addColorStop(0.54, '#FAFBFD');
+    bodyGrad.addColorStop(0.8, '#E6EEF8');
+    bodyGrad.addColorStop(1, '#C5D5E8');
+    cctx.fillStyle = bodyGrad;
+    cctx.fillRect(0, 0, W, H);
+
+    // Subtle soft billowy shadow puffs tucked near the bottom scallops
+    const bottomPuffs = [
+        [218, 294, 76],
+        [340, 310, 86],
+        [492, 316, 92],
+        [646, 312, 88],
+        [780, 298, 78],
+    ];
+    for (const [bx, by, br] of bottomPuffs) {
+        const sg = cctx.createRadialGradient(bx, by, br * 0.1, bx, by, br);
+        sg.addColorStop(0, 'rgba(148, 163, 184, 0.34)');
+        sg.addColorStop(0.6, 'rgba(148, 163, 184, 0.12)');
+        sg.addColorStop(1, 'rgba(148, 163, 184, 0)');
+        cctx.fillStyle = sg;
+        cctx.beginPath();
+        cctx.arc(bx, by, br, 0, Math.PI * 2);
+        cctx.fill();
+    }
+
+    // Soft bright sunlit cotton highlights on upper cloud domes
+    const topHighlights = [
+        [226, 134, 72],
+        [356, 102, 82],
+        [508, 96, 86],
+        [658, 108, 78],
+        [784, 146, 68],
+    ];
+    for (const [hx, hy, hr] of topHighlights) {
+        const hg = cctx.createRadialGradient(hx - hr * 0.18, hy - hr * 0.18, 4, hx, hy, hr);
+        hg.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
+        hg.addColorStop(0.6, 'rgba(255, 255, 255, 0.38)');
+        hg.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        cctx.fillStyle = hg;
+        cctx.beginPath();
+        cctx.arc(hx, hy, hr, 0, Math.PI * 2);
+        cctx.fill();
+    }
+
+    // Subtle soft sunlit edge rim glow around the cloud center for crisp separation from trees
+    cctx.globalCompositeOperation = 'source-over';
+
+    // 3. Draw ambient drop shadow + whisper-soft sky rim onto main canvas
+    ctx.save();
+    ctx.shadowColor = 'rgba(15, 23, 42, 0.28)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 12;
+    ctx.drawImage(cloudCanvas, 0, 0);
     ctx.restore();
 
-    // Inner pure white cloud fill pass for maximum text contrast
-    ctx.fillStyle = '#FFFFFF';
-    for (const [cx, cy, r] of lobes) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    ctx.fillRect(152, 80, 650, 122);
+    ctx.save();
+    ctx.shadowColor = 'rgba(100, 116, 139, 0.32)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.drawImage(cloudCanvas, 0, 0);
+    ctx.restore();
 
-    // Razor-sharp bold dark Tagalog dream dialogue
-    ctx.fillStyle = '#1C1917';
+    // 4. Three plush 3D spherical cloudlet trail dots curving down toward the sleeping character
+    const dots = [
+        { x: 242, y: 448, r: 14 },
+        { x: 282, y: 412, r: 21 },
+        { x: 332, y: 372, r: 29 },
+    ];
+    for (const d of dots) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.24)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 5;
+        const dg = ctx.createRadialGradient(
+            d.x - d.r * 0.32,
+            d.y - d.r * 0.34,
+            d.r * 0.12,
+            d.x,
+            d.y,
+            d.r
+        );
+        dg.addColorStop(0, '#FFFFFF');
+        dg.addColorStop(0.62, '#F1F5F9');
+        dg.addColorStop(1, '#C5D5E8');
+        ctx.fillStyle = dg;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // 5. Crisp, high-contrast dark slate Tagalog dream text centered inside the bright white cloud center
     ctx.font = '900 48px Inter, "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const baseY = lines.length === 2 ? 114 : 142;
+    ctx.fillStyle = '#0F172A';
+    const baseY = lines.length === 2 ? 178 : 206;
     lines.forEach((line, idx) => {
-        ctx.fillText(line, W / 2, baseY + idx * 60);
+        ctx.fillText(line, 512, baseY + idx * 60);
     });
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -331,7 +410,7 @@ function drawCloudThoughtBubble(lines) {
     return tex;
 }
 
-/** Fluffy floating dream thought bubble above the sleeping character, cycling through Pinoy siesta dreams. */
+/** Fluffy 3D-shaded floating dream cloud above the sleeping character, cycling smoothly through Pinoy siesta dreams. */
 function DreamThoughtBubble({ active, position }) {
     const spriteRef = useRef();
     const activeIdxRef = useRef(0);
@@ -348,7 +427,7 @@ function DreamThoughtBubble({ active, position }) {
     useFrame(({ clock }) => {
         if (!active || !spriteRef.current) return;
         const t = clock.getElapsedTime();
-        const cycleDur = 5.4;
+        const cycleDur = 5.6;
         const idx = Math.floor(t / cycleDur) % textures.length;
         const phase = (t % cycleDur) / cycleDur;
 
@@ -358,21 +437,25 @@ function DreamThoughtBubble({ active, position }) {
             spriteRef.current.material.needsUpdate = true;
         }
 
-        // Gentle dreamy float + subtle pop when switching thoughts; scale up on portrait phones for crisp readability!
+        // Smooth fade transition between thoughts (zero jitter/glitch!) + gentle dreamy float
+        const alpha =
+            phase < 0.08 ? phase / 0.08 : phase > 0.9 ? (1 - phase) / 0.1 : 1;
+        spriteRef.current.material.opacity = Math.max(0, Math.min(1, alpha));
+
         const isPortrait = size.width < size.height;
-        const pop = phase < 0.08 ? 0.9 + (phase / 0.08) * 0.1 : phase > 0.92 ? 0.9 + ((1 - phase) / 0.08) * 0.1 : 1;
-        const bob = Math.sin(t * 1.9) * 0.08;
-        const yBoost = isPortrait ? 0.42 : 0;
-        spriteRef.current.position.set(position[0], position[1] + yBoost + bob, position[2]);
-        const h = (isPortrait ? 3.25 : 2.28) * pop;
-        spriteRef.current.scale.set(h * (960 / 370), h, 1);
+        const bob = Math.sin(t * 1.35) * 0.065;
+        const yBoost = isPortrait ? 0.28 : 0.1;
+        const xBoost = isPortrait ? 0.35 : 0;
+        spriteRef.current.position.set(position[0] + xBoost, position[1] + yBoost + bob, position[2]);
+        const h = isPortrait ? 2.68 : 2.34;
+        spriteRef.current.scale.set(h * (1024 / 480), h, 1);
     });
 
     if (!active) return null;
 
     return (
-        <sprite ref={spriteRef} position={position} renderOrder={12}>
-            <spriteMaterial map={textures[0]} transparent depthWrite={false} depthTest={false} />
+        <sprite ref={spriteRef} position={position} renderOrder={14}>
+            <spriteMaterial map={textures[0]} transparent opacity={1} depthWrite={false} depthTest={false} />
         </sprite>
     );
 }
@@ -488,6 +571,7 @@ export default function PahingahanNode({
     tourActive = false,
     guideActive = false,
     lowQuality = false,
+    playerPosRef,
     onSelectPahingahan,
 }) {
     const pendulumRef = useRef();
@@ -529,6 +613,7 @@ export default function PahingahanNode({
     const labelTitle = allCompleted ? `Pahingahan ni ${ownerName}` : 'Pahingahan';
 
     const handleClick = (e) => {
+        if (e.delta > 6) return;
         e.stopPropagation();
         onSelectPahingahan?.();
     };
@@ -556,45 +641,79 @@ export default function PahingahanNode({
                 />
             </mesh>
 
-            {/* Bagong Bahay Kubo ni Juan + Shady Acacia Trees + Banana Plants + Napping Askal */}
+            {/* Bagong Bahay Kubo ni Juan + Shady Acacia Trees + Banana Plants + Napping Askal (all camera-occlusion aware!) */}
             <PahingahanErrorBoundary>
                 <Suspense fallback={null}>
-                    <ClonedModel
-                        url="/models/kubo_bg.glb"
-                        position={[kx, 0, kz]}
-                        yaw={PAHINGAHAN_ZONE.kuboYaw}
-                        scale={2.15}
-                        castShadow={!lowQuality}
-                    />
-                    <ClonedModel
-                        url="/models/tree_acacia.glb"
-                        position={[tx, 0, tz]}
-                        yaw={1.15}
-                        scale={1.85}
-                        castShadow={!lowQuality}
-                    />
-                    {/* Always-visible lush trees & Pinoy banana plants behind and beside the Bahay Kubo */}
-                    <ClonedModel
-                        url="/models/tree_acacia.glb"
-                        position={[kx + 5.2, 0, kz - 1.4]}
-                        yaw={2.35}
-                        scale={1.88}
-                        castShadow={!lowQuality}
-                    />
-                    <ClonedModel
-                        url="/models/tree_banana.glb"
-                        position={[kx + 3.4, 0, kz + 2.5]}
-                        yaw={0.85}
-                        scale={1.36}
-                        castShadow={!lowQuality}
-                    />
-                    <ClonedModel
-                        url="/models/tree_banana.glb"
-                        position={[kx - 3.3, 0, kz - 1.6]}
-                        yaw={2.1}
-                        scale={1.26}
-                        castShadow={!lowQuality}
-                    />
+                    <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.55} lensMargin={1.8}>
+                        <ClonedModel
+                            url="/models/kubo_bg.glb"
+                            position={[kx, 0, kz]}
+                            yaw={PAHINGAHAN_ZONE.kuboYaw}
+                            scale={2.15}
+                            castShadow={!lowQuality}
+                        />
+                        {/* Warm Glowing Welcome Lantern near the Kubo porch */}
+                        <group position={[kx - 1.6, 2.75, kz + 2.3]}>
+                            <mesh position={[0, 0.35, 0]}>
+                                <cylinderGeometry args={[0.025, 0.025, 0.7, 6]} />
+                                <meshStandardMaterial color="#78350F" roughness={0.85} />
+                            </mesh>
+                            <mesh ref={lanternRef}>
+                                <sphereGeometry args={[0.24, 12, 10]} />
+                                <meshStandardMaterial
+                                    color={allCompleted ? '#FEF08A' : '#FDE68A'}
+                                    emissive="#F59E0B"
+                                    emissiveIntensity={allCompleted ? 1.15 : 0.45}
+                                    roughness={0.35}
+                                />
+                            </mesh>
+                            <mesh position={[0, 0.22, 0]}>
+                                <coneGeometry args={[0.32, 0.16, 6]} />
+                                <meshStandardMaterial color="#9A3412" roughness={0.8} />
+                            </mesh>
+                        </group>
+                    </CameraFadeGroup>
+
+                    <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.1} shrinkXZ={0.68} lensMargin={1.8}>
+                        <ClonedModel
+                            url="/models/tree_acacia.glb"
+                            position={[tx, 0, tz]}
+                            yaw={1.15}
+                            scale={1.85}
+                            castShadow={!lowQuality}
+                        />
+                    </CameraFadeGroup>
+
+                    <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.15} shrinkXZ={0.72} lensMargin={1.8}>
+                        <ClonedModel
+                            url="/models/tree_acacia.glb"
+                            position={[kx + 5.2, 0, kz - 1.4]}
+                            yaw={2.35}
+                            scale={1.88}
+                            castShadow={!lowQuality}
+                        />
+                    </CameraFadeGroup>
+
+                    <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.15} shrinkXZ={0.72} lensMargin={1.7}>
+                        <ClonedModel
+                            url="/models/tree_banana.glb"
+                            position={[kx + 3.4, 0, kz + 2.5]}
+                            yaw={0.85}
+                            scale={1.36}
+                            castShadow={!lowQuality}
+                        />
+                    </CameraFadeGroup>
+
+                    <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.15} shrinkXZ={0.72} lensMargin={1.7}>
+                        <ClonedModel
+                            url="/models/tree_banana.glb"
+                            position={[kx - 3.3, 0, kz - 1.6]}
+                            yaw={2.1}
+                            scale={1.26}
+                            castShadow={!lowQuality}
+                        />
+                    </CameraFadeGroup>
+
                     <ClonedModel
                         url="/models/askal_rest.glb"
                         position={[ax, 0, az]}
@@ -606,39 +725,24 @@ export default function PahingahanNode({
             </PahingahanErrorBoundary>
 
             {/* Cozy Flowering Backyard Plants (Halaman / Gumamela Bushes) framing the Bahay Kubo */}
-            <TropicalHalamanBush position={[kx + 2.4, 0, kz + 2.1]} scale={1.15} flowerColor="#EF4444" />
-            <TropicalHalamanBush position={[kx + 3.8, 0, kz + 0.3]} scale={0.95} flowerColor="#FB7185" />
-            <TropicalHalamanBush position={[kx - 2.9, 0, kz + 0.6]} scale={1.05} flowerColor="#F97316" />
-            <TropicalHalamanBush position={[kx + 0.4, 0, kz - 3.4]} scale={1.2} flowerColor="#EF4444" />
-
-            {/* Warm Glowing Welcome Lantern near the Kubo porch */}
-            <group position={[kx - 1.6, 2.75, kz + 2.3]}>
-                <mesh position={[0, 0.35, 0]}>
-                    <cylinderGeometry args={[0.025, 0.025, 0.7, 6]} />
-                    <meshStandardMaterial color="#78350F" roughness={0.85} />
-                </mesh>
-                <mesh ref={lanternRef}>
-                    <sphereGeometry args={[0.24, 12, 10]} />
-                    <meshStandardMaterial
-                        color={allCompleted ? '#FEF08A' : '#FDE68A'}
-                        emissive="#F59E0B"
-                        emissiveIntensity={allCompleted ? 1.15 : 0.45}
-                        roughness={0.35}
-                    />
-                </mesh>
-                <mesh position={[0, 0.22, 0]}>
-                    <coneGeometry args={[0.32, 0.16, 6]} />
-                    <meshStandardMaterial color="#9A3412" roughness={0.8} />
-                </mesh>
-            </group>
+            <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.35} lensMargin={1.4}>
+                <TropicalHalamanBush position={[kx + 2.4, 0, kz + 2.1]} scale={1.15} flowerColor="#EF4444" />
+                <TropicalHalamanBush position={[kx + 3.8, 0, kz + 0.3]} scale={0.95} flowerColor="#FB7185" />
+            </CameraFadeGroup>
+            <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.35} lensMargin={1.4}>
+                <TropicalHalamanBush position={[kx - 2.9, 0, kz + 0.6]} scale={1.05} flowerColor="#F97316" />
+                <TropicalHalamanBush position={[kx + 0.4, 0, kz - 3.4]} scale={1.2} flowerColor="#EF4444" />
+            </CameraFadeGroup>
 
             {/* Festive Pinoy Fiesta Banderitas strung from Bagong Bahay Kubo to the Acacia Shade Tree */}
-            <PahingahanBanderitas
-                from={[kx - 1.2, 4.6, kz + 1.4]}
-                to={[tx + 0.8, 4.4, tz + 0.4]}
-                done={allCompleted}
-                lowQuality={lowQuality}
-            />
+            <CameraFadeGroup playerPosRef={playerPosRef} tourActive={tourActive} pad={0.45} lensMargin={1.6}>
+                <PahingahanBanderitas
+                    from={[kx - 1.2, 4.6, kz + 1.4]}
+                    to={[tx + 0.8, 4.4, tz + 0.4]}
+                    done={allCompleted}
+                    lowQuality={lowQuality}
+                />
+            </CameraFadeGroup>
 
             {/* Procedural Woven Pinoy Duyan (Hammock) on Sturdy Bamboo Support Posts */}
             <group position={[hx, 0, hz]} rotation={[0, PAHINGAHAN_ZONE.hammockYaw, 0]}>
@@ -675,20 +779,20 @@ export default function PahingahanNode({
                 {/* Swinging Pendulum Group (Locked in 100% sync with resting Juan/Pedro!) */}
                 <group ref={pendulumRef} position={[0, anchorY, 0]}>
                     {/* Left & Right Abaca V-Suspension Ropes */}
-                    <RopeSegment from={[-halfSpan, 0, 0]} to={[-1.92, -0.58, -0.56]} />
-                    <RopeSegment from={[-halfSpan, 0, 0]} to={[-1.92, -0.58, 0.56]} />
+                    <RopeSegment from={[-halfSpan, 0, 0]} to={[-1.92, -0.58, -0.62]} />
+                    <RopeSegment from={[-halfSpan, 0, 0]} to={[-1.92, -0.58, 0.62]} />
                     <RopeSegment from={[-halfSpan, 0, 0]} to={[-1.92, -0.58, 0]} />
-                    <RopeSegment from={[halfSpan, 0, 0]} to={[1.92, -0.58, -0.56]} />
-                    <RopeSegment from={[halfSpan, 0, 0]} to={[1.92, -0.58, 0.56]} />
+                    <RopeSegment from={[halfSpan, 0, 0]} to={[1.92, -0.58, -0.62]} />
+                    <RopeSegment from={[halfSpan, 0, 0]} to={[1.92, -0.58, 0.62]} />
                     <RopeSegment from={[halfSpan, 0, 0]} to={[1.92, -0.58, 0]} />
 
                     {/* Twin Wooden Spreader Bars */}
                     <mesh position={[-1.92, -0.58, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow={!lowQuality}>
-                        <cylinderGeometry args={[0.048, 0.048, 1.24, 8]} />
+                        <cylinderGeometry args={[0.048, 0.048, 1.34, 8]} />
                         <meshStandardMaterial color="#7C4A22" roughness={0.82} />
                     </mesh>
                     <mesh position={[1.92, -0.58, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow={!lowQuality}>
-                        <cylinderGeometry args={[0.048, 0.048, 1.24, 8]} />
+                        <cylinderGeometry args={[0.048, 0.048, 1.34, 8]} />
                         <meshStandardMaterial color="#7C4A22" roughness={0.82} />
                     </mesh>
 
@@ -701,11 +805,11 @@ export default function PahingahanNode({
                         />
                     </mesh>
 
-                    {/* Cozy Stuffed Pillow (Unan) tucked neatly under Juan/Pedro's head */}
+                    {/* Cozy Stuffed Pillow (Unan) tucked neatly under the character's head */}
                     <mesh
-                        position={[-0.95, -0.94, 0]}
-                        rotation={[0, 0, -0.26]}
-                        scale={[0.42, 0.16, 0.48]}
+                        position={[-1.06, -1.04, 0]}
+                        rotation={[0, 0, -0.24]}
+                        scale={[0.42, 0.16, 0.5]}
                         castShadow={!lowQuality}
                     >
                         <sphereGeometry args={[1, 12, 10]} />
@@ -713,12 +817,12 @@ export default function PahingahanNode({
                     </mesh>
                 </group>
 
-                {/* Drifting Soft Zzz Sprites + Large Readable Dream Thought Bubble */}
-                <FloatingSleepZzz active={isResting && !tourActive && !guideActive} origin={[-1.25, 2.02, 0.15]} />
-                <DreamThoughtBubble active={isResting && !tourActive && !guideActive} position={[-0.22, 3.88, 0.4]} />
+                {/* Drifting Soft Zzz Sprites + Volumetric 3D Fluffy Cloud Thought Bubble */}
+                <FloatingSleepZzz active={isResting && !tourActive && !guideActive} origin={[-1.18, 2.08, 0.15]} />
+                <DreamThoughtBubble active={isResting && !tourActive && !guideActive} position={[-0.08, 4.02, 0.4]} />
             </group>
 
-            {/* Floating Name Tag neatly framed above the new Bahay Kubo */}
+            {/* Floating Name Tag neatly framed above the new Bahay Kubo (visible cleanly on portrait phones too!) */}
             {!tourActive && !guideActive && (
                 <MapLabelSprite
                     title={labelTitle}
@@ -726,8 +830,8 @@ export default function PahingahanNode({
                     score={0}
                     maxScore={0}
                     hideScore
-                    position={[kx - 0.4, 6.45, kz + 0.4]}
-                    height={0.96}
+                    position={[kx - 1.15, 6.25, kz + 0.55]}
+                    height={0.94}
                 />
             )}
         </group>

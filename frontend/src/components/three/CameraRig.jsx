@@ -48,18 +48,28 @@ function buildFlythroughWaypoints(aspect) {
     return [{ pos: overviewPos, look: overviewLook, mapIndex: 0 }, ...stopWaypoints];
 }
 
-function standPoint(mapNumber) {
+function standPoint(mapNumber, aspect = 1.5) {
     const stop = MAP_NODE_STOPS[mapNumber] || MAP_NODE_STOPS[1];
     if (mapNumber === PAHINGAHAN_STOP) {
-        return new THREE.Vector3(stop.x + 0.85, getWalkHeight(stop.x, stop.z) + 2.25, stop.z - 1.65);
+        // Center directly on Juan resting in the Duyan + his Kubo & Dream Cloud for both desktop & narrow portrait phones!
+        const isPortrait = aspect < 1;
+        return new THREE.Vector3(
+            stop.x + (isPortrait ? -0.15 : 0.15),
+            getWalkHeight(stop.x, stop.z) + (isPortrait ? 2.05 : 2.1),
+            stop.z - (isPortrait ? 1.05 : 1.25)
+        );
     }
     return new THREE.Vector3(stop.x, getWalkHeight(stop.x, stop.z) + 1.4, stop.z);
 }
 
 function cameraOffsetForStop(mapNumber, aspect) {
     if (mapNumber === PAHINGAHAN_STOP) {
-        const k = aspect >= 1 ? 1 : Math.min(1.88, 0.90 / Math.max(0.32, aspect));
-        return new THREE.Vector3(-4.4, 8.2, 16.4).multiplyScalar(Math.max(1, k));
+        if (aspect < 1) {
+            // Straight-on symmetric portrait framing so Juan, Duyan, Dream Cloud, and Bahay Kubo sit dead-center!
+            const k = Math.min(1.55, Math.max(1.05, 0.62 / Math.max(0.38, aspect)));
+            return new THREE.Vector3(-0.9, 8.2, 19.2).multiplyScalar(k);
+        }
+        return new THREE.Vector3(-2.4, 7.6, 15.6);
     }
     return cameraOffset(aspect);
 }
@@ -85,7 +95,7 @@ export default function CameraRig({
     const totalDuration = 14.5;
 
     const tourWaypoints = useMemo(() => {
-        const endLook = standPoint(startMapNumber);
+        const endLook = standPoint(startMapNumber, aspect);
         const endPos = endLook.clone().add(cameraOffset(aspect));
         return [...buildFlythroughWaypoints(aspect), { pos: endPos, look: endLook, mapIndex: 0 }];
     }, [aspect, startMapNumber]);
@@ -96,14 +106,14 @@ export default function CameraRig({
     useEffect(() => {
         if (!tourActive && guideStep === null && !isWalking && controlsRef?.current) {
             if (!snappedInitialRef.current) {
-                const p = standPoint(startMapNumber);
+                const p = standPoint(startMapNumber, aspect);
                 camera.position.copy(p).add(cameraOffsetForStop(startMapNumber, aspect));
                 controlsRef.current.target.copy(p);
                 controlsRef.current.update();
                 snappedInitialRef.current = true;
                 lastSnappedMapRef.current = startMapNumber;
             } else if (lastSnappedMapRef.current !== startMapNumber) {
-                const p = standPoint(startMapNumber);
+                const p = standPoint(startMapNumber, aspect);
                 const pos = p.clone().add(cameraOffsetForStop(startMapNumber, aspect));
                 if (startMapNumber === PAHINGAHAN_STOP) {
                     // Smooth scenic glide into the Pahingahan Kubo + Duyan view upon arrival
