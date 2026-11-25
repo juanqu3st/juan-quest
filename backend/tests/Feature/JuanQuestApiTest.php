@@ -245,14 +245,154 @@ class JuanQuestApiTest extends TestCase
             ->postJson("/api/v1/student/maps/{$map1->id}/start")
             ->assertOk();
 
+        // Mapa 1 (per-question): timeout immediately gives 0 pts & moves to next Q (NO heart lifeline on timeout!)
+        // Timeout all 10 questions -> exact 0 pts (NO 2-pt floor!), keeps all 3 hearts, unlocks Mapa 2
+        for ($q = 0; $q < 10; $q++) {
+            $res = $this->withToken($token)
+                ->postJson("/api/v1/student/maps/{$map1->id}/timeout")
+                ->assertOk()
+                ->assertJsonPath('awaiting_lifeline', false)
+                ->assertJsonPath('hearts_remaining', 3);
+
+            if ($q === 9) {
+                $res->assertJsonPath('level_ended', true)
+                    ->assertJsonPath('final_score', 0)
+                    ->assertJsonPath('current_map_number', 2);
+            } else {
+                $res->assertJsonPath('level_ended', false)
+                    ->assertJsonPath('question_timed_out', true);
+            }
+        }
+
+        // Mapa 2 (whole-map puzzle): timeout with 0 earned awards 2-pt minimum floor & unlocks Mapa 3
+        $map2 = Map::where('map_number', 2)->firstOrFail();
+        $this->withToken($token)->postJson("/api/v1/student/maps/{$map2->id}/start")->assertOk();
         $this->withToken($token)
-            ->postJson("/api/v1/student/maps/{$map1->id}/timeout")
+            ->postJson("/api/v1/student/maps/{$map2->id}/timeout")
             ->assertOk()
             ->assertJsonPath('level_ended', true)
             ->assertJsonPath('finish_reason', 'timeout')
             ->assertJsonPath('hearts_remaining', 0)
             ->assertJsonPath('final_score', 2)
-            ->assertJsonPath('current_map_number', 2);
+            ->assertJsonPath('current_map_number', 3);
+    }
+
+    public function test_timeout_preserves_earned_points_across_map1_map2_and_map3(): void
+    {
+        $join = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'JUAN7A',
+            'full_name' => 'Gabriela Silang',
+        ])->assertOk();
+
+        $token = $join->json('token');
+
+        // 1. Mapa 1 (1 pt/item, per-question): answer 3 right, timeout+skip remaining 7 -> exact 3 pts!
+        $map1 = Map::where('map_number', 1)->firstOrFail();
+        $m1Challenges = $map1->challenges()->orderBy('order_index')->get();
+
+        $this->withToken($token)->postJson("/api/v1/student/maps/{$map1->id}/start")->assertOk();
+        foreach ([0, 1, 2] as $i) {
+            $choice = $m1Challenges[$i]->correct_answer['choice'];
+            $this->withToken($token)
+                ->postJson("/api/v1/student/maps/{$map1->id}/submit", [
+                    'challenge_id' => $m1Challenges[$i]->id,
+                    'submission' => ['choice' => $choice],
+                    'elapsed_seconds' => 10 + $i,
+                ])
+                ->assertOk()
+                ->assertJsonPath('projected_score', $i + 1);
+        }
+
+        for ($q = 3; $q < 10; $q++) {
+            $res = $this->withToken($token)
+                ->postJson("/api/v1/student/maps/{$map1->id}/timeout", ['challenge_id' => $m1Challenges[$q]->id])
+                ->assertOk()
+                ->assertJsonPath('awaiting_lifeline', false);
+
+            if ($q === 9) {
+                $res->assertJsonPath('level_ended', true)
+                    ->assertJsonPath('final_score', 3)
+                    ->assertJsonPath('current_map_number', 2);
+            } else {
+                $res->assertJsonPath('level_ended', false)
+                    ->assertJsonPath('question_timed_out', true);
+            }
+        }
+
+        // 2. Mapa 2 (2 pts/slot, puzzle): 3 correct slots in partial draft on screen (2 null) -> timeout awards 6 pts!
+        $map2 = Map::where('map_number', 2)->firstOrFail();
+        $m2Challenge = $map2->challenges()->firstOrFail();
+        $correctOrder = $m2Challenge->correct_answer['order'];
+        $partialOrder = [$correctOrder[0], $correctOrder[1], $correctOrder[2], null, null];
+
+        $this->withToken($token)->postJson("/api/v1/student/maps/{$map2->id}/start")->assertOk();
+        $this->withToken($token)
+            ->postJson("/api/v1/student/maps/{$map2->id}/timeout", [
+                'submission' => ['order' => $partialOrder],
+            ])
+            ->assertOk()
+            ->assertJsonPath('final_score', 6)
+            ->assertJsonPath('current_map_number', 3);
+
+        // 3. Mapa 3 (2 pts/pair, puzzle): submit 3 correct + 2 wrong -> use 1 heart -> timeout MUST keep 6 pts!
+        $map3 = Map::where('map_number', 3)->firstOrFail();
+        $m3Challenge = $map3->challenges()->firstOrFail();
+        $correctPairs = $m3Challenge->correct_answer['pairs'];
+        $keys = array_keys($correctPairs);
+        $partialPairs = [
+            $keys[0] => $correctPairs[$keys[0]],
+            $keys[1] => $correctPairs[$keys[1]],
+            $keys[2] => $correctPairs[$keys[2]],
+            $keys[3] => $correctPairs[$keys[4]],
+            $keys[4] => $correctPairs[$keys[3]],
+        ];
+
+        $this->withToken($token)->postJson("/api/v1/student/maps/{$map3->id}/start")->assertOk();
+        $this->withToken($token)
+            ->postJson("/api/v1/student/maps/{$map3->id}/submit", [
+                'challenge_id' => $m3Challenge->id,
+                'submission' => ['pairs' => $partialPairs],
+                'elapsed_seconds' => 25,
+            ])
+            ->assertOk()
+            ->assertJsonPath('awaiting_lifeline', true)
+            ->assertJsonPath('projected_score', 6);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/student/maps/{$map3->id}/lifeline", ['action' => 'use_heart'])
+            ->assertOk()
+            ->assertJsonPath('hearts_remaining', 2)
+            ->assertJsonPath('projected_score', 6);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/student/maps/{$map3->id}/timeout")
+            ->assertOk()
+            ->assertJsonPath('final_score', 6)
+            ->assertJsonPath('current_map_number', 4);
+
+        // 4. Mapa 4 (4 Pics 1 Word, whole-map puzzle): solve 2 words (4 pts) -> whole-map timeout awards 4 pts!
+        $map4 = Map::where('map_number', 4)->firstOrFail();
+        $m4Challenges = $map4->challenges()->orderBy('order_index')->get();
+
+        $this->withToken($token)->postJson("/api/v1/student/maps/{$map4->id}/start")->assertOk();
+        foreach ([0, 1] as $i) {
+            $this->withToken($token)
+                ->postJson("/api/v1/student/maps/{$map4->id}/submit", [
+                    'challenge_id' => $m4Challenges[$i]->id,
+                    'submission' => ['word' => $m4Challenges[$i]->correct_answer['word']],
+                    'elapsed_seconds' => 15 + $i * 5,
+                ])
+                ->assertOk()
+                ->assertJsonPath('projected_score', ($i + 1) * 2);
+        }
+
+        $this->withToken($token)
+            ->postJson("/api/v1/student/maps/{$map4->id}/timeout")
+            ->assertOk()
+            ->assertJsonPath('level_ended', true)
+            ->assertJsonPath('finish_reason', 'timeout')
+            ->assertJsonPath('final_score', 4)
+            ->assertJsonPath('current_map_number', 5);
     }
 
     public function test_group_mode_auto_assigns_one_group_per_device_with_member_roster_and_waiting_gate(): void

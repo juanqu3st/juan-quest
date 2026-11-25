@@ -139,15 +139,17 @@ export const studentApi = {
             throw err;
         }
     },
-    timeoutMap: async (mapId) => {
-        if (isOfflineUser()) return timeoutOfflineMap(mapId);
+    timeoutMap: async (mapId, payload = null) => {
+        if (isOfflineUser()) return timeoutOfflineMap(mapId, payload);
         try {
-            const data = await axiosClient.post(`/student/maps/${mapId}/timeout`).then((r) => r.data);
+            const data = await axiosClient
+                .post(`/student/maps/${mapId}/timeout`, payload || {})
+                .then((r) => r.data);
             patchOnlineFailoverProgress(mapId, data);
             return data;
         } catch (err) {
             if (isNetworkDisconnectError(err) && activateMidGameOfflineFailover(mapId).activated) {
-                return timeoutOfflineMap(mapId);
+                return timeoutOfflineMap(mapId, payload);
             }
             throw err;
         }

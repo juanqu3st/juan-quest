@@ -148,7 +148,7 @@ function MapSettingsPanel({ map, onSaved, notify }) {
         remove_wrong_audio: false,
     });
 
-    const isPerQuestionMap = ['multiple_choice', 'four_pics', 'decision_quest'].includes(map.strategy_type);
+    const isPerQuestionMap = ['multiple_choice', 'decision_quest'].includes(map.strategy_type);
     const timerPresets = isPerQuestionMap ? PER_QUESTION_PRESETS : WHOLE_MAP_PRESETS;
 
     const handleSave = async (e) => {

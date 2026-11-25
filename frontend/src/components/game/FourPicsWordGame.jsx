@@ -179,7 +179,7 @@ export default function FourPicsWordGame({
                 </div>
 
                 {/* Classic 2-column (2x2) 4 Pics 1 Word grid */}
-                <div className="grid grid-cols-2 gap-2 sm:gap-2.5 max-w-[270px] sm:max-w-[350px] mx-auto">
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-3 w-full max-w-[348px] sm:max-w-[400px] mx-auto">
                     {[0, 1, 2, 3].map((slot) => {
                         const imgUrl = resolveStorageUrl(images[slot]);
                         const hint = visual_hints[slot] || `Larawan ${slot + 1}`;

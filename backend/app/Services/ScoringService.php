@@ -119,8 +119,8 @@ class ScoringService
             return $progress;
         }
 
-        $isWholeBoard = in_array($map->strategy_type, ['sequence', 'matching'], true);
-        $maxCap = $isWholeBoard
+        $isWholeTimer = ! $this->isPerQuestionTimedStrategy($map->strategy_type);
+        $maxCap = $isWholeTimer
             ? max(0, (int) $progress->time_limit_used - 1)
             : max(3600, (int) $progress->time_limit_used * 15);
 
@@ -206,7 +206,8 @@ class ScoringService
             ];
 
             $isBoardStrategy = in_array($map->strategy_type, ['sequence', 'matching'], true);
-            $maxTrackableSeconds = $isBoardStrategy
+            $isWholeTimer = ! $this->isPerQuestionTimedStrategy($map->strategy_type);
+            $maxTrackableSeconds = $isWholeTimer
                 ? (int) $progress->time_limit_used
                 : max((int) $progress->time_limit_used * max(1, $totalChallenges), 3600);
             $progress->time_taken_seconds = max(
@@ -272,6 +273,11 @@ class ScoringService
                 $ptsAtStake = $isBoardStrategy
                     ? max(0, (int) $map->perfect_score - $boardAttemptEarned)
                     : $this->pointsPerChallenge($map, $totalChallenges);
+
+                if ($isBoardStrategy) {
+                    $log['earned_points'] = $boardAttemptEarned;
+                    $progress->score = $boardAttemptEarned;
+                }
 
                 $log['pending_lifeline'] = [
                     'challenge_id' => $challenge->id,
@@ -407,6 +413,14 @@ class ScoringService
 
                 $progress->hearts_remaining = max(0, $progress->hearts_remaining - 1);
                 $progress->mistakes_count = $progress->mistakes_count + 1;
+                if ($isBoard) {
+                    $preserved = min(
+                        (int) $map->perfect_score,
+                        max((int) ($log['earned_points'] ?? 0), (int) ($pending['attempt_earned'] ?? 0))
+                    );
+                    $log['earned_points'] = $preserved;
+                    $progress->score = $preserved;
+                }
                 $log['pending_lifeline'] = null;
                 $log['events'][] = [
                     'challenge_id' => $pending['challenge_id'],
@@ -502,13 +516,21 @@ class ScoringService
     }
 
     /**
+     * @param  array<string, mixed>|null  $submission
      * @return array<string, mixed>
      */
-    public function handleTimeout(User $student, Map $map): array
+    public function handleTimeout(User $student, Map $map, ?array $submission = null, ?int $challengeId = null): array
     {
         $this->assertSessionActiveForStudent($student);
 
-        return DB::transaction(function () use ($student, $map) {
+        $cachedLesson = $this->getCachedLessonWorld($map->lesson_id);
+        $cachedMap = $cachedLesson?->maps?->firstWhere('id', $map->id);
+        $orderedChallenges = $cachedMap
+            ? $cachedMap->challenges->sortBy('order_index')->values()
+            : $map->challenges()->orderBy('order_index')->get();
+        $totalChallenges = $orderedChallenges->count();
+
+        return DB::transaction(function () use ($student, $map, $submission, $challengeId, $orderedChallenges, $totalChallenges) {
             $progress = StudentProgress::where('user_id', $student->id)
                 ->where('map_id', $map->id)
                 ->lockForUpdate()
@@ -522,23 +544,157 @@ class ScoringService
                 return $this->buildPayload($student, $map, $progress, false, 'Nakumpleto na ang mapang ito.', true, null, 'already_completed');
             }
 
-            $isBoardStrategy = in_array($map->strategy_type, ['sequence', 'matching'], true);
-            if ($isBoardStrategy) {
-                $progress->time_taken_seconds = max($progress->time_taken_seconds, $progress->time_limit_used);
-            } else {
+            $log = $progress->answers_log ?? [
+                'started_at' => now()->toIso8601String(),
+                'completed_challenge_ids' => [],
+                'failed_challenge_ids' => [],
+                'pending_lifeline' => null,
+                'earned_points' => 0,
+                'events' => [],
+            ];
+
+            // BRANCH A: Per-Question Timed Maps (Mapa 1 Multiple Choice & Mapa 5 Decision Quest)
+            // Timeout affects ONLY the active question (offers 1 Heart for fresh time; otherwise 0 pts & move on; NO 2-pt floor!)
+            if ($this->isPerQuestionTimedStrategy($map->strategy_type)) {
+                $completedIds = $log['completed_challenge_ids'] ?? [];
+                $failedIds = $log['failed_challenge_ids'] ?? [];
+                $resolvedIds = array_values(array_unique(array_merge($completedIds, $failedIds)));
+
+                if (! empty($log['pending_lifeline'])) {
+                    return $this->buildPayload(
+                        $student,
+                        $map,
+                        $progress,
+                        false,
+                        'Naubos na ang oras sa tanong na ito.',
+                        false,
+                        null,
+                        null,
+                        true
+                    );
+                }
+
+                $activeChallenge = null;
+                if ($challengeId !== null) {
+                    $candidate = $orderedChallenges->firstWhere('id', $challengeId);
+                    if ($candidate && ! in_array($candidate->id, $resolvedIds, true)) {
+                        $activeChallenge = $candidate;
+                    }
+                }
+                if (! $activeChallenge) {
+                    $activeChallenge = $orderedChallenges->first(
+                        fn ($c) => ! in_array($c->id, $resolvedIds, true)
+                    );
+                }
+
+                $ptsPerItem = $this->pointsPerChallenge($map, max(1, $totalChallenges));
+                $earnedPoints = min((int) $map->perfect_score, count($completedIds) * $ptsPerItem);
+                $log['earned_points'] = $earnedPoints;
+                $progress->score = $earnedPoints;
                 $progress->time_taken_seconds = max($progress->time_taken_seconds, 1);
+
+                if (! $activeChallenge) {
+                    $progress->answers_log = $log;
+                    $this->finalizeProgress($student, $map, $progress, 'completed');
+
+                    return $this->buildPayload(
+                        $student,
+                        $map,
+                        $progress,
+                        false,
+                        "Natapos na ang mapa. Naitala ang iyong {$progress->score} / {$map->perfect_score} puntos.",
+                        true,
+                        null,
+                        'completed'
+                    );
+                }
+
+                // Per-question timeout: Hearts are strictly for wrong answers ONLY -> immediate 0 pts & move to next question!
+                $progress->mistakes_count = $progress->mistakes_count + 1;
+                $failedIds[] = $activeChallenge->id;
+                $log['completed_challenge_ids'] = array_values(array_unique($completedIds));
+                $log['failed_challenge_ids'] = array_values(array_unique($failedIds));
+                $log['pending_lifeline'] = null;
+                $log['events'][] = [
+                    'challenge_id' => $activeChallenge->id,
+                    'is_correct' => false,
+                    'reason' => 'timeout',
+                    'at' => now()->toIso8601String(),
+                ];
+
+                $nextResolvedCount = count(array_unique(array_merge($log['completed_challenge_ids'], $log['failed_challenge_ids'])));
+                $allResolved = $nextResolvedCount >= max(1, $totalChallenges);
+                $progress->answers_log = $log;
+
+                if ($allResolved) {
+                    $this->finalizeProgress($student, $map, $progress, 'completed');
+
+                    return $this->buildPayload(
+                        $student,
+                        $map,
+                        $progress,
+                        false,
+                        "Natapos na ang mapa. Naitala ang iyong {$progress->score} / {$map->perfect_score} puntos.",
+                        true,
+                        null,
+                        'completed'
+                    );
+                }
+
+                $progress->save();
+
+                return array_merge(
+                    $this->buildPayload(
+                        $student,
+                        $map,
+                        $progress,
+                        false,
+                        'Naubos ang oras sa tanong na ito (0 pts). Diretso sa susunod na tanong.',
+                        false
+                    ),
+                    ['question_timed_out' => true]
+                );
             }
+
+            // BRANCH B: Whole-Map Puzzle Maps (Mapa 2 Sequence, Mapa 3 Matching, Mapa 4 Four Pics)
+            $isBoardStrategy = in_array($map->strategy_type, ['sequence', 'matching'], true);
+            $prevEarned = max(
+                (int) ($log['earned_points'] ?? 0),
+                (int) ($progress->score ?? 0),
+                (int) ($log['pending_lifeline']['attempt_earned'] ?? 0)
+            );
+
+            // Evaluate any unsubmitted partial board progress (Mapa 2 sequence / Mapa 3 matching) server-side
+            if ($isBoardStrategy && is_array($submission) && ! empty($submission)) {
+                $boardChallenge = $orderedChallenges->first();
+                if ($boardChallenge) {
+                    $partialCheck = $this->evaluator->evaluate($map->strategy_type, $boardChallenge, $submission);
+                    $prevEarned = min(
+                        (int) $map->perfect_score,
+                        max($prevEarned, (int) ($partialCheck['earned_points'] ?? 0))
+                    );
+                }
+            }
+
+            $log['earned_points'] = min((int) $map->perfect_score, max(0, $prevEarned));
+            $progress->score = $log['earned_points'];
+            $progress->answers_log = $log;
+            $progress->time_taken_seconds = max($progress->time_taken_seconds, $progress->time_limit_used);
             $progress->hearts_remaining = 0;
             $this->finalizeProgress($student, $map, $progress, 'timeout');
 
             $finalScore = (int) $progress->score;
+            $minFloor = $this->effectiveMinFloor($map);
+            $feedback = $log['earned_points'] > $minFloor
+                ? "Naubos na ang oras. Naitala ang iyong {$finalScore} / {$map->perfect_score} puntos mula sa mga tamang sagot upang makapagpatuloy."
+                : "Naubos na ang oras. Naitala ang iyong {$finalScore} puntos (minimum {$minFloor} pts) upang makapagpatuloy.";
 
             return $this->buildPayload(
                 $student,
                 $map,
                 $progress,
                 false,
-                "Naubos na ang oras. Naitala ang iyong {$finalScore} puntos (minimum {$map->min_floor_score} pts) upang makapagpatuloy.",
+                $feedback,
                 true,
                 null,
                 'timeout'
@@ -604,10 +760,23 @@ class ScoringService
         }
     }
 
+    private function isPerQuestionTimedStrategy(string $strategyType): bool
+    {
+        return in_array($strategyType, ['multiple_choice', 'decision_quest'], true);
+    }
+
+    private function effectiveMinFloor(Map $map): int
+    {
+        return $this->isPerQuestionTimedStrategy($map->strategy_type)
+            ? 0
+            : max(2, (int) $map->min_floor_score);
+    }
+
     private function finalizeProgress(User $student, Map $map, StudentProgress $progress, string $reason): void
     {
         $earned = (int) ($progress->answers_log['earned_points'] ?? $progress->score ?? 0);
-        $finalScore = min((int) $map->perfect_score, max((int) $map->min_floor_score, $earned));
+        $minFloor = $this->effectiveMinFloor($map);
+        $finalScore = min((int) $map->perfect_score, max($minFloor, $earned));
 
         $log = $progress->answers_log ?? [];
         $log['finish_reason'] = $reason;

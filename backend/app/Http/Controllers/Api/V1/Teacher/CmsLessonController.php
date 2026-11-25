@@ -32,6 +32,8 @@ class CmsLessonController extends Controller
                 'praise_audio_path' => $lesson->praise_audio_path,
                 'wrong_audio_path' => $lesson->wrong_audio_path,
                 'bgm_audio_path' => $lesson->bgm_audio_path,
+                'onboarding_voiceovers' => $lesson->onboarding_voiceovers,
+                'outro_voiceovers' => $lesson->outro_voiceovers,
                 'maps' => $lesson->maps->map(fn ($map) => [
                     'id' => $map->id,
                     'map_number' => $map->map_number,
@@ -112,6 +114,102 @@ class CmsLessonController extends Controller
             $bgmPath = $media->storeAudio($request->file('bgm_audio'), $bgmPath);
         }
 
+        // Preserve & selectively update custom Juan Osong intro voice-overs (Steps 0..4)
+        $onboarding = is_array($lesson->onboarding_voiceovers) ? array_values($lesson->onboarding_voiceovers) : [];
+        $hasOnboardingChange =
+            $request->has('onboarding_texts') ||
+            $request->has('remove_onboarding_audios') ||
+            $request->hasFile('onboarding_audios') ||
+            ! empty($request->file('onboarding_audios'));
+
+        if ($hasOnboardingChange) {
+            $removeIndices = collect($request->input('remove_onboarding_audios', []))
+                ->map(fn ($v) => (int) $v)
+                ->all();
+            $incomingTexts = $request->input('onboarding_texts');
+            $normalized = [];
+            $hasAnyCustom = false;
+
+            for ($idx = 0; $idx < 5; $idx++) {
+                $existing = is_array($onboarding[$idx] ?? null) ? $onboarding[$idx] : [];
+                $audioPath = $existing['audio_path'] ?? null;
+                $text = $existing['text'] ?? null;
+
+                if (in_array($idx, $removeIndices, true)) {
+                    $media->deletePublicPath($audioPath);
+                    $audioPath = null;
+                }
+
+                if ($request->hasFile("onboarding_audios.{$idx}")) {
+                    $audioPath = $media->storeAudio($request->file("onboarding_audios.{$idx}"), $audioPath);
+                }
+
+                if (is_array($incomingTexts) && array_key_exists($idx, $incomingTexts)) {
+                    $trimmed = trim((string) ($incomingTexts[$idx] ?? ''));
+                    $text = $trimmed !== '' ? $trimmed : null;
+                }
+
+                if ($audioPath !== null || $text !== null) {
+                    $hasAnyCustom = true;
+                }
+
+                $normalized[$idx] = [
+                    'audio_path' => $audioPath,
+                    'text' => $text,
+                ];
+            }
+
+            $onboarding = $hasAnyCustom ? $normalized : null;
+        }
+
+        // Preserve & selectively update custom Juan Osong outro voice-overs (Steps 0..3)
+        $outro = is_array($lesson->outro_voiceovers) ? array_values($lesson->outro_voiceovers) : [];
+        $hasOutroChange =
+            $request->has('outro_texts') ||
+            $request->has('remove_outro_audios') ||
+            $request->hasFile('outro_audios') ||
+            ! empty($request->file('outro_audios'));
+
+        if ($hasOutroChange) {
+            $removeOutroIndices = collect($request->input('remove_outro_audios', []))
+                ->map(fn ($v) => (int) $v)
+                ->all();
+            $incomingOutroTexts = $request->input('outro_texts');
+            $normalizedOutro = [];
+            $hasAnyOutroCustom = false;
+
+            for ($idx = 0; $idx < 4; $idx++) {
+                $existing = is_array($outro[$idx] ?? null) ? $outro[$idx] : [];
+                $audioPath = $existing['audio_path'] ?? null;
+                $text = $existing['text'] ?? null;
+
+                if (in_array($idx, $removeOutroIndices, true)) {
+                    $media->deletePublicPath($audioPath);
+                    $audioPath = null;
+                }
+
+                if ($request->hasFile("outro_audios.{$idx}")) {
+                    $audioPath = $media->storeAudio($request->file("outro_audios.{$idx}"), $audioPath);
+                }
+
+                if (is_array($incomingOutroTexts) && array_key_exists($idx, $incomingOutroTexts)) {
+                    $trimmed = trim((string) ($incomingOutroTexts[$idx] ?? ''));
+                    $text = $trimmed !== '' ? $trimmed : null;
+                }
+
+                if ($audioPath !== null || $text !== null) {
+                    $hasAnyOutroCustom = true;
+                }
+
+                $normalizedOutro[$idx] = [
+                    'audio_path' => $audioPath,
+                    'text' => $text,
+                ];
+            }
+
+            $outro = $hasAnyOutroCustom ? $normalizedOutro : null;
+        }
+
         $lesson->update([
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
@@ -122,6 +220,8 @@ class CmsLessonController extends Controller
             'praise_audio_path' => $praisePath,
             'wrong_audio_path' => $wrongPath,
             'bgm_audio_path' => $bgmPath,
+            'onboarding_voiceovers' => $onboarding,
+            'outro_voiceovers' => $outro,
         ]);
 
         $scoring->forgetLessonWorldCache($lesson->id);

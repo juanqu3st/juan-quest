@@ -67,6 +67,7 @@ export default function StudentWorldPage() {
     const [canvasPausedForUnlock, setCanvasPausedForUnlock] = useState(false);
     const [openedMapIds, setOpenedMapIds] = useState(() => new Set());
     const [resumePayload, setResumePayload] = useState(null);
+    const [outroOpen, setOutroOpen] = useState(false);
     const [completionOpen, setCompletionOpen] = useState(false);
     const [groupModalOpen, setGroupModalOpen] = useState(false);
     const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
@@ -260,6 +261,11 @@ export default function StudentWorldPage() {
         localStorage.setItem(guideSeenKey, '1');
     };
 
+    const finishOutro = () => {
+        setOutroOpen(false);
+        setCompletionOpen(true);
+    };
+
     const activeCharMeta = getCharacterMeta(user?.selected_character);
 
     const handleSwitchCharacter = async (char) => {
@@ -322,7 +328,7 @@ export default function StudentWorldPage() {
     }, [unlockingStage]);
 
     const handleEnterMap = (map, screenOrigin) => {
-        if (tourActive || guideOpen || activeStageMapId || unlockingStage || completionOpen || groupModalOpen) return;
+        if (tourActive || guideOpen || outroOpen || activeStageMapId || unlockingStage || completionOpen || groupModalOpen) return;
 
         const sessionStatus = world?.session?.status;
         if (sessionStatus === 'waiting') {
@@ -384,7 +390,7 @@ export default function StudentWorldPage() {
         const totalMapsCount = (data.maps || []).length;
         const allDone = totalMapsCount > 0 && (data.completed_count || 0) >= totalMapsCount;
         if (allDone || (totalMapsCount > 0 && finishedMapNumber >= totalMapsCount)) {
-            setCompletionOpen(true);
+            setOutroOpen(true);
             return;
         }
 
@@ -476,8 +482,8 @@ export default function StudentWorldPage() {
                 </div>
             )}
 
-            {/* Single-Row Responsive Top HUD (Hidden during tour & onboarding guide for clean framing) */}
-            {!guideOpen && !tourActive && (
+            {/* Single-Row Responsive Top HUD (Hidden during tour, intro & outro for clean framing) */}
+            {!guideOpen && !outroOpen && !tourActive && (
             <div className="pointer-events-none fixed top-0 inset-x-0 z-20 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-4 flex items-start justify-between gap-2">
                 {/* Left Dock: Identity + ONLY ONE Clickable Group Chip + Score */}
                 <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2 sm:gap-3 min-w-0 max-w-[calc(100%-148px)] sm:max-w-none">
@@ -669,7 +675,7 @@ export default function StudentWorldPage() {
                         Laktawan
                     </button>
                 ) : (
-                    !isWalking && !completionOpen && !guideOpen && (
+                    !isWalking && !completionOpen && !guideOpen && !outroOpen && (
                         <div className="pointer-events-auto w-full max-w-md sm:w-auto sm:max-w-xl bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-md rounded-2xl px-3.5 py-2 flex items-center justify-between sm:justify-center gap-3 text-xs">
                             <span className="inline-flex items-center gap-2 font-semibold text-stone-700 min-w-0">
                                 {isWaitingSession && (
@@ -762,6 +768,11 @@ export default function StudentWorldPage() {
                     initialResume={resumePayload}
                     onClose={handleCloseStage}
                     onStageFinished={handleStageFinished}
+                    onQuitSession={() => {
+                        clearStageResume(user?.id);
+                        setActiveStageMapId(null);
+                        logout();
+                    }}
                     onOfflineMapReset={async (resetAll) => {
                         clearStageResume(user?.id);
                         await loadWorld().catch(() => {});
@@ -786,9 +797,21 @@ export default function StudentWorldPage() {
             )}
 
             <StudentOnboardingGuide
-                open={guideOpen && !tourActive && !activeStageMap && !unlockingStage && !completionOpen && !logoutConfirmOpen}
+                key="juan-intro"
+                mode="intro"
+                open={guideOpen && !outroOpen && !tourActive && !activeStageMap && !unlockingStage && !completionOpen && !logoutConfirmOpen}
+                onboardingVoiceovers={world?.lesson?.onboarding_voiceovers}
                 onClose={finishGuide}
                 onStepChange={setGuideStep}
+            />
+
+            <StudentOnboardingGuide
+                key="juan-outro"
+                mode="outro"
+                open={outroOpen && !tourActive && !activeStageMap && !unlockingStage && !completionOpen && !logoutConfirmOpen}
+                outroVoiceovers={world?.lesson?.outro_voiceovers}
+                isOfflineMode={isOfflineMode}
+                onClose={finishOutro}
             />
 
             {/* Logout Confirmation Modal (Prevents accidental loss of offline progress or unsent Result QR) */}

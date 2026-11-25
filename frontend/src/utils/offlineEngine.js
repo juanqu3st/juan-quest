@@ -665,9 +665,9 @@ export async function syncOfflineMap(mapId, elapsed_seconds) {
     const p = state.progressByMapId[map.id];
     if (!p || p.is_completed) return { progress: formatProgressResource(map, p) };
 
-    const isBoard = ['sequence', 'matching'].includes(map.strategy_type);
+    const isWholeTimer = !isPerQuestionTimedStrategy(map.strategy_type);
     const totalCh = Math.max(1, (map.challenges || []).length);
-    const maxSec = isBoard ? p.time_limit_used : Math.max(p.time_limit_used * totalCh, 3600);
+    const maxSec = isWholeTimer ? Math.max(0, p.time_limit_used - 1) : Math.max(p.time_limit_used * totalCh, 3600);
     p.time_taken_seconds = Math.max(p.time_taken_seconds || 0, Math.min(maxSec, Math.max(0, Number(elapsed_seconds || 0))));
     saveOfflineState(state);
 
@@ -699,13 +699,15 @@ async function evaluateOfflineChallenge(strategyType, challenge, submission, sal
     }
 
     if (strategyType === 'sequence') {
-        const submittedOrder = (submission.order || []).map((v) => Number(v));
+        const submittedOrder = (submission.order || []).map((v) =>
+            v === null || v === undefined || v === '' ? null : Number(v)
+        );
         const slotHashes = ah.slot_hashes || {};
         const total = Number(ah.total || Object.keys(slotHashes).length);
         let correctPositions = 0;
 
         for (let i = 0; i < total; i += 1) {
-            if (submittedOrder[i] !== undefined) {
+            if (submittedOrder[i] !== undefined && submittedOrder[i] !== null && Number.isFinite(submittedOrder[i])) {
                 const digest = await sha256Hex(`${id}:seq:${i}:${submittedOrder[i]}:${salt}`);
                 if (digest === slotHashes[i] || digest === slotHashes[String(i)]) {
                     correctPositions += 1;
@@ -746,9 +748,17 @@ async function evaluateOfflineChallenge(strategyType, challenge, submission, sal
     return { is_correct: false, earned_points: 0 };
 }
 
+function isPerQuestionTimedStrategy(strategyType) {
+    return ['multiple_choice', 'decision_quest'].includes(strategyType);
+}
+
+function effectiveMinFloor(map) {
+    return isPerQuestionTimedStrategy(map?.strategy_type) ? 0 : Math.max(2, Number(map?.min_floor_score ?? 2));
+}
+
 function finalizeOfflineProgress(state, pack, map, p, reason) {
     const perfect = Number(map.perfect_score ?? 10);
-    const minFloor = Number(map.min_floor_score ?? 2);
+    const minFloor = effectiveMinFloor(map);
     const earned = Number(p.earned_points ?? p.score ?? 0);
     p.score = Math.min(perfect, Math.max(minFloor, earned));
     p.earned_points = p.score;
@@ -834,7 +844,8 @@ export async function submitOfflineChallenge(mapId, payload) {
 
     const totalChallenges = (map.challenges || []).length;
     const isBoard = ['sequence', 'matching'].includes(map.strategy_type);
-    const maxSec = isBoard ? p.time_limit_used : Math.max(p.time_limit_used * Math.max(1, totalChallenges), 3600);
+    const isWholeTimer = !isPerQuestionTimedStrategy(map.strategy_type);
+    const maxSec = isWholeTimer ? p.time_limit_used : Math.max(p.time_limit_used * Math.max(1, totalChallenges), 3600);
     p.time_taken_seconds = Math.max(
         p.time_taken_seconds || 0,
         Math.min(maxSec, Math.max(0, Number(payload.elapsed_seconds || 0)))
@@ -890,6 +901,10 @@ export async function submitOfflineChallenge(mapId, payload) {
         const ptsAtStake = isBoard
             ? Math.max(0, Number(map.perfect_score ?? 10) - boardAttemptEarned)
             : pointsPerChallenge(map, totalChallenges);
+        if (isBoard) {
+            p.earned_points = boardAttemptEarned;
+            p.score = boardAttemptEarned;
+        }
         p.pending_lifeline = {
             challenge_id: challenge.id,
             is_board: isBoard,
@@ -978,6 +993,14 @@ export async function resolveOfflineLifeline(mapId, action) {
         }
         p.hearts_remaining = Math.max(0, p.hearts_remaining - 1);
         p.mistakes_count = Number(p.mistakes_count || 0) + 1;
+        if (isBoard) {
+            const preserved = Math.min(
+                Number(map.perfect_score ?? 10),
+                Math.max(Number(p.earned_points || 0), attemptEarned)
+            );
+            p.earned_points = preserved;
+            p.score = preserved;
+        }
         p.pending_lifeline = null;
         saveOfflineState(state);
 
@@ -1049,7 +1072,7 @@ export async function resolveOfflineLifeline(mapId, action) {
     };
 }
 
-export async function timeoutOfflineMap(mapId) {
+export async function timeoutOfflineMap(mapId, payload = null) {
     const { pack, state, map } = getMapAndPack(mapId);
     if (!state.progressByMapId[map.id]) {
         await startOfflineMap(mapId);
@@ -1069,10 +1092,124 @@ export async function timeoutOfflineMap(mapId) {
         );
     }
 
+    const perfect = Number(map.perfect_score ?? 10);
+    const orderedChallenges = map.challenges || [];
+    const totalCh = Math.max(1, orderedChallenges.length);
+
+    // BRANCH A: Per-Question Timed Maps (Mapa 1 Multiple Choice & Mapa 5 Decision Quest)
+    if (isPerQuestionTimedStrategy(map.strategy_type)) {
+        if (p.pending_lifeline) {
+            return buildOfflineResponse(
+                freshState,
+                map,
+                p,
+                false,
+                'Naubos na ang oras sa tanong na ito.',
+                false,
+                null,
+                null,
+                true
+            );
+        }
+
+        const completedIds = p.completed_challenge_ids || [];
+        const failedIds = p.failed_challenge_ids || [];
+        const resolvedSet = new Set([...completedIds, ...failedIds].map(Number));
+
+        let activeChallenge = null;
+        if (payload?.challenge_id) {
+            const candidate = orderedChallenges.find((c) => Number(c.id) === Number(payload.challenge_id));
+            if (candidate && !resolvedSet.has(Number(candidate.id))) {
+                activeChallenge = candidate;
+            }
+        }
+        if (!activeChallenge) {
+            activeChallenge = orderedChallenges.find((c) => !resolvedSet.has(Number(c.id))) || null;
+        }
+
+        const ptsPerItem = pointsPerChallenge(map, totalCh);
+        const earnedPoints = Math.min(perfect, completedIds.length * ptsPerItem);
+        p.earned_points = earnedPoints;
+        p.score = earnedPoints;
+        p.time_taken_seconds = Math.max(Number(p.time_taken_seconds || 0), 1);
+
+        if (!activeChallenge) {
+            finalizeOfflineProgress(freshState, pack, map, p, 'completed');
+            saveOfflineState(freshState);
+            return buildOfflineResponse(
+                freshState,
+                map,
+                p,
+                false,
+                'Natapos na ang mapa at naitala na ang iyong resulta.',
+                true,
+                null,
+                'completed'
+            );
+        }
+
+        // Per-question timeout: Hearts are for wrong answers ONLY -> immediate 0 pts & advance to next question!
+        p.mistakes_count = Number(p.mistakes_count || 0) + 1;
+        const nextFailed = Array.from(new Set([...failedIds, activeChallenge.id]));
+        p.failed_challenge_ids = nextFailed;
+        p.pending_lifeline = null;
+
+        const nextResolvedCount = new Set([...completedIds, ...nextFailed]).size;
+        const allResolved = nextResolvedCount >= totalCh;
+
+        if (allResolved) {
+            finalizeOfflineProgress(freshState, pack, map, p, 'completed');
+            saveOfflineState(freshState);
+            return buildOfflineResponse(
+                freshState,
+                map,
+                p,
+                false,
+                'Natapos na ang lahat ng tanong. Naitala na ang iyong resulta!',
+                true,
+                null,
+                'completed'
+            );
+        }
+
+        saveOfflineState(freshState);
+        return {
+            ...buildOfflineResponse(
+                freshState,
+                map,
+                p,
+                false,
+                'Naubos ang oras sa tanong na ito (0 pts). Diretso sa susunod na tanong.',
+                false
+            ),
+            question_timed_out: true,
+        };
+    }
+
+    // BRANCH B: Whole-Map Puzzle Maps (Mapa 2 Sequence, Mapa 3 Matching, Mapa 4 Four Pics)
     const isBoard = ['sequence', 'matching'].includes(map.strategy_type);
-    const totalCh = Math.max(1, (map.challenges || []).length);
-    const maxSec = isBoard ? p.time_limit_used : Math.max(p.time_limit_used * totalCh, 3600);
-    p.time_taken_seconds = Math.min(maxSec, Math.max(p.time_taken_seconds || 0, p.time_limit_used));
+    let bestEarned = Math.max(
+        Number(p.earned_points || 0),
+        Number(p.score || 0),
+        Number(p.pending_lifeline?.attempt_earned || 0)
+    );
+
+    if (isBoard && payload?.submission) {
+        const boardChallenge = orderedChallenges[0];
+        if (boardChallenge) {
+            const partialCheck = await evaluateOfflineChallenge(
+                map.strategy_type,
+                boardChallenge,
+                payload.submission,
+                pack.pack_salt
+            );
+            bestEarned = Math.min(perfect, Math.max(bestEarned, Number(partialCheck.earned_points || 0)));
+        }
+    }
+
+    p.earned_points = Math.min(perfect, Math.max(0, bestEarned));
+    p.score = p.earned_points;
+    p.time_taken_seconds = Math.min(p.time_limit_used, Math.max(p.time_taken_seconds || 0, p.time_limit_used));
     p.hearts_remaining = 0;
 
     finalizeOfflineProgress(freshState, pack, map, p, 'timeout');

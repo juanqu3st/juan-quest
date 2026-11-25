@@ -78,7 +78,19 @@ class GameplayController extends Controller
 
     public function timeout(Request $request, Map $map, ScoringService $scoring): JsonResponse
     {
-        return response()->json($scoring->handleTimeout($request->user(), $map));
+        $validated = $request->validate([
+            'submission' => ['nullable', 'array'],
+            'challenge_id' => ['nullable', 'integer'],
+        ]);
+
+        return response()->json(
+            $scoring->handleTimeout(
+                $request->user(),
+                $map,
+                $validated['submission'] ?? null,
+                isset($validated['challenge_id']) ? (int) $validated['challenge_id'] : null
+            )
+        );
     }
 
     public function updateCharacter(UpdateCharacterRequest $request): JsonResponse

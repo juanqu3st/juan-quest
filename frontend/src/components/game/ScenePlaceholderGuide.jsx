@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Captions, Play, Volume2 } from 'lucide-react';
-import { resolveMediaUrl, resolveStorageUrl } from '../../api/axiosClient';
+import { ArrowLeft, ArrowRight, Captions, Maximize2, Minimize2, Pause, Play } from 'lucide-react';
+import { resolveMediaUrl } from '../../api/axiosClient';
 import { resolveCachedAudioUrl, resolveCachedVideoUrl } from '../../utils/videoCache';
+import { getAudioVolume } from '../../utils/gameAudio';
 import { buildTimedCues, buildWebVttText, splitDialogue } from '../../utils/subtitleCues';
+
+function formatVideoClock(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    const m = Math.floor(s / 60);
+    const r = String(s % 60).padStart(2, '0');
+    return `${m}:${r}`;
+}
 
 function parseClockSec(str) {
     const m = String(str || '').trim().match(/^(\d+):(\d{1,2})$/);
@@ -62,12 +70,15 @@ export default function ScenePlaceholderGuide({
     onSceneIdxChange,
     onContinue,
 }) {
+    const playerBoxRef = useRef(null);
     const videoRef = useRef(null);
     const wholeAudioRef = useRef(null);
     const scenePlayersRef = useRef({});
     const activeSceneAudioIdxRef = useRef(-1);
     const customAudioActiveRef = useRef(false);
     const unlockedPlayersRef = useRef(false);
+    const controlsHideTimerRef = useRef(null);
+    const masterVolRef = useRef(getAudioVolume());
 
     const sourceType = lesson?.video_source_type || 'placeholder';
     const rawMapVideoUrl = resolveMediaUrl(map?.story_video_path);
@@ -87,6 +98,10 @@ export default function ScenePlaceholderGuide({
     const [videoUnavailableOffline, setVideoUnavailableOffline] = useState(false);
     const [showCaptions, setShowCaptions] = useState(true);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isBoxFullscreen, setIsBoxFullscreen] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [controlsVisible, setControlsVisible] = useState(true);
+    const [duration, setDuration] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
 
     // Line-by-line timed cues (for crisp bottom-center overlay + native WebVTT fullscreen track)
@@ -107,27 +122,64 @@ export default function ScenePlaceholderGuide({
         };
     }, [timedCues]);
 
-    // Track fullscreen transitions so native <track> shows ONLY in fullscreen (preventing duplicate captions)
+    // Track fullscreen transitions (container fullscreen keeps our crisp YouTube-style overlay; native iOS fallback uses WebVTT track)
     useEffect(() => {
         const syncFs = () => {
             const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
             setIsFullscreen(Boolean(fsEl));
+            setIsBoxFullscreen(Boolean(fsEl && playerBoxRef.current && fsEl === playerBoxRef.current));
         };
         document.addEventListener('fullscreenchange', syncFs);
         document.addEventListener('webkitfullscreenchange', syncFs);
         return () => {
             document.removeEventListener('fullscreenchange', syncFs);
             document.removeEventListener('webkitfullscreenchange', syncFs);
+            clearTimeout(controlsHideTimerRef.current);
         };
     }, []);
 
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !video.textTracks || video.textTracks.length === 0) return;
+        const useNativeTrack = isFullscreen && !isBoxFullscreen && showCaptions;
         for (let i = 0; i < video.textTracks.length; i += 1) {
-            video.textTracks[i].mode = isFullscreen && showCaptions ? 'showing' : 'hidden';
+            video.textTracks[i].mode = useNativeTrack ? 'showing' : 'hidden';
         }
-    }, [isFullscreen, showCaptions, vttTrackUrl, cachedVideoSrc]);
+    }, [isFullscreen, isBoxFullscreen, showCaptions, vttTrackUrl, cachedVideoSrc]);
+
+    // Sync live Settings volume slider immediately to video & Teacher VO tracks (with zero visible mute icon!)
+    useEffect(() => {
+        const applyVol = (v) => {
+            const vol = Math.max(0, Math.min(1, Number(v)));
+            masterVolRef.current = vol;
+            const video = videoRef.current;
+            if (video) {
+                video.volume = vol;
+                video.muted = customAudioActiveRef.current ? true : vol <= 0;
+            }
+            if (wholeAudioRef.current) {
+                wholeAudioRef.current.volume = vol;
+                wholeAudioRef.current.muted = vol <= 0;
+            }
+            Object.values(scenePlayersRef.current).forEach((el) => {
+                if (!el) return;
+                el.volume = vol;
+                el.muted = vol <= 0;
+            });
+        };
+        applyVol(getAudioVolume());
+        const onVolEvt = (e) => applyVol(e.detail);
+        window.addEventListener('juanquest:volume-change', onVolEvt);
+        return () => window.removeEventListener('juanquest:volume-change', onVolEvt);
+    }, [cachedVideoSrc]);
+
+    const scheduleControlsAutoHide = (playingNow = true) => {
+        clearTimeout(controlsHideTimerRef.current);
+        if (!playingNow) return;
+        controlsHideTimerRef.current = setTimeout(() => {
+            setControlsVisible(false);
+        }, 2500);
+    };
 
     const safeInitial = Math.min(Math.max(0, initialSceneIdx || 0), Math.max(0, timedScenes.length - 1));
     const [idx, setIdx] = useState(safeInitial);
@@ -302,7 +354,9 @@ export default function ScenePlaceholderGuide({
             if (!a) return;
             customAudioActiveRef.current = true;
             video.muted = true;
-            a.volume = video.volume;
+            const vol = masterVolRef.current;
+            a.volume = vol;
+            a.muted = vol <= 0;
             const desired = t - wholeVoiceoverOffset;
             if (desired < 0) {
                 if (!a.paused) a.pause();
@@ -328,11 +382,13 @@ export default function ScenePlaceholderGuide({
             const sceneIdx = timedScenes.findIndex((s) => t >= s._start && t < s._end);
             const activeScene = sceneIdx >= 0 ? timedScenes[sceneIdx] : null;
             const player = sceneIdx >= 0 ? scenePlayersRef.current[sceneIdx] || null : null;
+            const vol = masterVolRef.current;
 
             if (!activeScene || !player) {
                 customAudioActiveRef.current = false;
                 pauseAllScenePlayers(-1);
-                video.muted = false;
+                video.volume = vol;
+                video.muted = vol <= 0;
                 if (fromPlayGesture) unlockUpcomingScenePlayers(-1);
                 return;
             }
@@ -341,8 +397,8 @@ export default function ScenePlaceholderGuide({
             video.muted = true;
             pauseAllScenePlayers(sceneIdx);
             activeSceneAudioIdxRef.current = sceneIdx;
-            player.muted = false;
-            player.volume = video.volume;
+            player.muted = vol <= 0;
+            player.volume = vol;
 
             if (fromPlayGesture) unlockUpcomingScenePlayers(sceneIdx);
 
@@ -380,15 +436,31 @@ export default function ScenePlaceholderGuide({
             }
         };
 
+        const onLoadedMetadata = () => {
+            if (Number.isFinite(video.duration)) setDuration(video.duration);
+            const vol = masterVolRef.current;
+            video.volume = vol;
+            video.muted = customAudioActiveRef.current ? true : vol <= 0;
+        };
+
         const onPlay = () => {
+            setIsPlaying(true);
+            scheduleControlsAutoHide(true);
             if (useWholeVoiceover && wholeAudioRef.current) {
                 syncWhole(video.currentTime, true);
             } else if (usePerSceneVoiceover) {
                 syncPerScene(video.currentTime, true, true);
+            } else {
+                const vol = masterVolRef.current;
+                video.volume = vol;
+                video.muted = vol <= 0;
             }
         };
 
         const onPause = () => {
+            setIsPlaying(false);
+            clearTimeout(controlsHideTimerRef.current);
+            setControlsVisible(true);
             stopWholeAudio();
             pauseAllScenePlayers(-1);
         };
@@ -405,6 +477,9 @@ export default function ScenePlaceholderGuide({
         const onTimeUpdate = () => {
             const t = video.currentTime;
             setCurrentTime(t);
+            if (Number.isFinite(video.duration) && video.duration > 0) {
+                setDuration((d) => (d === video.duration ? d : video.duration));
+            }
             if (useWholeVoiceover && wholeAudioRef.current && !video.paused) {
                 syncWhole(t, true);
             } else if (usePerSceneVoiceover && !video.paused) {
@@ -412,37 +487,32 @@ export default function ScenePlaceholderGuide({
             }
         };
 
-        const onVolumeChange = () => {
-            const vol = video.volume;
-            if (wholeAudioRef.current) wholeAudioRef.current.volume = vol;
-            Object.values(scenePlayersRef.current).forEach((el) => {
-                if (el) el.volume = vol;
-            });
-            // Prevent old AI voice from bleeding through if student clicks native unmute while Teacher VO is active
-            if (customAudioActiveRef.current && !video.muted) {
-                video.muted = true;
-            }
-        };
-
         const onEnded = () => {
+            setIsPlaying(false);
+            clearTimeout(controlsHideTimerRef.current);
+            setControlsVisible(true);
             stopWholeAudio();
             pauseAllScenePlayers(-1);
         };
 
+        if (video.readyState >= 1 && Number.isFinite(video.duration)) {
+            setDuration(video.duration);
+        }
+
+        video.addEventListener('loadedmetadata', onLoadedMetadata);
         video.addEventListener('play', onPlay);
         video.addEventListener('pause', onPause);
         video.addEventListener('seeked', onSeeked);
         video.addEventListener('timeupdate', onTimeUpdate);
-        video.addEventListener('volumechange', onVolumeChange);
         video.addEventListener('ended', onEnded);
 
         return () => {
             cancelled = true;
+            video.removeEventListener('loadedmetadata', onLoadedMetadata);
             video.removeEventListener('play', onPlay);
             video.removeEventListener('pause', onPause);
             video.removeEventListener('seeked', onSeeked);
             video.removeEventListener('timeupdate', onTimeUpdate);
-            video.removeEventListener('volumechange', onVolumeChange);
             video.removeEventListener('ended', onEnded);
             stopWholeAudio();
             if (wholeAudioRef.current) {
@@ -507,16 +577,72 @@ export default function ScenePlaceholderGuide({
         </button>
     );
 
-    // 1. Built-in 3D Animated Story MP4 Player (with modern YouTube-style in-video subtitles!)
+    // 1. Built-in 3D Animated Story MP4 Player (Clean YouTube-Style Controls, Zero Mute Icon, Dynamic Subtitles!)
     if (hasMapVideo) {
         const activeCue = timedCues.find((c) => currentTime >= c.start && currentTime <= c.end) || null;
+        const showControlsNow = controlsVisible || !isPlaying;
+        const progressPct = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+        const handleTogglePlay = () => {
+            const video = videoRef.current;
+            if (!video) return;
+            if (video.paused || video.ended) {
+                setControlsVisible(true);
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+        };
+
+        const handleVideoTap = () => {
+            const video = videoRef.current;
+            if (!video) return;
+            if (video.paused || video.ended) {
+                setControlsVisible(true);
+                video.play().catch(() => {});
+                return;
+            }
+            setControlsVisible((prev) => {
+                const next = !prev;
+                if (next) scheduleControlsAutoHide(true);
+                else clearTimeout(controlsHideTimerRef.current);
+                return next;
+            });
+        };
+
+        const handleSeekInput = (e) => {
+            const video = videoRef.current;
+            if (!video || duration <= 0) return;
+            const nextSec = Number(e.target.value);
+            if (!Number.isFinite(nextSec)) return;
+            video.currentTime = nextSec;
+            setCurrentTime(nextSec);
+            if (!video.paused) scheduleControlsAutoHide(true);
+        };
+
+        const handleToggleFullscreen = (e) => {
+            e.stopPropagation();
+            const box = playerBoxRef.current;
+            const video = videoRef.current;
+            const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+            if (fsEl) {
+                (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+                return;
+            }
+            if (box?.requestFullscreen) {
+                box.requestFullscreen().catch(() => {});
+            } else if (box?.webkitRequestFullscreen) {
+                box.webkitRequestFullscreen();
+            } else if (video?.webkitEnterFullscreen) {
+                video.webkitEnterFullscreen();
+            }
+        };
 
         return (
             <div className="max-w-3xl mx-auto w-full flex-1 flex flex-col justify-between gap-4">
                 <div className="my-auto space-y-3.5">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500">
-                        <span className="inline-flex items-center gap-1.5 font-medium">
-                            <Volume2 className="w-3.5 h-3.5 text-[#C2410C]" />
+                        <span className="font-medium text-stone-600">
                             {useWholeVoiceover
                                 ? 'Boses ng Guro (Buong Mapa)'
                                 : usePerSceneVoiceover
@@ -537,37 +663,79 @@ export default function ScenePlaceholderGuide({
                         </button>
                     </div>
 
-                    {/* Video container with modern YouTube-style bottom-center translucent caption overlay */}
-                    <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-stone-950 border border-stone-200">
+                    {/* Clean YouTube-Style Video Container: Tap video to show/hide controls, subtitles glide smoothly in sync! */}
+                    <div
+                        ref={playerBoxRef}
+                        onClick={handleVideoTap}
+                        onMouseMove={() => {
+                            if (isPlaying) {
+                                setControlsVisible(true);
+                                scheduleControlsAutoHide(true);
+                            }
+                        }}
+                        className={`relative w-full aspect-video overflow-hidden bg-stone-950 select-none cursor-pointer ${
+                            isBoxFullscreen ? 'rounded-none border-0' : 'rounded-2xl border border-stone-200'
+                        }`}
+                    >
                         {resolvingOfflineVideo ? (
                             <div className="w-full h-full flex items-center justify-center text-xs font-medium text-stone-300">
                                 Inihahanda ang video...
                             </div>
                         ) : (
-                        <video
-                            key={rawMapVideoUrl || 'map-video'}
-                            ref={videoRef}
-                            src={cachedVideoSrc || rawMapVideoUrl}
-                            controls
-                            playsInline
-                            preload="auto"
-                            className="w-full h-full object-contain"
-                        >
-                            {vttTrackUrl && (
-                                <track
-                                    kind="subtitles"
-                                    label="Filipino"
-                                    srcLang="fil"
-                                    src={vttTrackUrl}
-                                    default={false}
-                                />
-                            )}
-                        </video>
+                            <video
+                                key={rawMapVideoUrl || 'map-video'}
+                                ref={videoRef}
+                                src={cachedVideoSrc || rawMapVideoUrl}
+                                playsInline
+                                preload="auto"
+                                className="w-full h-full object-contain"
+                            >
+                                {vttTrackUrl && (
+                                    <track
+                                        kind="subtitles"
+                                        label="Filipino"
+                                        srcLang="fil"
+                                        src={vttTrackUrl}
+                                        default={false}
+                                    />
+                                )}
+                            </video>
                         )}
 
-                        {/* Modern bottom-center in-video subtitle (Pure white text, cleared above mobile controls bar!) */}
-                        {showCaptions && !isFullscreen && (
-                            <div className="pointer-events-none absolute inset-x-2.5 sm:inset-x-6 bottom-14 sm:bottom-12 z-10 flex justify-center">
+                        {/* Center Play / Pause Button (Auto-hides cleanly while watching!) */}
+                        {!resolvingOfflineVideo && (
+                            <div
+                                className={`absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-200 ${
+                                    showControlsNow
+                                        ? 'opacity-100 bg-black/20'
+                                        : 'opacity-0 pointer-events-none'
+                                }`}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleTogglePlay();
+                                    }}
+                                    aria-label={isPlaying ? 'I-pause ang video' : 'I-play ang video'}
+                                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/60 hover:bg-black/75 active:scale-95 text-white flex items-center justify-center shadow-lg transition cursor-pointer"
+                                >
+                                    {isPlaying ? (
+                                        <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
+                                    ) : (
+                                        <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
+                                    )}
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Dynamic YouTube-Style Subtitles: glides down when focused on playing, lifts cleanly when controls show! */}
+                        {showCaptions && (!isFullscreen || isBoxFullscreen) && (
+                            <div
+                                className={`pointer-events-none absolute inset-x-3 sm:inset-x-8 z-20 flex justify-center transition-[bottom] duration-300 ease-out ${
+                                    showControlsNow ? 'bottom-12 sm:bottom-14' : 'bottom-3 sm:bottom-5'
+                                }`}
+                            >
                                 <AnimatePresence mode="wait">
                                     {activeCue && (
                                         <motion.div
@@ -579,10 +747,12 @@ export default function ScenePlaceholderGuide({
                                             className="max-w-[94%] sm:max-w-[84%] bg-transparent p-0 text-center select-none"
                                         >
                                             <p
-                                                className="text-xs sm:text-[17px] font-bold text-white leading-relaxed tracking-normal"
+                                                className={`${
+                                                    isBoxFullscreen ? 'text-base sm:text-2xl' : 'text-xs sm:text-[17px]'
+                                                } font-bold text-white leading-relaxed tracking-normal`}
                                                 style={{
                                                     textShadow:
-                                                        '0 1px 3px rgba(0, 0, 0, 0.9), 0 2px 8px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9)',
+                                                        '0 1px 3px rgba(0, 0, 0, 0.92), 0 2px 8px rgba(0, 0, 0, 0.78), 0 0 1px rgba(0, 0, 0, 0.92)',
                                                 }}
                                             >
                                                 {activeCue.who && (
@@ -595,6 +765,55 @@ export default function ScenePlaceholderGuide({
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
+                            </div>
+                        )}
+
+                        {/* Minimal YouTube-Style Bottom Bar (Time + Scrubber + Fullscreen ONLY — ZERO Mute Icon!) */}
+                        {!resolvingOfflineVideo && (
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute inset-x-0 bottom-0 z-20 px-3 sm:px-4 pt-6 pb-2.5 flex items-center gap-2.5 sm:gap-3 text-white transition-opacity duration-200 ${
+                                    showControlsNow ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                }`}
+                                style={{
+                                    background: 'linear-gradient(to top, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0) 100%)',
+                                }}
+                            >
+                                <span className="text-[11px] sm:text-xs font-semibold tabular-nums shrink-0">
+                                    {formatVideoClock(currentTime)} / {formatVideoClock(duration)}
+                                </span>
+
+                                <div className="relative flex-1 h-5 flex items-center">
+                                    <div className="w-full h-1.5 rounded-full bg-white/30 overflow-hidden">
+                                        <div
+                                            className="h-full bg-[#EA580C] rounded-full"
+                                            style={{ width: `${progressPct}%` }}
+                                        />
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min={0}
+                                        max={duration || 0}
+                                        step={0.1}
+                                        value={Math.min(currentTime, duration || 0)}
+                                        onChange={handleSeekInput}
+                                        aria-label="Oras ng video"
+                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                    />
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={handleToggleFullscreen}
+                                    aria-label={isBoxFullscreen ? 'Lumabas sa fullscreen' : 'Fullscreen'}
+                                    className="w-8 h-8 rounded-lg hover:bg-white/15 inline-flex items-center justify-center shrink-0 cursor-pointer transition"
+                                >
+                                    {isBoxFullscreen ? (
+                                        <Minimize2 className="w-4 h-4" />
+                                    ) : (
+                                        <Maximize2 className="w-4 h-4" />
+                                    )}
+                                </button>
                             </div>
                         )}
                     </div>

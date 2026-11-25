@@ -45,6 +45,17 @@ class OfflinePackController extends Controller
         $addUnique($audio, $lesson->wrong_audio_path);
         $addUnique($audio, $lesson->bgm_audio_path);
 
+        foreach ((array) ($lesson->onboarding_voiceovers ?? []) as $stepVo) {
+            if (is_array($stepVo) && ! empty($stepVo['audio_path'])) {
+                $addUnique($audio, $stepVo['audio_path']);
+            }
+        }
+        foreach ((array) ($lesson->outro_voiceovers ?? []) as $stepVo) {
+            if (is_array($stepVo) && ! empty($stepVo['audio_path'])) {
+                $addUnique($audio, $stepVo['audio_path']);
+            }
+        }
+
         $mapsPayload = $lesson->maps->sortBy('map_number')->values()->map(function ($map) use (
             $packSalt,
             &$videos,

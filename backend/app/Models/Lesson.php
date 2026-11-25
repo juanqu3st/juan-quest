@@ -20,12 +20,16 @@ class Lesson extends Model
         'praise_audio_path',
         'wrong_audio_path',
         'bgm_audio_path',
+        'onboarding_voiceovers',
+        'outro_voiceovers',
         'is_active',
     ];
 
     protected function casts(): array
     {
         return [
+            'onboarding_voiceovers' => 'array',
+            'outro_voiceovers' => 'array',
             'is_active' => 'boolean',
         ];
     }

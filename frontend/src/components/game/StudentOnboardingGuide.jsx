@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowUpRight,
     BookOpen,
@@ -6,14 +6,23 @@ import {
     ChevronLeft,
     ChevronRight,
     Clock,
+    Compass,
     Heart,
+    Lightbulb,
     MapPin,
     Play,
+    QrCode,
     RotateCcw,
+    Trophy,
     Volume2,
     VolumeX,
 } from 'lucide-react';
+import { resolveMediaUrl } from '../../api/axiosClient';
+import { getAudioVolume, playVictoryFanfare } from '../../utils/gameAudio';
+import { resolveJuanIntroSteps, resolveJuanOutroSteps } from '../../utils/juanIntroDefaults';
+import { resolveCachedAudioUrl } from '../../utils/videoCache';
 import JuanGuide3D from '../three/JuanGuide3D';
+import VictoryConfettiCanvas from './VictoryConfettiCanvas';
 
 let sharedAudioCtx = null;
 function getSharedAudioCtx() {
@@ -51,49 +60,6 @@ const FIVE_MAP_BUILDINGS = [
     { num: 3, shortTitle: 'Ang Kariton', img: '/images/tutorial/map3_3d.png' },
     { num: 4, shortTitle: 'Pinto at Palakol', img: '/images/tutorial/map4_3d.png' },
     { num: 5, shortTitle: 'Magnanakaw', img: '/images/tutorial/map5_3d.png' },
-];
-
-const TUTORIAL_STEPS = [
-    {
-        id: 1,
-        subtitle: 'Maligayang Pagdating',
-        audio: '/audio/tutorial/step1.mp3',
-        text: 'Uy, buti nakarating ka! Ako si Juan Osong. Tara, sasamahan kita sa laro natin ngayon!',
-        visual: 'welcome',
-        cta: 'Susunod',
-    },
-    {
-        id: 2,
-        subtitle: 'Mga Mapa at Iskor',
-        audio: '/audio/tutorial/step2.mp3',
-        text: 'May limang mapa tayong dadaanan dito. Sampung puntos bawat isa, kaya pwedeng umabot ng singkwenta ang iskor mo!',
-        visual: 'maps',
-        cta: 'Susunod',
-    },
-    {
-        id: 3,
-        subtitle: 'Paano Maglaro',
-        audio: '/audio/tutorial/step3.mp3',
-        text: 'Simple lang ang gagawin sa bawat mapa. Panoorin muna ang maikling video, basahin ang panuto, tapos sagutin ang mga tanong.',
-        visual: 'flow',
-        cta: 'Susunod',
-    },
-    {
-        id: 4,
-        subtitle: 'Mga Puso at Oras',
-        audio: '/audio/tutorial/step4.mp3',
-        text: 'May tatlong puso ka sa bawat mapa bilang taga-ligtas. Kapag nagkamali ka, pwede kang gumamit ng isang puso para sumagot muli at makaiwas sa bawas ng puntos. Bantayan din ang oras!',
-        visual: 'hearts',
-        cta: 'Susunod',
-    },
-    {
-        id: 5,
-        subtitle: 'Handa na sa Hamon',
-        audio: '/audio/tutorial/step5.mp3',
-        text: 'Ayos na! Pindutin mo lang ang Mapa 1 para magsimula. Kung nakalimutan mo, pindutin mo lang ang Gabay sa itaas anumang oras.',
-        visual: 'start',
-        cta: 'Magsimula na',
-    },
 ];
 
 // Clean warm parchment card style shared across mobile & desktop Gabay cards
@@ -139,24 +105,44 @@ function useIsDesktopViewport() {
  *   enlarged 3D map/heart/step plaques, clean top-right Volume + Laktawan controls (no top progress bar), and thumb-zone Bumalik / Susunod CTAs.
  * - Desktop (>=640px): Full-body real-time articulated 3D Juan Osong (`JuanGuide3D`) beside the matching warm storybook dialogue sheet.
  */
-export default function StudentOnboardingGuide({ open, onClose, onStepChange }) {
+export default function StudentOnboardingGuide({
+    open,
+    mode = 'intro',
+    onboardingVoiceovers,
+    outroVoiceovers,
+    isOfflineMode = false,
+    onClose,
+    onStepChange,
+}) {
     const isDesktop = useIsDesktopViewport();
+    const isOutro = mode === 'outro';
+    const tutorialSteps = useMemo(() => {
+        const base = isOutro
+            ? resolveJuanOutroSteps(outroVoiceovers, { isOfflineMode })
+            : resolveJuanIntroSteps(onboardingVoiceovers);
+        return base.map((step) => ({
+            ...step,
+            audioSrc: step.isCustomAudio ? resolveMediaUrl(step.customAudioPath) : step.defaultAudio,
+        }));
+    }, [isOutro, onboardingVoiceovers, outroVoiceovers, isOfflineMode]);
     const [stepIdx, setStepIdx] = useState(0);
     const [juanReady, setJuanReady] = useState(false);
     const [typedText, setTypedText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isAudioPlaying, setIsAudioPlaying] = useState(false);
     const [audioBlocked, setAudioBlocked] = useState(false);
-    const [muted, setMuted] = useState(false);
+    const [muted, setMuted] = useState(() => getAudioVolume() <= 0);
     const [activeShowcaseIdx, setActiveShowcaseIdx] = useState(0);
     const [ripples, setRipples] = useState([]);
 
     const isTalkingRef = useRef(false);
     const audioLevelRef = useRef(0);
     const stepProgressRef = useRef(0);
-    const mutedRef = useRef(false);
+    const mutedRef = useRef(muted);
 
     const audioPoolRef = useRef([]);
+    const blobUrlsRef = useRef([]);
+    const playReqIdRef = useRef(0);
     const analyserMapRef = useRef(new WeakMap());
     const activeAudioRef = useRef(null);
     const activeAnalyserRef = useRef(null);
@@ -170,15 +156,16 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
         onStepChange?.(open ? stepIdx : null);
     }, [open, stepIdx, onStepChange]);
 
-    // Gentle sequential trail highlight moving from Mapa 1 -> 5 during Step 2
+    // Gentle sequential trail highlight moving from Mapa 1 -> 5 during Intro Step 2 or Outro Step 1
     useEffect(() => {
-        if (!open || stepIdx !== 1) return undefined;
+        const shouldAnimateTrail = (!isOutro && stepIdx === 1) || (isOutro && stepIdx === 0);
+        if (!open || !shouldAnimateTrail) return undefined;
         setActiveShowcaseIdx(0);
         const timer = setInterval(() => {
             setActiveShowcaseIdx((prev) => (prev + 1) % 5);
         }, 1050);
         return () => clearInterval(timer);
-    }, [open, stepIdx]);
+    }, [open, isOutro, stepIdx]);
 
     useEffect(() => {
         if (!open) {
@@ -234,6 +221,37 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
         setJuanReady(true);
     }, []);
 
+    const buildStepAudioElement = useCallback(async (step) => {
+        if (!step || (!step.isCustomAudio && !step.defaultAudio)) {
+            return null;
+        }
+        const audio = document.createElement('video');
+        audio.preload = 'auto';
+        audio.playsInline = true;
+        audio.setAttribute('playsinline', '');
+        const vol = getAudioVolume();
+        audio.volume = vol > 0 ? Math.min(1, vol) : 0.85;
+
+        if (step.isCustomAudio && step.audioSrc) {
+            try {
+                const { url, isObjectUrl } = await resolveCachedAudioUrl(step.audioSrc);
+                if (isObjectUrl && url) {
+                    blobUrlsRef.current.push(url);
+                    audio.src = url;
+                } else {
+                    audio.crossOrigin = 'anonymous';
+                    audio.src = url || step.audioSrc;
+                }
+            } catch {
+                audio.crossOrigin = 'anonymous';
+                audio.src = step.audioSrc;
+            }
+        } else {
+            audio.src = step.defaultAudio;
+        }
+        return audio;
+    }, []);
+
     useEffect(() => {
         if (!open) {
             stopCurrentAudio();
@@ -242,19 +260,31 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
             return undefined;
         }
 
-        // Load ONLY step 1 immediately so bandwidth/CPU never competes with Juan's first frame
-        const firstAudio = new Audio(TUTORIAL_STEPS[0].audio);
-        firstAudio.preload = 'auto';
-        const pool = [firstAudio];
-        audioPoolRef.current = pool;
+        let cancelled = false;
+        audioPoolRef.current = [];
         setStepIdx(0);
         setJuanReady(false);
         setAudioBlocked(false);
+
+        // Preload Step 1 right away if it has audio (supports CacheStorage offline blobs for teacher custom VO!)
+        buildStepAudioElement(tutorialSteps[0]).then((firstAudio) => {
+            if (!firstAudio) return;
+            if (cancelled) {
+                firstAudio.pause();
+                firstAudio.src = '';
+                return;
+            }
+            if (!audioPoolRef.current[0]) {
+                audioPoolRef.current[0] = firstAudio;
+            }
+        });
 
         // Safety fallback so audio/dialogue always starts even if a device takes >900ms on first frame
         const readyGuard = setTimeout(() => setJuanReady(true), 900);
 
         return () => {
+            cancelled = true;
+            playReqIdRef.current += 1;
             clearTimeout(readyGuard);
             audioPoolRef.current.forEach((a) => {
                 if (!a) return;
@@ -262,26 +292,47 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                 a.src = '';
             });
             audioPoolRef.current = [];
+            blobUrlsRef.current.forEach((u) => {
+                try {
+                    URL.revokeObjectURL(u);
+                } catch {
+                    // ignore
+                }
+            });
+            blobUrlsRef.current = [];
             activeAudioRef.current = null;
             activeAnalyserRef.current = null;
             if (typingTimerRef.current) clearInterval(typingTimerRef.current);
         };
-    }, [open, stopCurrentAudio]);
+    }, [open, tutorialSteps, buildStepAudioElement, stopCurrentAudio]);
 
-    // Stagger preload of steps 2..5 quietly AFTER Juan is already rendered on screen
+    // Stagger preload of remaining steps quietly AFTER Juan is already rendered on screen
     useEffect(() => {
         if (!open || !juanReady) return undefined;
+        let cancelled = false;
         const t = setTimeout(() => {
-            for (let i = 1; i < TUTORIAL_STEPS.length; i += 1) {
-                if (!audioPoolRef.current[i]) {
-                    const a = new Audio(TUTORIAL_STEPS[i].audio);
-                    a.preload = 'auto';
-                    audioPoolRef.current[i] = a;
+            tutorialSteps.slice(1).forEach((step, offset) => {
+                const idx = offset + 1;
+                if (!audioPoolRef.current[idx]) {
+                    buildStepAudioElement(step).then((a) => {
+                        if (!a) return;
+                        if (cancelled) {
+                            a.pause();
+                            a.src = '';
+                            return;
+                        }
+                        if (!audioPoolRef.current[idx]) {
+                            audioPoolRef.current[idx] = a;
+                        }
+                    });
                 }
-            }
+            });
         }, 500);
-        return () => clearTimeout(t);
-    }, [open, juanReady]);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [open, juanReady, tutorialSteps, buildStepAudioElement]);
 
     const attachAnalyser = (audio) => {
         try {
@@ -304,12 +355,31 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
     };
 
     const playStepAudio = useCallback(
-        (idx) => {
+        async (idx) => {
             stopCurrentAudio();
             if (mutedRef.current) return;
+            const step = tutorialSteps[idx];
+            if (!step) return;
 
-            const audio = audioPoolRef.current[idx] || new Audio(TUTORIAL_STEPS[idx].audio);
-            audioPoolRef.current[idx] = audio;
+            if (!step.isCustomAudio && !step.defaultAudio) {
+                setAudioBlocked(false);
+                if (isOutro && idx === 0) {
+                    playVictoryFanfare();
+                }
+                return;
+            }
+
+            const reqId = ++playReqIdRef.current;
+            let audio = audioPoolRef.current[idx];
+            if (!audio) {
+                audio = await buildStepAudioElement(step);
+                if (!audio || playReqIdRef.current !== reqId || mutedRef.current) return;
+                audioPoolRef.current[idx] = audio;
+            }
+            if (playReqIdRef.current !== reqId || mutedRef.current) return;
+
+            const vol = getAudioVolume();
+            audio.volume = vol > 0 ? Math.min(1, vol) : 0.85;
             activeAudioRef.current = audio;
             activeAnalyserRef.current = attachAnalyser(audio);
             stepProgressRef.current = 0;
@@ -340,7 +410,38 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                         setIsAudioPlaying(true);
                         setAudioBlocked(false);
                     }
-                }).catch(() => {
+                }).catch((err) => {
+                    // Only fall back to default audio on actual load/decode failure (NEVER on browser autoplay NotAllowedError!)
+                    if (
+                        err?.name !== 'NotAllowedError' &&
+                        activeAudioRef.current === audio &&
+                        step.isCustomAudio &&
+                        step.defaultAudio &&
+                        audio.src !== step.defaultAudio
+                    ) {
+                        const fallback = new Audio(step.defaultAudio);
+                        fallback.volume = audio.volume;
+                        audioPoolRef.current[idx] = fallback;
+                        activeAudioRef.current = fallback;
+                        activeAnalyserRef.current = attachAnalyser(fallback);
+                        fallback.onended = audio.onended;
+                        fallback.onpause = audio.onpause;
+                        fallback
+                            .play()
+                            .then(() => {
+                                if (activeAudioRef.current === fallback) {
+                                    setIsAudioPlaying(true);
+                                    setAudioBlocked(false);
+                                }
+                            })
+                            .catch(() => {
+                                if (activeAudioRef.current === fallback) {
+                                    setIsAudioPlaying(false);
+                                    setAudioBlocked(true);
+                                }
+                            });
+                        return;
+                    }
                     if (activeAudioRef.current === audio) {
                         setIsAudioPlaying(false);
                         setAudioBlocked(true);
@@ -351,7 +452,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                 setAudioBlocked(false);
             }
         },
-        [stopCurrentAudio]
+        [isOutro, tutorialSteps, buildStepAudioElement, stopCurrentAudio]
     );
 
     const handleToggleMute = useCallback(
@@ -373,7 +474,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
     // Wait until Juan's first real frame is rendered (`juanReady`) so voiceover & text NEVER start before Juan appears
     useEffect(() => {
         if (!open || !juanReady) return undefined;
-        const step = TUTORIAL_STEPS[stepIdx];
+        const step = tutorialSteps[stepIdx];
         if (!step) return undefined;
 
         if (typingTimerRef.current) clearInterval(typingTimerRef.current);
@@ -405,7 +506,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                 typingTimerRef.current = null;
             }
         };
-    }, [open, juanReady, stepIdx, playStepAudio]);
+    }, [open, juanReady, stepIdx, tutorialSteps, playStepAudio]);
 
     const handleFinish = useCallback(() => {
         stopCurrentAudio();
@@ -426,7 +527,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
     const advanceGuide = useCallback(
         ({ forceStep = false } = {}) => {
             if (!juanReady) return;
-            const step = TUTORIAL_STEPS[stepIdx];
+            const step = tutorialSteps[stepIdx];
             if (!step) return;
 
             if (audioBlocked && !mutedRef.current) {
@@ -453,13 +554,13 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
             }
 
             if (!mutedRef.current) playTapPop(540 + stepIdx * 40, 0.05);
-            if (stepIdx < TUTORIAL_STEPS.length - 1) {
+            if (stepIdx < tutorialSteps.length - 1) {
                 setStepIdx((i) => i + 1);
             } else {
                 handleFinish();
             }
         },
-        [audioBlocked, handleFinish, isTyping, juanReady, playStepAudio, stepIdx]
+        [audioBlocked, handleFinish, isTyping, juanReady, playStepAudio, stepIdx, tutorialSteps]
     );
 
     useEffect(() => {
@@ -482,9 +583,10 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
 
     if (!open) return null;
 
-    const currentStep = TUTORIAL_STEPS[stepIdx] || TUTORIAL_STEPS[0];
-    const isFinalStep = stepIdx === TUTORIAL_STEPS.length - 1;
+    const currentStep = tutorialSteps[stepIdx] || tutorialSteps[0];
+    const isFinalStep = stepIdx === tutorialSteps.length - 1;
     const isSpeakingNow = !muted && isAudioPlaying;
+    const juanPoseStepIdx = isOutro ? [0, 2, 0, 4][stepIdx] ?? 0 : stepIdx;
 
     const handleScreenTap = (e) => {
         const id = ++rippleIdRef.current;
@@ -646,6 +748,11 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                 .jq-vbar-2 { animation: jqVoiceBar 0.42s ease-in-out 0.14s infinite; }
                 .jq-vbar-3 { animation: jqVoiceBar 0.42s ease-in-out 0.28s infinite; }
             `}</style>
+
+            {/* Subtle Fiesta Confetti Burst on Outro Step 1 */}
+            {isOutro && stepIdx === 0 && (
+                <VictoryConfettiCanvas active={true} intensity="normal" burstOriginY={0.28} />
+            )}
 
             {/* Subtle Tap Ripple */}
             <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -950,6 +1057,160 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                         </div>
                     </div>
                 )}
+
+                {/* OUTRO STEP 1: All 5 Maps Completed Celebration Showcase */}
+                {currentStep.visual === 'outro_maps' && (
+                    <div
+                        key="vis-outro-maps"
+                        className="jq-panel-in w-full max-w-[376px] sm:max-w-[680px] rounded-[22px] overflow-hidden"
+                        style={SHEET_STYLE}
+                    >
+                        <div
+                            className="px-3.5 sm:px-5 py-2.5 flex items-center justify-between gap-2"
+                            style={{ backgroundColor: '#F5EFE4', borderBottom: '1px solid #EDE2CF' }}
+                        >
+                            <span className="text-[13px] font-extrabold tracking-tight text-[#231810]">
+                                Kumpleto ang Limang Mapa
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-[#E6F4EC] text-[#15803D] inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>5/5 Tapos</span>
+                            </span>
+                        </div>
+
+                        <div className="px-2.5 sm:px-5 py-3 sm:py-4">
+                            <div className="flex flex-col gap-2.5 sm:hidden">
+                                <div className="grid grid-cols-3 gap-2 justify-items-center">
+                                    {FIVE_MAP_BUILDINGS.slice(0, 3).map((b, idx) => renderMapTile(b, idx))}
+                                </div>
+                                <div className="flex justify-center gap-4">
+                                    {FIVE_MAP_BUILDINGS.slice(3, 5).map((b, idx) => renderMapTile(b, idx + 3))}
+                                </div>
+                            </div>
+
+                            <div className="hidden sm:grid sm:grid-cols-5 gap-3 justify-items-center">
+                                {FIVE_MAP_BUILDINGS.map((b, idx) => renderMapTile(b, idx))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* OUTRO STEP 2: 3-Tile Aral ng Kuwento Plaque */}
+                {currentStep.visual === 'outro_lesson' && (
+                    <div
+                        key="vis-outro-lesson"
+                        className="jq-panel-in w-full max-w-[376px] sm:max-w-[520px] rounded-[22px] p-2.5"
+                        style={SHEET_STYLE}
+                    >
+                        <div className="grid grid-cols-3 gap-2">
+                            <div className="rounded-2xl bg-[#F5EFE4] border border-[#E8DBC6] px-1.5 py-3.5 flex flex-col items-center justify-center text-center">
+                                <div className="w-[46px] h-[46px] rounded-[15px] bg-[#FCECE3] border-[1.5px] border-[#F6CEB8] text-[#C2410C] flex items-center justify-center">
+                                    <Lightbulb className="w-6 h-6" />
+                                </div>
+                                <div className="mt-1.5 text-[13.5px] font-extrabold text-[#231810] leading-tight">
+                                    Talino
+                                </div>
+                                <div className="mt-0.5 text-[10.5px] font-semibold text-[#7A5E46]">
+                                    Matalinong isip
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-[#F5EFE4] border border-[#E8DBC6] px-1.5 py-3.5 flex flex-col items-center justify-center text-center">
+                                <div className="w-[46px] h-[46px] rounded-[15px] bg-[#FEF3DC] border-[1.5px] border-[#F2D7A5] text-[#B45309] flex items-center justify-center">
+                                    <Compass className="w-6 h-6" />
+                                </div>
+                                <div className="mt-1.5 text-[13.5px] font-extrabold text-[#231810] leading-tight">
+                                    Diskarte
+                                </div>
+                                <div className="mt-0.5 text-[10.5px] font-semibold text-[#7A5E46]">
+                                    Tamang pasya
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-[#F5EFE4] border border-[#E8DBC6] px-1.5 py-3.5 flex flex-col items-center justify-center text-center">
+                                <div className="w-[46px] h-[46px] rounded-[15px] bg-[#E6F4EC] border-[1.5px] border-[#BBE2CA] text-[#15803D] flex items-center justify-center">
+                                    <Heart className="w-6 h-6 fill-[#15803D]/20" />
+                                </div>
+                                <div className="mt-1.5 text-[13.5px] font-extrabold text-[#231810] leading-tight">
+                                    Kabutihan
+                                </div>
+                                <div className="mt-0.5 text-[10.5px] font-semibold text-[#7A5E46]">
+                                    Busilak na puso
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* OUTRO STEP 3: Next Story Farewell Plaque */}
+                {currentStep.visual === 'outro_next' && (
+                    <div
+                        key="vis-outro-next"
+                        className="jq-panel-in w-full max-w-[376px] sm:max-w-[440px] rounded-[22px] p-3.5 flex items-center gap-3.5"
+                        style={SHEET_STYLE}
+                    >
+                        <div
+                            className="w-[64px] h-[64px] rounded-[18px] flex items-center justify-center shrink-0 text-[#C2410C]"
+                            style={{
+                                background: 'linear-gradient(145deg, #FCECE3, #F5D5C0)',
+                                border: '2px solid #F0BE9E',
+                            }}
+                        >
+                            <BookOpen className="w-7 h-7" />
+                        </div>
+                        <div className="flex-1 min-w-0 text-left">
+                            <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#FEF3DC] text-[#B45309] text-[10px] font-extrabold uppercase tracking-wider">
+                                Abangan
+                            </span>
+                            <div className="mt-1 text-[15.5px] font-extrabold text-[#231810] leading-snug">
+                                Hanggang sa Susunod na Kuwento
+                            </div>
+                            <div className="mt-0.5 text-[11.5px] font-semibold text-[#7A5E46]">
+                                Salamat sa pagsama sa Barrio ni Juan Osong
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* OUTRO STEP 4: Ready for Final Score / Result QR Target Card */}
+                {currentStep.visual === 'outro_result' && (
+                    <div
+                        key="vis-outro-result"
+                        className="jq-panel-in w-full max-w-[376px] sm:max-w-[440px] rounded-[22px] p-3 pr-3.5 flex items-center gap-3.5"
+                        style={SHEET_STYLE}
+                    >
+                        <div
+                            className="relative w-[68px] h-[68px] rounded-[18px] flex items-center justify-center shrink-0 text-[#15803D]"
+                            style={{
+                                background: 'linear-gradient(145deg, #E6F4EC, #CBEAD7)',
+                                border: '2px solid #A7DDBB',
+                            }}
+                        >
+                            {isOfflineMode ? (
+                                <QrCode className="w-8 h-8" />
+                            ) : (
+                                <Trophy className="w-8 h-8" />
+                            )}
+                            <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-[#16A34A] border-2 border-[#FAF8F5]" />
+                        </div>
+                        <div className="flex-1 min-w-0 text-left">
+                            <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#E6F4EC] text-[#15803D] text-[10px] font-extrabold uppercase tracking-wider">
+                                Tapos na ang Laro
+                            </span>
+                            <div className="mt-1 text-[15.5px] font-extrabold text-[#231810] leading-snug truncate">
+                                {isOfflineMode ? 'Kunin ang Result QR' : 'Buod ng Iyong Puntos'}
+                            </div>
+                            <div className="mt-0.5 text-[11.5px] font-semibold text-[#7A5E46]">
+                                {isOfflineMode
+                                    ? 'I-save o ipa-scan sa iyong guro'
+                                    : 'Tingnan ang kabuuang iskor at ranggo'}
+                            </div>
+                        </div>
+                        <div className="w-9 h-9 rounded-[13px] bg-[#E6F4EC] text-[#15803D] flex items-center justify-center shrink-0">
+                            <ArrowUpRight className="w-[18px] h-[18px]" />
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* BOTTOM DIALOGUE DOCK */}
@@ -981,7 +1242,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                             >
                                 <JuanGuide3D
                                     variant="bust"
-                                    stepIdx={stepIdx}
+                                    stepIdx={juanPoseStepIdx}
                                     isTalkingRef={isTalkingRef}
                                     audioLevelRef={audioLevelRef}
                                     stepProgressRef={stepProgressRef}
@@ -1007,7 +1268,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                                     )}
                                 </div>
                                 <div className="mt-0.5 text-[11.5px] font-semibold text-[#7C624A] leading-tight">
-                                    Gabay ng Barrio · {currentStep.subtitle}
+                                    {isOutro ? 'Pagtatapos ng Kuwento' : 'Gabay ng Barrio'} · {currentStep.subtitle}
                                 </div>
                                 {/* Softly faded hairline divider so the line disappears smoothly behind/around Juan's overlay */}
                                 <div
@@ -1043,7 +1304,7 @@ export default function StudentOnboardingGuide({ open, onClose, onStepChange }) 
                                 <div className="relative w-[238px] h-[300px] md:w-[264px] md:h-[330px]">
                                     <JuanGuide3D
                                         variant="full"
-                                        stepIdx={stepIdx}
+                                        stepIdx={juanPoseStepIdx}
                                         isTalkingRef={isTalkingRef}
                                         audioLevelRef={audioLevelRef}
                                         stepProgressRef={stepProgressRef}

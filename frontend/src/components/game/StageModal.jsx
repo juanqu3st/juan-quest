@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, KeyRound, Keyboard, QrCode, TimerOff, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, KeyRound, Keyboard, LogOut, Map, QrCode, Settings, TimerOff, X } from 'lucide-react';
 import { resolveStorageUrl } from '../../api/axiosClient';
 import { studentApi } from '../../api/studentApi';
 import { resetOfflineMapWithTeacherAuth } from '../../utils/offlineEngine';
 import { resolveCachedAudioUrl } from '../../utils/videoCache';
 import QrScannerBox from '../qr/QrScannerBox';
 import {
-    isAudioMuted,
+    getAudioVolume,
     pickPraiseHeadline,
     playFeedbackAudio,
-    setAudioMuted,
+    setAudioVolume,
     stopAllFeedbackAudio,
     unlockAudio,
 } from '../../utils/gameAudio';
@@ -48,7 +48,7 @@ function resolveInitialStep(map, initialResume) {
 }
 
 function isPerQuestionStrategy(strategyType) {
-    return ['multiple_choice', 'four_pics', 'decision_quest'].includes(strategyType);
+    return ['multiple_choice', 'decision_quest'].includes(strategyType);
 }
 
 function resolveInitialSeconds(map, initialResume) {
@@ -96,13 +96,16 @@ export default function StageModal({
     onClose,
     onStageFinished,
     onOfflineMapReset,
+    onQuitSession,
 }) {
     const [step, setStep] = useState(() => resolveInitialStep(map, initialResume));
     const [sceneIdx, setSceneIdx] = useState(() =>
         initialResume?.mapId === map?.id ? initialResume.sceneIdx || 0 : 0
     );
     const [loading, setLoading] = useState(false);
-    const [muted, setMuted] = useState(() => isAudioMuted());
+    const [volumePct, setVolumePct] = useState(() => Math.round(getAudioVolume() * 100));
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [quitConfirm, setQuitConfirm] = useState(false);
     const [heartsRemaining, setHeartsRemaining] = useState(
         map?.progress?.hearts_remaining ?? map?.max_hearts ?? 3
     );
@@ -144,11 +147,13 @@ export default function StageModal({
     const secondsLeftRef = useRef(secondsLeft);
     const timeLimitRef = useRef(timeLimitUsed);
     const totalElapsedRef = useRef(map?.progress?.time_taken_seconds || 0);
+    const draftsRef = useRef(drafts);
 
     secondsLeftRef.current = secondsLeft;
     timeLimitRef.current = timeLimitUsed;
     pendingLifelineRef.current = pendingLifeline;
     lifelineDelayingRef.current = lifelineDelaying;
+    draftsRef.current = drafts;
 
     useEffect(() => {
         return () => clearTimeout(lifelineDelayTimerRef.current);
@@ -160,13 +165,24 @@ export default function StageModal({
     const wrongAudioUrl = resolveStorageUrl(map?.wrong_audio_path || lesson?.wrong_audio_path);
     const bgmAudioUrl = resolveStorageUrl(lesson?.bgm_audio_path);
 
-    const handleToggleMute = () => {
-        const next = !muted;
-        setMuted(next);
-        setAudioMuted(next);
+    const handleVolumeChange = (nextPct) => {
+        const clamped = Math.max(0, Math.min(100, Math.round(Number(nextPct) || 0)));
+        setVolumePct(clamped);
+        setAudioVolume(clamped / 100);
         if (bgmRef.current) {
-            bgmRef.current.muted = next;
+            bgmRef.current.volume = (clamped / 100) * 0.22;
+            bgmRef.current.muted = clamped <= 0;
         }
+    };
+
+    const openSettingsSheet = () => {
+        setQuitConfirm(false);
+        setSettingsOpen(true);
+    };
+
+    const closeSettingsSheet = () => {
+        setSettingsOpen(false);
+        setQuitConfirm(false);
     };
 
     // Preload all challenge images for the active map so question transitions are instant (0ms image fetch)
@@ -254,10 +270,11 @@ export default function StageModal({
                     return;
                 }
                 if (isObjectUrl && url) bgmBlobUrl = url;
+                const initialVol = getAudioVolume();
                 audio = new Audio(url || bgmAudioUrl);
                 audio.loop = true;
-                audio.volume = 0.22;
-                audio.muted = muted;
+                audio.volume = initialVol * 0.22;
+                audio.muted = initialVol <= 0;
                 bgmRef.current = audio;
                 audio.play().catch(() => {});
             })
@@ -484,7 +501,7 @@ export default function StageModal({
                 clearStageResume(userId);
                 playFeedbackAudio('complete', praiseAudioUrl);
                 setSummaryResult({
-                    score: data.final_score,
+                    score: data.final_score ?? 0,
                     hearts_remaining: data.hearts_remaining,
                     finish_reason: data.finish_reason,
                     next_map_number: data.current_map_number,
@@ -493,6 +510,7 @@ export default function StageModal({
                 setStep('stage_summary');
             } else {
                 if (perQuestionTimer) {
+                    timeoutFiredRef.current = false;
                     setSecondsLeft(timeLimitRef.current);
                 }
                 showToast('info', data.feedback, 'Naitabi ang Puso.');
@@ -509,17 +527,66 @@ export default function StageModal({
 
     const handleTimeout = async () => {
         if (levelEndedRef.current) return;
-        levelEndedRef.current = true;
         setLoading(true);
         dismissToast();
         try {
-            const data = await studentApi.timeoutMap(map.id);
+            let timeoutPayload = null;
+            if (perQuestionTimer) {
+                const activeCh = (map.challenges || []).find((c) => !resolvedChallengeIds.includes(c.id));
+                if (activeCh) {
+                    timeoutPayload = { challenge_id: activeCh.id };
+                }
+            } else if (map.strategy_type === 'matching' && draftsRef.current?.matchingPairs) {
+                timeoutPayload = { submission: { pairs: draftsRef.current.matchingPairs } };
+            } else if (map.strategy_type === 'sequence' && Array.isArray(draftsRef.current?.sequenceSlots)) {
+                timeoutPayload = { submission: { order: draftsRef.current.sequenceSlots } };
+            }
+
+            const data = await studentApi.timeoutMap(map.id, timeoutPayload);
+            setHeartsRemaining(data.hearts_remaining ?? heartsRemaining);
+            if (data.projected_score !== undefined) setProjectedScore(data.projected_score);
+            if (Array.isArray(data.completed_challenge_ids)) setCompletedChallengeIds(data.completed_challenge_ids);
+            if (Array.isArray(data.resolved_challenge_ids)) {
+                setResolvedChallengeIds(data.resolved_challenge_ids);
+            } else if (Array.isArray(data.completed_challenge_ids)) {
+                setResolvedChallengeIds(data.completed_challenge_ids);
+            }
+
+            // Per-question timeout with hearts remaining -> offer Heart Lifeline for fresh question time!
+            if (data.awaiting_lifeline && data.pending_lifeline) {
+                setShakeTrigger((c) => c + 1);
+                playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras sa tanong.');
+                setPendingLifeline(data.pending_lifeline);
+                return;
+            }
+
+            // Per-question timeout with 0 hearts remaining -> auto 0 pts & immediately move to next question!
+            if (!data.level_ended) {
+                setShakeTrigger((c) => c + 1);
+                timeoutFiredRef.current = false;
+                setSecondsLeft(timeLimitRef.current);
+                playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras.');
+                showToast(
+                    'error',
+                    data.feedback || 'Naubos ang oras sa tanong na ito.',
+                    isOfflineMode ? 'Susunod na tanong.' : '0 pts · Susunod.'
+                );
+                return;
+            }
+
+            // Whole-map timeout OR last question of a per-question map resolved
+            levelEndedRef.current = true;
+            setPendingLifeline(null);
             clearStageResume(userId);
-            playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras.');
+            playFeedbackAudio(
+                data.finish_reason === 'completed' ? 'complete' : 'wrong',
+                data.finish_reason === 'completed' ? praiseAudioUrl : wrongAudioUrl,
+                data.finish_reason === 'completed' ? 'Tapos na ang mapa!' : 'Naubos na ang oras.'
+            );
             setSummaryResult({
-                score: data.final_score ?? 2,
+                score: data.final_score ?? 0,
                 hearts_remaining: data.hearts_remaining ?? 0,
-                finish_reason: 'timeout',
+                finish_reason: data.finish_reason || 'timeout',
                 next_map_number: data.current_map_number,
                 feedback: data.feedback,
             });
@@ -544,13 +611,41 @@ export default function StageModal({
         }
     };
 
+    const syncElapsedBeforeExit = () => {
+        if (step === 'active_gameplay' && map?.id && !levelEndedRef.current) {
+            const elapsed = perQuestionTimer
+                ? totalElapsedRef.current
+                : Math.max(0, timeLimitRef.current - secondsLeftRef.current);
+            studentApi.syncMapKeepalive(map.id, elapsed);
+        }
+    };
+
     const handleClose = () => {
+        syncElapsedBeforeExit();
         dismissToast();
         stopAllFeedbackAudio();
         clearStageResume(userId);
         studentApi.updateStatus('exploring_world').catch(() => {});
         if (step === 'stage_summary') onStageFinished?.(summaryResult?.next_map_number, map.map_number);
         else onClose();
+    };
+
+    const handleReturnToMapFromSettings = () => {
+        closeSettingsSheet();
+        handleClose();
+    };
+
+    const handleConfirmQuit = () => {
+        syncElapsedBeforeExit();
+        dismissToast();
+        stopAllFeedbackAudio();
+        clearStageResume(userId);
+        closeSettingsSheet();
+        if (onQuitSession) {
+            onQuitSession();
+        } else {
+            onClose();
+        }
     };
 
     const handleOfflineTeacherUnlock = async ({ code = '', qrPayload = null }) => {
@@ -660,18 +755,18 @@ export default function StageModal({
                             maxScore={map.perfect_score ?? 10}
                             hideScore={isOfflineMode}
                             shakeTrigger={shakeTrigger}
-                            muted={muted}
-                            onToggleMute={handleToggleMute}
+                            muted={volumePct <= 0}
+                            onOpenSettings={openSettingsSheet}
                         />
                     ) : (
                         <button
                             type="button"
-                            onClick={handleToggleMute}
-                            aria-label={muted ? 'Buksan ang tunog' : 'I-mute ang tunog'}
-                            title={muted ? 'Buksan ang tunog' : 'I-mute ang tunog'}
-                            className="w-10 h-10 rounded-xl text-stone-500 hover:text-stone-900 hover:bg-stone-100 inline-flex items-center justify-center transition cursor-pointer shrink-0"
+                            onClick={openSettingsSheet}
+                            aria-label="Mga Setting ng Laro"
+                            title="Mga Setting ng Laro"
+                            className="w-10 h-10 rounded-xl text-stone-500 hover:text-stone-900 hover:bg-stone-100 active:scale-95 inline-flex items-center justify-center transition cursor-pointer shrink-0"
                         >
-                            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                            <Settings className="w-4 h-4" />
                         </button>
                     )}
                 </div>
@@ -877,8 +972,8 @@ export default function StageModal({
                                         challenges={map.challenges}
                                         onSubmit={handleSubmit}
                                         busy={loading || Boolean(pendingLifeline) || lifelineDelaying}
-                                        savedOrder={drafts.sequenceOrder}
-                                        onSaveOrder={(val) => handleDraftChange('sequenceOrder', val)}
+                                        savedOrder={drafts.sequenceSlots}
+                                        onSaveOrder={(val) => handleDraftChange('sequenceSlots', val)}
                                     />
                                 )}
                                 {map.strategy_type === 'matching' && (
@@ -992,6 +1087,142 @@ export default function StageModal({
                 onUseHeart={() => handleResolveLifeline('use_heart')}
                 onSkip={() => handleResolveLifeline('skip')}
             />
+
+            {/* Clean Settings Bottom Sheet (Volume + Return to 3D Map + Safe Mid-Game Quit) */}
+            <AnimatePresence>
+                {settingsOpen && (
+                    <motion.div
+                        key="stage-settings-backdrop"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.16 }}
+                        onClick={closeSettingsSheet}
+                        className="fixed inset-0 z-[72] bg-stone-950/45 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:p-4"
+                    >
+                        <motion.div
+                            key="stage-settings-sheet"
+                            initial={{ y: 28, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            exit={{ y: 24, opacity: 0 }}
+                            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl bg-white border-t sm:border border-stone-200 shadow-2xl overflow-hidden pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-0"
+                        >
+                            {/* Mobile drag-handle indicator */}
+                            <div className="sm:hidden flex justify-center pt-2.5 pb-0.5">
+                                <div className="w-9 h-1 rounded-full bg-stone-200" />
+                            </div>
+
+                            <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Settings className="w-4 h-4 text-[#C2410C]" />
+                                    <h3 className="text-sm font-bold text-stone-900">Mga Setting ng Laro</h3>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={closeSettingsSheet}
+                                    aria-label="Isara ang setting"
+                                    className="w-8 h-8 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 inline-flex items-center justify-center transition cursor-pointer"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+
+                            <div className="p-5 space-y-4">
+                                {/* Volume Slider (Zero Mute Icon) */}
+                                <div className="rounded-xl bg-[#FAF8F5] border border-stone-200/90 p-3.5 space-y-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label
+                                            htmlFor="jq-master-volume"
+                                            className="text-xs font-bold text-stone-700"
+                                        >
+                                            Lakas ng Tunog
+                                        </label>
+                                        <span className="text-xs font-bold text-[#C2410C] tabular-nums">
+                                            {volumePct === 0 ? 'Tahimik (0%)' : `${volumePct}%`}
+                                        </span>
+                                    </div>
+                                    <input
+                                        id="jq-master-volume"
+                                        type="range"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={volumePct}
+                                        onChange={(e) => handleVolumeChange(e.target.value)}
+                                        className="w-full h-2 accent-[#C2410C] cursor-pointer"
+                                    />
+                                    <p className="text-[11px] text-stone-500 leading-snug">
+                                        Kinokontrol ang boses ng guro, video, at tunog ng laro.
+                                    </p>
+                                </div>
+
+                                {!quitConfirm ? (
+                                    <div className="space-y-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleReturnToMapFromSettings}
+                                            className="w-full min-h-[46px] px-4 py-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 active:scale-[0.99] text-stone-800 flex items-center justify-between gap-3 transition cursor-pointer text-left"
+                                        >
+                                            <span className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold">
+                                                <Map className="w-4 h-4 text-stone-500 shrink-0" />
+                                                <span>Bumalik sa 3D Mapa</span>
+                                            </span>
+                                            <span className="text-[11px] text-stone-400 font-medium shrink-0">
+                                                Naka-save
+                                            </span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setQuitConfirm(true)}
+                                            className="w-full min-h-[46px] px-4 py-2.5 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/70 active:scale-[0.99] text-rose-700 flex items-center justify-between gap-3 transition cursor-pointer text-left"
+                                        >
+                                            <span className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold">
+                                                <LogOut className="w-4 h-4 text-rose-600 shrink-0" />
+                                                <span>Lumabas ng Klase</span>
+                                            </span>
+                                            <span className="text-[11px] text-rose-500 font-medium shrink-0">
+                                                Quit
+                                            </span>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-3.5 space-y-3">
+                                        <div className="space-y-1">
+                                            <p className="text-xs font-bold text-rose-900">
+                                                Sigurado ka bang lalabas ng klase?
+                                            </p>
+                                            <p className="text-[11px] text-rose-700 leading-relaxed">
+                                                {isOfflineMode
+                                                    ? 'Babalik ka sa Login screen. Kung hindi pa tapos ang Mapa 5, mabubura ang kasalukuyang offline progress sa device na ito.'
+                                                    : 'Babalik ka sa Login screen. Maaari kang pumasok muli gamit ang parehong Class PIN at pangalan.'}
+                                            </p>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setQuitConfirm(false)}
+                                                className="min-h-[40px] px-3 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold transition cursor-pointer"
+                                            >
+                                                Kanselahin
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleConfirmQuit}
+                                                className="min-h-[40px] px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 active:scale-[0.99] text-white text-xs font-semibold transition cursor-pointer"
+                                            >
+                                                Oo, Lumabas
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </motion.div>
     );
 }

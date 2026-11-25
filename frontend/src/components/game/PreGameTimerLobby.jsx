@@ -11,8 +11,8 @@ export default function PreGameTimerLobby({ map, onStart, loading }) {
     const hearts = map.max_hearts ?? 3;
     const seconds = map.time_limit_seconds ?? 60;
     const perfectScore = map.perfect_score ?? 10;
-    const floorScore = map.min_floor_score ?? 2;
-    const isPerQuestion = ['multiple_choice', 'four_pics', 'decision_quest'].includes(map.strategy_type);
+    const isPerQuestion = ['multiple_choice', 'decision_quest'].includes(map.strategy_type);
+    const floorScore = isPerQuestion ? 0 : Math.max(2, map.min_floor_score ?? 2);
     const promptAudioUrl = resolveStorageUrl(map.audio_prompt_path);
 
     useEffect(() => {
@@ -115,21 +115,30 @@ export default function PreGameTimerLobby({ map, onStart, loading }) {
                                     <strong className="text-stone-800">Puntos:</strong>{' '}
                                     {map.strategy_type === 'multiple_choice'
                                         ? `1 attempt bawat tanong (+1 pt bawat tama, hanggang ${perfectScore} pts).`
-                                        : isPerQuestion
+                                        : map.strategy_type === 'decision_quest'
                                           ? `1 attempt bawat tanong (+2 pts bawat tama, hanggang ${perfectScore} pts).`
-                                          : `+2 pts bawat tamang posisyon o tugma (hanggang ${perfectScore} pts).`}
+                                          : map.strategy_type === 'four_pics'
+                                            ? `+2 pts bawat tamang salita (hanggang ${perfectScore} pts sa buong oras ng puzzle).`
+                                            : `+2 pts bawat tamang posisyon o tugma (hanggang ${perfectScore} pts).`}
                                 </span>
                             </li>
                             <li className="flex items-start gap-2">
                                 <RotateCcw className="w-3.5 h-3.5 text-[#C2410C] shrink-0 mt-0.5" />
                                 <span>
-                                    <strong className="text-stone-800">Gamitin o Itabi ang Puso:</strong> Kapag nagkamali habang may puso pa, tatanungin ka kung <strong>gagamit ng 1 puso</strong> upang sumagot muli nang walang bawas sa puntos, o <strong>itatabi ang puso</strong> (0 pts sa tanong na iyon).
+                                    <strong className="text-stone-800">Gamitin o Itabi ang Puso:</strong> Kapag nagkamali habang may puso pa, tatanungin ka kung <strong>gagamit ng 1 puso</strong> upang sumagot muli nang walang bawas sa puntos (hindi nagre-reset ang oras), o <strong>itatabi ang puso</strong>.
                                 </span>
                             </li>
                             <li className="flex items-start gap-2">
                                 <ArrowRight className="w-3.5 h-3.5 text-stone-500 shrink-0 mt-0.5" />
                                 <span>
-                                    <strong className="text-stone-800">Kapag 0 na ang Puso o Naubos ang Oras:</strong> Awtomatikong 0 pts sa maling sagot at tutuloy agad sa susunod. Kapag naubos ang oras, 0 puso ang natitira at may minimum na <strong>{floorScore} pts</strong> upang makapagpatuloy.
+                                    <strong className="text-stone-800">Kapag Naubos ang Oras:</strong>{' '}
+                                    {isPerQuestion
+                                        ? 'Awtomatikong 0 pts sa tanong na iyon at tutuloy agad sa susunod na tanong.'
+                                        : (
+                                            <>
+                                                Kapag naubos ang buong oras ng puzzle, bibilangin lahat ng tamang sagot na nakuha (minimum na <strong>{floorScore} pts</strong> kung wala pang tama upang makapagpatuloy).
+                                            </>
+                                        )}
                                 </span>
                             </li>
                         </ul>

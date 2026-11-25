@@ -3,6 +3,7 @@ import { resolveCachedAudioUrl } from './videoCache';
 // Feedback & lesson audio controller with clear Web Audio chimes + temporary Filipino voice praise fallback.
 
 const MUTE_KEY = 'juanquest_audio_muted';
+const VOLUME_KEY = 'juanquest_audio_volume';
 const PRAISE_PHRASES = ['Mahusay!', 'Magaling!', 'Tama!', 'Napakagaling!'];
 const WRONG_PHRASES = ['Subukan muli.', 'Hindi tama, subukan ulit.'];
 
@@ -51,23 +52,51 @@ export function unlockAudio() {
     getAudioContext();
 }
 
-export function isAudioMuted() {
+export function getAudioVolume() {
     try {
-        return localStorage.getItem(MUTE_KEY) === '1';
+        const raw = localStorage.getItem(VOLUME_KEY);
+        if (raw !== null && raw !== '') {
+            const parsed = Number(raw);
+            if (Number.isFinite(parsed)) {
+                return Math.max(0, Math.min(1, parsed));
+            }
+        }
+        return localStorage.getItem(MUTE_KEY) === '1' ? 0 : 0.85;
     } catch {
-        return false;
+        return 0.85;
     }
 }
 
-export function setAudioMuted(muted) {
+export function setAudioVolume(nextVolume) {
+    const clamped = Math.max(0, Math.min(1, Number(nextVolume) || 0));
     try {
-        localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+        localStorage.setItem(VOLUME_KEY, String(Number(clamped.toFixed(2))));
+        localStorage.setItem(MUTE_KEY, clamped <= 0 ? '1' : '0');
     } catch {
         // ignore storage restrictions
     }
-    if (muted) {
+    if (clamped <= 0) {
         stopAllFeedbackAudio();
+    } else {
+        if (activeFeedbackEl) activeFeedbackEl.volume = clamped * 0.95;
+        if (activePromptEl) activePromptEl.volume = clamped * 0.95;
     }
+    if (typeof window !== 'undefined') {
+        try {
+            window.dispatchEvent(new CustomEvent('juanquest:volume-change', { detail: clamped }));
+        } catch {
+            // ignore
+        }
+    }
+    return clamped;
+}
+
+export function isAudioMuted() {
+    return getAudioVolume() <= 0;
+}
+
+export function setAudioMuted(muted) {
+    setAudioVolume(muted ? 0 : Math.max(0.8, getAudioVolume() || 0.85));
 }
 
 export function stopAllFeedbackAudio() {
@@ -121,7 +150,7 @@ function speakTemporaryVoice(text) {
         utter.lang = filVoice?.lang || 'fil-PH';
         utter.rate = 1.05;
         utter.pitch = 1.05;
-        utter.volume = 0.85;
+        utter.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.9));
         synth.speak(utter);
     } catch {
         // speech synthesis optional fallback
@@ -129,6 +158,8 @@ function speakTemporaryVoice(text) {
 }
 
 function playFallbackTone(type) {
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
 
@@ -139,7 +170,7 @@ function playFallbackTone(type) {
         osc.type = wave;
         osc.frequency.setValueAtTime(freq, now + startOffset);
         gain.gain.setValueAtTime(0.0001, now + startOffset);
-        gain.gain.exponentialRampToValueAtTime(peakGain, now + startOffset + 0.015);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peakGain * vol), now + startOffset + 0.015);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + duration);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -191,7 +222,8 @@ export function triggerHaptic(kind = 'tap') {
 
 export function playUiTap(freq = 520) {
     triggerHaptic('tap');
-    if (isAudioMuted()) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -201,7 +233,7 @@ export function playUiTap(freq = 520) {
     osc.frequency.setValueAtTime(freq, now);
     osc.frequency.exponentialRampToValueAtTime(freq * 1.26, now + 0.045);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.055 * vol), now + 0.008);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -211,7 +243,8 @@ export function playUiTap(freq = 520) {
 
 export function playPairSnap() {
     triggerHaptic('pair');
-    if (isAudioMuted()) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -221,7 +254,7 @@ export function playPairSnap() {
     osc.frequency.setValueAtTime(460, now);
     osc.frequency.exponentialRampToValueAtTime(720, now + 0.06);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.06, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.06 * vol), now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -231,7 +264,8 @@ export function playPairSnap() {
 
 export function playTimerTick() {
     triggerHaptic('tick');
-    if (isAudioMuted()) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -240,7 +274,7 @@ export function playTimerTick() {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(880, now);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.042, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.042 * vol), now + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.036);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -250,7 +284,8 @@ export function playTimerTick() {
 
 export function playVictoryFanfare() {
     triggerHaptic('victory');
-    if (isAudioMuted()) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -261,7 +296,7 @@ export function playVictoryFanfare() {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(freq, now + i * 0.075);
         gain.gain.setValueAtTime(0.0001, now + i * 0.075);
-        gain.gain.exponentialRampToValueAtTime(0.085, now + i * 0.075 + 0.015);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.085 * vol), now + i * 0.075 + 0.015);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.075 + 0.28);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -296,7 +331,7 @@ export function playFeedbackAudio(type, customUrl, spokenText) {
                     return;
                 }
                 const audio = new Audio(url);
-                audio.volume = 0.95;
+                audio.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.95));
                 activeFeedbackEl = audio;
                 if (isObjectUrl) activeFeedbackBlobUrl = url;
                 const clearRef = () => {
@@ -337,7 +372,8 @@ export function playFeedbackAudio(type, customUrl, spokenText) {
  */
 export function playUnlockChime() {
     triggerHaptic('unlock');
-    if (isAudioMuted()) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
     const ctx = getAudioContext();
     if (!ctx) return;
 
@@ -348,7 +384,7 @@ export function playUnlockChime() {
         osc.type = wave;
         osc.frequency.setValueAtTime(freq, now + offset);
         gain.gain.setValueAtTime(0.0001, now + offset);
-        gain.gain.exponentialRampToValueAtTime(peak, now + offset + 0.012);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * vol), now + offset + 0.012);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + dur);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -384,7 +420,7 @@ export function togglePromptAudio(url, onEnd) {
     if (!url || isAudioMuted()) return false;
     try {
         const audio = new Audio();
-        audio.volume = 0.95;
+        audio.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.95));
         activePromptEl = audio;
         const finish = () => {
             if (activePromptEl === audio) {

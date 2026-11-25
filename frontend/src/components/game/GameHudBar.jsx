@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Award, Clock, Heart, Volume2, VolumeX } from 'lucide-react';
+import { Award, Clock, Heart, Settings } from 'lucide-react';
 import { playTimerTick } from '../../utils/gameAudio';
 
 export default function GameHudBar({
@@ -12,7 +12,7 @@ export default function GameHudBar({
     hideScore = false,
     shakeTrigger,
     muted = false,
-    onToggleMute,
+    onOpenSettings,
 }) {
     const mins = Math.floor(secondsLeft / 60);
     const secs = String(secondsLeft % 60).padStart(2, '0');
@@ -151,17 +151,17 @@ export default function GameHudBar({
                 </>
             )}
 
-            {onToggleMute && (
+            {onOpenSettings && (
                 <>
                     <span className="h-4 w-px bg-stone-200 hidden sm:inline-block" aria-hidden="true" />
                     <button
                         type="button"
-                        onClick={onToggleMute}
-                        aria-label={muted ? 'Buksan ang tunog' : 'I-mute ang tunog'}
-                        title={muted ? 'Buksan ang tunog' : 'I-mute ang tunog'}
+                        onClick={onOpenSettings}
+                        aria-label="Mga Setting ng Laro"
+                        title="Mga Setting ng Laro"
                         className="w-9 h-9 rounded-xl text-stone-500 hover:text-stone-900 hover:bg-stone-100 inline-flex items-center justify-center transition cursor-pointer shrink-0 active:scale-95"
                     >
-                        {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                        <Settings className="w-4 h-4" />
                     </button>
                 </>
             )}

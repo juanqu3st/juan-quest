@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Check, Save } from 'lucide-react';
+import { Check, Mic, Save } from 'lucide-react';
 import { teacherApi } from '../../api/teacherApi';
 import { useToast } from '../../context/ToastContext';
 import SyncedDubbingStudio from '../../components/teacher/SyncedDubbingStudio';
+import JuanIntroStudioPanel from '../../components/teacher/JuanIntroStudioPanel';
 import TeacherLayout from './TeacherLayout';
 
 const VOICEOVER_TAG = {
@@ -58,31 +59,78 @@ export default function TeacherStudioPage() {
         loadCms().catch(() => {});
     };
 
-    const handleSelectMap = (mapNum) => {
-        if (mapNum === selectedMapNum) return;
+    const handleLessonSaved = (updatedLesson) => {
+        if (updatedLesson) {
+            setLesson((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          ...updatedLesson,
+                          maps: prev.maps,
+                      }
+                    : prev
+            );
+        }
+        loadCms().catch(() => {});
+    };
+
+    const handleSelectMap = (tabKey) => {
+        if (tabKey === selectedMapNum) return;
         if (hasUnsaved) {
             const ok = window.confirm(
-                'May hindi ka pa na-save na recording o pagbabago sa mapang ito. Mawawala ito kung lilipat ka nang hindi nagse-save. Magpatuloy pa rin?'
+                'May hindi ka pa na-save na recording o pagbabago sa tab na ito. Mawawala ito kung lilipat ka nang hindi nagse-save. Magpatuloy pa rin?'
             );
             if (!ok) return;
         }
         setHasUnsaved(false);
-        setSelectedMapNum(mapNum);
+        setSelectedMapNum(tabKey);
     };
 
-    const activeMap = lesson?.maps?.find((m) => m.map_number === selectedMapNum) || lesson?.maps?.[0];
+    const isIntroTab = selectedMapNum === 'intro';
+    const activeMap = !isIntroTab
+        ? lesson?.maps?.find((m) => m.map_number === selectedMapNum) || lesson?.maps?.[0]
+        : null;
+    const introCustomCount = Array.isArray(lesson?.onboarding_voiceovers)
+        ? lesson.onboarding_voiceovers.filter((item) => item && item.audio_path).length
+        : 0;
+    const outroCustomCount = Array.isArray(lesson?.outro_voiceovers)
+        ? lesson.outro_voiceovers.filter((item) => item && item.audio_path).length
+        : 0;
+    const juanTotalVoCount = introCustomCount + outroCustomCount;
 
     return (
         <TeacherLayout
             title="Video & Voice-Over Studio"
-            subtitle="Palitan ang 3D story video, i-edit ang script/subtitles, o mag-record at mag-upload ng boses bawat eksena."
+            subtitle="Palitan ang Intro at Outro na boses ni Juan, i-edit ang script/subtitles, o mag-record ng boses bawat mapa."
         >
             {!lesson ? (
                 <div className="text-xs text-slate-500 py-12 text-center">Inihahanda ang Video &amp; Voice-Over Studio...</div>
             ) : (
                 <div className="space-y-4">
-                    {/* Single-row 5-map selector on desktop, responsive grid on mobile/tablet */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                    {/* Single-row Juan VO + 5-map selector on desktop, responsive grid on mobile/tablet */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                        <button
+                            type="button"
+                            onClick={() => handleSelectMap('intro')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl text-left border transition cursor-pointer flex items-center justify-between gap-2 ${
+                                isIntroTab
+                                    ? 'bg-[#C2410C] text-white border-[#C2410C] shadow-xs'
+                                    : 'bg-white text-slate-700 border-slate-200/90 hover:bg-slate-50 hover:text-slate-900'
+                            }`}
+                        >
+                            <span className="text-xs font-semibold truncate inline-flex items-center gap-1.5">
+                                <Mic className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">Si Juan VO</span>
+                            </span>
+                            <span
+                                className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${
+                                    isIntroTab ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                                }`}
+                            >
+                                {juanTotalVoCount > 0 ? `${juanTotalVoCount}/9` : 'Intro/Outro'}
+                            </span>
+                        </button>
+
                         {lesson.maps.map((m) => {
                             const isSel = selectedMapNum === m.map_number;
                             return (
@@ -111,14 +159,24 @@ export default function TeacherStudioPage() {
                         })}
                     </div>
 
-                    {activeMap && (
-                        <MapStudioPanel
-                            key={activeMap.id}
-                            map={activeMap}
-                            onSaved={handleMapSaved}
+                    {isIntroTab ? (
+                        <JuanIntroStudioPanel
+                            key={`intro-${lesson.id}`}
+                            lesson={lesson}
+                            onSaved={handleLessonSaved}
                             onDirtyChange={setHasUnsaved}
                             notify={notify}
                         />
+                    ) : (
+                        activeMap && (
+                            <MapStudioPanel
+                                key={activeMap.id}
+                                map={activeMap}
+                                onSaved={handleMapSaved}
+                                onDirtyChange={setHasUnsaved}
+                                notify={notify}
+                            />
+                        )
                     )}
                 </div>
             )}
