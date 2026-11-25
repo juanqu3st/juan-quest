@@ -8,7 +8,6 @@ import { resolveCachedAudioUrl } from '../../utils/videoCache';
 import QrScannerBox from '../qr/QrScannerBox';
 import {
     getAudioVolume,
-    pickPraiseHeadline,
     playFeedbackAudio,
     preloadFeedbackAudio,
     setAudioVolume,
@@ -451,7 +450,8 @@ export default function StageModal({
                 feedbackLockRef.current = true;
                 setFeedbackLock(true);
                 if (data.is_correct) {
-                    showToast('success', data.feedback, pickPraiseHeadline());
+                    const teacherPraise = (data.feedback || '').trim();
+                    showToast('success', teacherPraise || 'Tama!', '');
                 }
                 const nextSummary = {
                     score: data.final_score ?? 0,
@@ -476,25 +476,26 @@ export default function StageModal({
                     setStep('stage_summary');
                 });
             } else {
+                // Show ONLY the teacher's exact custom praise text (never prepend hardcoded "Magaling!")
+                const teacherMsg = (data.feedback || '').trim();
                 const toastHeading = data.is_correct
-                    ? pickPraiseHeadline()
+                    ? ''
                     : isOfflineMode
                       ? 'Susunod na tanong.'
                       : '0 pts · Susunod.';
-                const spokenLabel = data.is_correct ? toastHeading : 'Susunod na tanong.';
 
                 // Pause countdown & let student see the green/red result AND hear the full praise before advancing!
                 feedbackLockRef.current = true;
                 setFeedbackLock(true);
                 showToast(
                     data.is_correct ? 'success' : 'error',
-                    data.feedback,
+                    teacherMsg || (data.is_correct ? 'Tama!' : 'Subukan muli.'),
                     toastHeading
                 );
                 playFeedbackAudio(
                     data.is_correct ? 'correct' : 'wrong',
                     data.is_correct ? praiseAudioUrl : wrongAudioUrl,
-                    spokenLabel,
+                    undefined,
                     { minWaitMs: 520, maxWaitMs: 3600 }
                 ).then(() => {
                     if (feedbackSeqRef.current !== seq) return;
@@ -542,7 +543,7 @@ export default function StageModal({
                 levelEndedRef.current = true;
                 dismissToast();
                 clearStageResume(userId);
-                playFeedbackAudio('complete', praiseAudioUrl);
+                playFeedbackAudio('complete', null);
                 setSummaryResult({
                     score: data.final_score ?? 0,
                     hearts_remaining: data.hearts_remaining,
@@ -598,7 +599,7 @@ export default function StageModal({
             // Per-question timeout with hearts remaining -> offer Heart Lifeline for fresh question time!
             if (data.awaiting_lifeline && data.pending_lifeline) {
                 setShakeTrigger((c) => c + 1);
-                playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras sa tanong.');
+                playFeedbackAudio('wrong', wrongAudioUrl);
                 setPendingLifeline(data.pending_lifeline);
                 return;
             }
@@ -608,7 +609,7 @@ export default function StageModal({
                 setShakeTrigger((c) => c + 1);
                 timeoutFiredRef.current = false;
                 setSecondsLeft(timeLimitRef.current);
-                playFeedbackAudio('wrong', wrongAudioUrl, 'Naubos na ang oras.');
+                playFeedbackAudio('wrong', wrongAudioUrl);
                 showToast(
                     'error',
                     data.feedback || 'Naubos ang oras sa tanong na ito.',
@@ -623,8 +624,7 @@ export default function StageModal({
             clearStageResume(userId);
             playFeedbackAudio(
                 data.finish_reason === 'completed' ? 'complete' : 'wrong',
-                data.finish_reason === 'completed' ? praiseAudioUrl : wrongAudioUrl,
-                data.finish_reason === 'completed' ? 'Tapos na ang mapa!' : 'Naubos na ang oras.'
+                data.finish_reason === 'completed' ? null : wrongAudioUrl
             );
             setSummaryResult({
                 score: data.final_score ?? 0,
@@ -1131,6 +1131,7 @@ export default function StageModal({
                 heartsRemaining={heartsRemaining}
                 maxHearts={map.max_hearts ?? 3}
                 pendingLifeline={pendingLifeline}
+                wrongFeedback={map.feedback_wrong}
                 hideScores={isOfflineMode}
                 busy={loading}
                 onUseHeart={() => handleResolveLifeline('use_heart')}

@@ -1,11 +1,9 @@
 import { resolveCachedAudioUrl } from './videoCache';
 
-// Feedback & lesson audio controller with clear Web Audio chimes + temporary Filipino voice praise fallback.
+// Feedback & lesson audio controller: teacher-uploaded voice recordings + crisp Web Audio chimes (zero robotic AI TTS).
 
 const MUTE_KEY = 'juanquest_audio_muted';
 const VOLUME_KEY = 'juanquest_audio_volume';
-const PRAISE_PHRASES = ['Mahusay!', 'Magaling!', 'Tama!', 'Napakagaling!'];
-const WRONG_PHRASES = ['Subukan muli.', 'Hindi tama, subukan ulit.'];
 
 let audioCtx = null;
 let activeFeedbackEl = null;
@@ -13,7 +11,6 @@ let activeFeedbackBlobUrl = null;
 let activeFeedbackResolve = null;
 let activePromptEl = null;
 let activePromptBlobUrl = null;
-let praiseCursor = 0;
 
 // In-memory preloaded Blob URL cache for instant 0ms praise/wrong audio playback (especially over production Cloudinary!)
 const preloadedFeedbackMap = new Map();
@@ -182,49 +179,6 @@ export function stopAllFeedbackAudio() {
         activePromptEl = null;
     }
     revokePromptBlob();
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try {
-            window.speechSynthesis.cancel();
-        } catch {
-            // ignore
-        }
-    }
-}
-
-export function pickPraiseHeadline() {
-    const label = PRAISE_PHRASES[praiseCursor % PRAISE_PHRASES.length];
-    praiseCursor += 1;
-    return label;
-}
-
-function speakTemporaryVoice(text, onFinished) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-        return false;
-    }
-    try {
-        const synth = window.speechSynthesis;
-        synth.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
-        const voices = synth.getVoices?.() || [];
-        const filVoice =
-            voices.find((v) => /^(fil|tl)/i.test(v.lang)) ||
-            voices.find((v) => /filipino|tagalog/i.test(v.name)) ||
-            voices.find((v) => /^en-(PH|US)/i.test(v.lang));
-        if (filVoice) utter.voice = filVoice;
-        utter.lang = filVoice?.lang || 'fil-PH';
-        utter.rate = 1.05;
-        utter.pitch = 1.05;
-        utter.volume = Math.max(0, Math.min(1, getAudioVolume() * 0.9));
-        if (onFinished) {
-            utter.onend = onFinished;
-            utter.onerror = onFinished;
-        }
-        synth.speak(utter);
-        return true;
-    } catch {
-        // speech synthesis optional fallback
-        return false;
-    }
 }
 
 function playFallbackTone(type) {
@@ -438,18 +392,10 @@ export function playFeedbackAudio(type, customUrl, spokenText, options = {}) {
         maxTimer = setTimeout(finishNow, maxWaitMs);
 
         const playFallbackAndWait = () => {
+            // Clean Web Audio chime only — never use robotic browser AI speechSynthesis!
             playFallbackTone(type);
-            let phrase = spokenText;
-            if (!phrase) {
-                if (type === 'correct') phrase = pickPraiseHeadline();
-                else if (type === 'complete') phrase = 'Binabati kita! Tapos na ang mapa!';
-                else if (type === 'wrong') phrase = WRONG_PHRASES[praiseCursor % WRONG_PHRASES.length];
-            }
-            const spoke = phrase ? speakTemporaryVoice(phrase, finishRespectingMin) : false;
-            if (!spoke) {
-                const chimeMs = type === 'complete' ? 680 : 420;
-                minTimer = setTimeout(finishRespectingMin, chimeMs);
-            }
+            const chimeMs = type === 'complete' ? 620 : 420;
+            minTimer = setTimeout(finishRespectingMin, chimeMs);
         };
 
         const startCustomPlayback = (srcUrl, ownsBlobUrl) => {

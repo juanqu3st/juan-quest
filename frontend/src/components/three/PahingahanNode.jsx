@@ -245,219 +245,59 @@ function FloatingSleepZzz({ active, origin }) {
     );
 }
 
-const DREAM_THOUGHTS = [
-    ['Hays, buti tapos na', 'ang buong kuwento...'],
-    ['Sarap magduyan! Ligtas na', 'sa curfew at magnanakaw!'],
-    ['Zzz... ang galing mo pala!', 'Pahinga muna tayo...'],
-];
+const _dreamWorldPos = new THREE.Vector3();
 
-function drawCloudThoughtBubble(lines) {
-    const W = 1024;
-    const H = 480;
-    const canvas = document.createElement('canvas');
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, W, H);
-
-    // Offscreen cloud canvas so all shading stays cleanly clipped inside ONE seamless fluffy silhouette (zero seams, zero edge clipping!)
-    const cloudCanvas = document.createElement('canvas');
-    cloudCanvas.width = W;
-    cloudCanvas.height = H;
-    const cctx = cloudCanvas.getContext('2d');
-
-    // Generous margins on all sides (top >= 40px, left >= 80px, right <= 940px) so puffs NEVER slice flat
-    const lobes = [
-        [158, 224, 72],
-        [236, 154, 78],
-        [368, 128, 86],
-        [520, 124, 88],
-        [668, 134, 82],
-        [792, 168, 76],
-        [858, 232, 70],
-        [774, 272, 66],
-        [640, 282, 70],
-        [486, 284, 72],
-        [332, 278, 68],
-        [218, 266, 62],
-    ];
-
-    // 1. Unified seamless cloud silhouette mask
-    cctx.fillStyle = '#FFFFFF';
-    for (const [cx, cy, r] of lobes) {
-        cctx.beginPath();
-        cctx.arc(cx, cy, r, 0, Math.PI * 2);
-        cctx.fill();
-    }
-    cctx.beginPath();
-    cctx.ellipse(508, 212, 330, 88, 0, 0, Math.PI * 2);
-    cctx.fill();
-
-    // 2. Volumetric 3D cotton-cloud shading clipped strictly inside silhouette
-    cctx.globalCompositeOperation = 'source-atop';
-
-    // Warm sunlit top -> soft cool-sky pillowy underside
-    const bodyGrad = cctx.createLinearGradient(0, 36, 0, 356);
-    bodyGrad.addColorStop(0, '#FFFFFF');
-    bodyGrad.addColorStop(0.54, '#FAFBFD');
-    bodyGrad.addColorStop(0.8, '#E6EEF8');
-    bodyGrad.addColorStop(1, '#C5D5E8');
-    cctx.fillStyle = bodyGrad;
-    cctx.fillRect(0, 0, W, H);
-
-    // Subtle soft billowy shadow puffs tucked near the bottom scallops
-    const bottomPuffs = [
-        [218, 294, 76],
-        [340, 310, 86],
-        [492, 316, 92],
-        [646, 312, 88],
-        [780, 298, 78],
-    ];
-    for (const [bx, by, br] of bottomPuffs) {
-        const sg = cctx.createRadialGradient(bx, by, br * 0.1, bx, by, br);
-        sg.addColorStop(0, 'rgba(148, 163, 184, 0.34)');
-        sg.addColorStop(0.6, 'rgba(148, 163, 184, 0.12)');
-        sg.addColorStop(1, 'rgba(148, 163, 184, 0)');
-        cctx.fillStyle = sg;
-        cctx.beginPath();
-        cctx.arc(bx, by, br, 0, Math.PI * 2);
-        cctx.fill();
-    }
-
-    // Soft bright sunlit cotton highlights on upper cloud domes
-    const topHighlights = [
-        [226, 134, 72],
-        [356, 102, 82],
-        [508, 96, 86],
-        [658, 108, 78],
-        [784, 146, 68],
-    ];
-    for (const [hx, hy, hr] of topHighlights) {
-        const hg = cctx.createRadialGradient(hx - hr * 0.18, hy - hr * 0.18, 4, hx, hy, hr);
-        hg.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
-        hg.addColorStop(0.6, 'rgba(255, 255, 255, 0.38)');
-        hg.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        cctx.fillStyle = hg;
-        cctx.beginPath();
-        cctx.arc(hx, hy, hr, 0, Math.PI * 2);
-        cctx.fill();
-    }
-
-    // Subtle soft sunlit edge rim glow around the cloud center for crisp separation from trees
-    cctx.globalCompositeOperation = 'source-over';
-
-    // 3. Draw ambient drop shadow + whisper-soft sky rim onto main canvas
-    ctx.save();
-    ctx.shadowColor = 'rgba(15, 23, 42, 0.28)';
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 12;
-    ctx.drawImage(cloudCanvas, 0, 0);
-    ctx.restore();
-
-    ctx.save();
-    ctx.shadowColor = 'rgba(100, 116, 139, 0.32)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.drawImage(cloudCanvas, 0, 0);
-    ctx.restore();
-
-    // 4. Three plush 3D spherical cloudlet trail dots curving down toward the sleeping character
-    const dots = [
-        { x: 242, y: 448, r: 14 },
-        { x: 282, y: 412, r: 21 },
-        { x: 332, y: 372, r: 29 },
-    ];
-    for (const d of dots) {
-        ctx.save();
-        ctx.shadowColor = 'rgba(15, 23, 42, 0.24)';
-        ctx.shadowBlur = 10;
-        ctx.shadowOffsetY = 5;
-        const dg = ctx.createRadialGradient(
-            d.x - d.r * 0.32,
-            d.y - d.r * 0.34,
-            d.r * 0.12,
-            d.x,
-            d.y,
-            d.r
-        );
-        dg.addColorStop(0, '#FFFFFF');
-        dg.addColorStop(0.62, '#F1F5F9');
-        dg.addColorStop(1, '#C5D5E8');
-        ctx.fillStyle = dg;
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    }
-
-    // 5. Crisp, high-contrast dark slate Tagalog dream text centered inside the bright white cloud center
-    ctx.font = '900 48px Inter, "Segoe UI", Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#0F172A';
-    const baseY = lines.length === 2 ? 178 : 206;
-    lines.forEach((line, idx) => {
-        ctx.fillText(line, 512, baseY + idx * 60);
-    });
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 4;
-    return tex;
-}
-
-/** Fluffy 3D-shaded floating dream cloud above the sleeping character, cycling smoothly through Pinoy siesta dreams. */
-function DreamThoughtBubble({ active, position }) {
-    const spriteRef = useRef();
-    const activeIdxRef = useRef(0);
-    const { size } = useThree();
-
-    const textures = useMemo(() => DREAM_THOUGHTS.map((lines) => drawCloudThoughtBubble(lines)), []);
+/**
+ * Zero-re-render 3D -> 2D screen projector that locks the native Retina DOM Dream Cloud overlay
+ * directly above the sleeping character's head as you orbit or zoom the 3D camera.
+ */
+function DreamBubbleProjector({ active, position, overlayElRef }) {
+    const anchorRef = useRef();
+    const { camera, size } = useThree();
 
     useEffect(() => {
+        const el = overlayElRef?.current;
+        if (!active && el) {
+            el.style.visibility = 'hidden';
+        }
         return () => {
-            textures.forEach((t) => t.dispose());
+            if (overlayElRef?.current) {
+                overlayElRef.current.style.visibility = 'hidden';
+            }
         };
-    }, [textures]);
+    }, [active, overlayElRef]);
 
-    useFrame(({ clock }) => {
-        if (!active || !spriteRef.current) return;
-        const t = clock.getElapsedTime();
-        const cycleDur = 5.6;
-        const idx = Math.floor(t / cycleDur) % textures.length;
-        const phase = (t % cycleDur) / cycleDur;
-
-        if (idx !== activeIdxRef.current) {
-            activeIdxRef.current = idx;
-            spriteRef.current.material.map = textures[idx];
-            spriteRef.current.material.needsUpdate = true;
+    useFrame(() => {
+        const el = overlayElRef?.current;
+        const anchor = anchorRef.current;
+        if (!el) return;
+        if (!active || !anchor) {
+            if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
+            return;
         }
 
-        // Smooth fade transition between thoughts (zero jitter/glitch!) + gentle dreamy float
-        const alpha =
-            phase < 0.08 ? phase / 0.08 : phase > 0.9 ? (1 - phase) / 0.1 : 1;
-        spriteRef.current.material.opacity = Math.max(0, Math.min(1, alpha));
+        anchor.getWorldPosition(_dreamWorldPos);
+        _dreamWorldPos.project(camera);
 
-        const isPortrait = size.width < size.height;
-        const bob = Math.sin(t * 1.35) * 0.065;
-        const yBoost = isPortrait ? 0.28 : 0.1;
-        const xBoost = isPortrait ? 0.35 : 0;
-        spriteRef.current.position.set(position[0] + xBoost, position[1] + yBoost + bob, position[2]);
-        const h = isPortrait ? 2.68 : 2.34;
-        spriteRef.current.scale.set(h * (1024 / 480), h, 1);
+        // Hide cleanly if behind the camera or far off-screen
+        if (_dreamWorldPos.z > 1 || _dreamWorldPos.z < -1) {
+            if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
+            return;
+        }
+
+        const rawX = ((_dreamWorldPos.x + 1) * 0.5) * size.width;
+        const rawY = ((-_dreamWorldPos.y + 1) * 0.5) * size.height;
+
+        // Clamp horizontally slightly inside narrow phone edges so the cloud text NEVER clips off-screen
+        const halfW = size.width < 640 ? 116 : 132;
+        const sx = Math.max(halfW, Math.min(size.width - halfW, rawX));
+        const sy = Math.max(88, Math.min(size.height - 130, rawY));
+
+        el.style.visibility = 'visible';
+        el.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%)`;
     });
 
-    if (!active) return null;
-
-    return (
-        <sprite ref={spriteRef} position={position} renderOrder={14}>
-            <spriteMaterial map={textures[0]} transparent opacity={1} depthWrite={false} depthTest={false} />
-        </sprite>
-    );
+    return <group ref={anchorRef} position={position} />;
 }
 
 /** Lush procedural Pinoy backyard flowering shrub (halaman / gumamela bush) around the Bahay Kubo. */
@@ -572,6 +412,7 @@ export default function PahingahanNode({
     guideActive = false,
     lowQuality = false,
     playerPosRef,
+    dreamBubbleElRef,
     onSelectPahingahan,
 }) {
     const pendulumRef = useRef();
@@ -817,12 +658,16 @@ export default function PahingahanNode({
                     </mesh>
                 </group>
 
-                {/* Drifting Soft Zzz Sprites + Volumetric 3D Fluffy Cloud Thought Bubble */}
+                {/* Drifting Soft Zzz Sprites + 3D->2D Screen Anchor for Razor-Sharp Retina Dream Cloud */}
                 <FloatingSleepZzz active={isResting && !tourActive && !guideActive} origin={[-1.18, 2.08, 0.15]} />
-                <DreamThoughtBubble active={isResting && !tourActive && !guideActive} position={[-0.08, 4.02, 0.4]} />
+                <DreamBubbleProjector
+                    active={isResting && !tourActive && !guideActive}
+                    position={[-0.08, 4.18, 0.35]}
+                    overlayElRef={dreamBubbleElRef}
+                />
             </group>
 
-            {/* Floating Name Tag neatly framed above the new Bahay Kubo (visible cleanly on portrait phones too!) */}
+            {/* Floating Name Tag neatly framed above the new Bahay Kubo (auto-fits long names like Magnanakaw on mobile!) */}
             {!tourActive && !guideActive && (
                 <MapLabelSprite
                     title={labelTitle}
@@ -830,8 +675,12 @@ export default function PahingahanNode({
                     score={0}
                     maxScore={0}
                     hideScore
-                    position={[kx - 1.15, 6.25, kz + 0.55]}
-                    height={0.94}
+                    position={[
+                        kx - (labelTitle.length > 20 ? 2.45 : labelTitle.length > 16 ? 1.75 : 1.15),
+                        6.25,
+                        kz + 0.55,
+                    ]}
+                    height={labelTitle.length > 20 ? 0.72 : labelTitle.length > 16 ? 0.82 : 0.92}
                 />
             )}
         </group>

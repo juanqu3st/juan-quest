@@ -67,7 +67,9 @@ export default function FormalToast({ toast, position = 'top' }) {
                             {toast.title && (
                                 <span className={`font-bold mr-1.5 ${cfg.title}`}>{toast.title}</span>
                             )}
-                            <span>{toast.message}</span>
+                            <span className={!toast.title && toast.type === 'success' ? `font-bold ${cfg.title}` : ''}>
+                                {toast.message}
+                            </span>
                         </p>
                     </motion.div>
                 )}

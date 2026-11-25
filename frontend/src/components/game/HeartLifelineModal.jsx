@@ -10,6 +10,7 @@ export default function HeartLifelineModal({
     heartsRemaining,
     maxHearts = 3,
     pendingLifeline,
+    wrongFeedback = '',
     hideScores = false,
     busy = false,
     onUseHeart,
@@ -63,6 +64,11 @@ export default function HeartLifelineModal({
                                 <h3 className="text-lg font-extrabold text-stone-900">
                                     {isBoard ? 'May Kulang pa sa Sagot' : 'Maling Sagot'}
                                 </h3>
+                                {wrongFeedback?.trim() && (
+                                    <p className="text-xs font-semibold text-rose-700 bg-rose-50/80 border border-rose-200/70 rounded-xl px-3 py-1.5 leading-snug">
+                                        {wrongFeedback.trim()}
+                                    </p>
+                                )}
                                 <p className="text-[13px] text-stone-600 leading-relaxed">
                                     {isBoard ? (
                                         hideScores ? (

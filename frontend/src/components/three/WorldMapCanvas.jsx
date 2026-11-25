@@ -15,6 +15,120 @@ import PinoyBarrioProps from './PinoyBarrioProps';
 import BarrioLivingWorld from './BarrioLivingWorld';
 import PahingahanNode from './PahingahanNode';
 
+const DREAM_THOUGHTS = [
+    ['Hays, buti tapos na', 'ang buong kuwento...'],
+    ['Sarap magduyan! Ligtas na', 'sa curfew at magnanakaw!'],
+    ['Zzz... ang galing mo pala!', 'Pahinga muna tayo...'],
+];
+
+/**
+ * Pure native Retina SVG + DOM 3D Fluffy Cloud Dream Bubble (zero WebGL mipmap blur, zero React 19 drei Html errors!).
+ * Positioned at 60fps directly by DreamBubbleProjector inside PahingahanNode.
+ */
+function DreamCloudOverlay({ elRef, active }) {
+    const [idx, setIdx] = useState(0);
+    const [visible, setVisible] = useState(true);
+
+    useEffect(() => {
+        if (!active) return undefined;
+        let fadeTimer = null;
+        const cycle = setInterval(() => {
+            setVisible(false);
+            fadeTimer = setTimeout(() => {
+                setIdx((prev) => (prev + 1) % DREAM_THOUGHTS.length);
+                setVisible(true);
+            }, 320);
+        }, 5400);
+        return () => {
+            clearInterval(cycle);
+            clearTimeout(fadeTimer);
+        };
+    }, [active]);
+
+    if (!active) return null;
+
+    const lines = DREAM_THOUGHTS[idx];
+
+    return (
+        <div
+            ref={elRef}
+            className="pointer-events-none select-none fixed top-0 left-0 z-10 will-change-transform"
+            style={{ visibility: 'hidden' }}
+        >
+            <div
+                className="transition-opacity duration-300 ease-out"
+                style={{
+                    opacity: visible ? 1 : 0,
+                    animation: 'jqDreamCloudFloat 3.6s ease-in-out infinite',
+                }}
+            >
+                <style>{`
+                    @keyframes jqDreamCloudFloat {
+                        0%, 100% { transform: translateY(0px); }
+                        50% { transform: translateY(-5px); }
+                    }
+                `}</style>
+                <div className="relative w-[224px] sm:w-[258px] h-[112px] sm:h-[126px] flex items-center justify-center">
+                    <svg
+                        viewBox="0 0 320 160"
+                        className="absolute inset-0 w-full h-full overflow-visible"
+                        style={{ filter: 'drop-shadow(0 8px 14px rgba(15, 23, 42, 0.24))' }}
+                        aria-hidden="true"
+                    >
+                        <defs>
+                            <linearGradient id="jqCloudGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#FFFFFF" />
+                                <stop offset="56%" stopColor="#FAFBFD" />
+                                <stop offset="82%" stopColor="#E6EEF8" />
+                                <stop offset="100%" stopColor="#C8D7EA" />
+                            </linearGradient>
+                            <radialGradient id="jqDotGrad" cx="35%" cy="32%" r="68%">
+                                <stop offset="0%" stopColor="#FFFFFF" />
+                                <stop offset="62%" stopColor="#F1F5F9" />
+                                <stop offset="100%" stopColor="#C5D5E8" />
+                            </radialGradient>
+                        </defs>
+                        {/* Plush seamless fluffy 3D cloud silhouette */}
+                        <g fill="url(#jqCloudGrad)">
+                            <circle cx="52" cy="78" r="28" />
+                            <circle cx="82" cy="52" r="30" />
+                            <circle cx="130" cy="40" r="34" />
+                            <circle cx="184" cy="40" r="34" />
+                            <circle cx="234" cy="52" r="30" />
+                            <circle cx="268" cy="78" r="28" />
+                            <circle cx="238" cy="100" r="26" />
+                            <circle cx="186" cy="104" r="28" />
+                            <circle cx="132" cy="104" r="28" />
+                            <circle cx="82" cy="98" r="25" />
+                            <ellipse cx="160" cy="74" rx="108" ry="34" />
+                        </g>
+                        {/* Soft sunlit cotton highlights on upper domes */}
+                        <g fill="#FFFFFF" opacity="0.68">
+                            <ellipse cx="130" cy="24" rx="20" ry="8.5" />
+                            <ellipse cx="184" cy="24" rx="20" ry="8.5" />
+                            <ellipse cx="84" cy="38" rx="14" ry="6.5" />
+                            <ellipse cx="234" cy="38" rx="14" ry="6.5" />
+                        </g>
+                        {/* 3 Plush 3D Cloudlet Trail Dots curving down toward the sleeping character */}
+                        <circle cx="108" cy="130" r="9.5" fill="url(#jqDotGrad)" />
+                        <circle cx="90" cy="144" r="6.8" fill="url(#jqDotGrad)" />
+                        <circle cx="76" cy="154" r="4.5" fill="url(#jqDotGrad)" />
+                    </svg>
+
+                    <div className="relative z-10 px-6 pb-3.5 text-center">
+                        <p className="text-[12.5px] sm:text-[14px] font-extrabold text-slate-900 leading-[1.28] tracking-[-0.01em] whitespace-nowrap">
+                            {lines[0]}
+                        </p>
+                        <p className="text-[12.5px] sm:text-[14px] font-extrabold text-slate-900 leading-[1.28] tracking-[-0.01em] whitespace-nowrap">
+                            {lines[1]}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function WorldMapCanvas({
     maps = [],
     characterKey,
@@ -47,6 +161,7 @@ export default function WorldMapCanvas({
     const [canvasKey, setCanvasKey] = useState(0);
     const controlsRef = useRef();
     const playerPosRef = useRef(new THREE.Vector3());
+    const dreamBubbleElRef = useRef(null);
     const glCleanupRef = useRef(null);
     const curve = useMemo(() => createWorldCurve(), []);
     const lowQuality = quality === 'low';
@@ -194,6 +309,7 @@ export default function WorldMapCanvas({
                 guideActive={guideStep !== null}
                 lowQuality={lowQuality}
                 playerPosRef={playerPosRef}
+                dreamBubbleElRef={dreamBubbleElRef}
                 onSelectPahingahan={onSelectPahingahan}
             />
 
@@ -223,6 +339,11 @@ export default function WorldMapCanvas({
                 onTourFinish={onTourFinish}
             />
         </Canvas>
+
+        <DreamCloudOverlay
+            elRef={dreamBubbleElRef}
+            active={Boolean(isResting && !tourActive && guideStep === null && !paused)}
+        />
 
         {contextLost && (
             <div className="absolute inset-0 z-30 bg-[#FAF8F5]/95 flex items-center justify-center p-6">
