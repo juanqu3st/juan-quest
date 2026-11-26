@@ -44,7 +44,7 @@ class UpdateLessonRequest extends FormRequest
      */
     public function rules(): array
     {
-        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/ogg,audio/mp4,video/mp4,video/quicktime,video/x-m4v,video/x-matroska,video/x-msvideo,video/mpeg,audio/m4a,audio/x-m4a,audio/aac,audio/x-aac,audio/webm,video/webm,audio/3gpp,video/3gpp,audio/3gpp2,video/3gpp2,audio/amr,audio/flac,application/ogg';
+        $audioMimeRule = 'mimetypes:audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/vnd.wave,audio/ogg,audio/mp4,video/mp4,video/quicktime,video/x-m4v,video/x-matroska,video/x-msvideo,video/mpeg,audio/m4a,audio/x-m4a,audio/aac,audio/x-aac,audio/webm,video/webm,audio/3gpp,video/3gpp,audio/3gpp2,video/3gpp2,audio/amr,audio/flac,application/ogg';
 
         return [
             'title' => ['required', 'string', 'max:200'],

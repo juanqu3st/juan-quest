@@ -1215,4 +1215,100 @@ class JuanQuestApiTest extends TestCase
                 && ! empty($fields->get('signature'));
         });
     }
+
+    public function test_teacher_can_save_and_upload_juan_intro_and_outro_voiceovers_selectively(): void
+    {
+        Storage::fake('public');
+        config(['services.cloudinary.driver' => 'local']);
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $cms = $this->withToken($teacherToken)
+            ->getJson('/api/v1/teacher/cms')
+            ->assertOk();
+
+        $lesson = $cms->json('lesson');
+        $lessonId = $lesson['id'];
+
+        // 1) Save Intro Step 0 audio + custom text -> Outro stays cleanly null
+        $introSave = $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/lessons/{$lessonId}", [
+                'title' => $lesson['title'],
+                'description' => $lesson['description'] ?? '',
+                'video_source_type' => $lesson['video_source_type'] ?? 'placeholder',
+                'onboarding_texts' => json_encode(['Kumusta mga bata! Ako si Juan!', '', '', '', '']),
+                'onboarding_audios' => [
+                    0 => UploadedFile::fake()->create('juan-intro-step-1.mp3', 120, 'audio/mpeg'),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $introPath0 = $introSave->json('lesson.onboarding_voiceovers.0.audio_path');
+        $this->assertNotEmpty($introPath0);
+        $this->assertSame('Kumusta mga bata! Ako si Juan!', $introSave->json('lesson.onboarding_voiceovers.0.text'));
+        $this->assertNull($introSave->json('lesson.outro_voiceovers'));
+        Storage::disk('public')->assertExists($introPath0);
+
+        // 2) Save Outro Step 1 audio + custom text -> Intro Step 0 MUST remain intact
+        $outroSave = $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/lessons/{$lessonId}", [
+                'title' => $lesson['title'],
+                'description' => $lesson['description'] ?? '',
+                'video_source_type' => $lesson['video_source_type'] ?? 'placeholder',
+                'outro_texts' => json_encode(['', 'Napakahusay mo sa pagtatapos!', '', '']),
+                'outro_audios' => [
+                    1 => UploadedFile::fake()->create('juan-outro-step-2.mp3', 120, 'audio/mpeg'),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $outroPath1 = $outroSave->json('lesson.outro_voiceovers.1.audio_path');
+        $this->assertNotEmpty($outroPath1);
+        $this->assertSame('Napakahusay mo sa pagtatapos!', $outroSave->json('lesson.outro_voiceovers.1.text'));
+        $this->assertSame($introPath0, $outroSave->json('lesson.onboarding_voiceovers.0.audio_path'));
+        Storage::disk('public')->assertExists($outroPath1);
+
+        // 3) Remove Intro Step 0 audio & reset text -> clears onboarding_voiceovers while keeping outro_voiceovers
+        $removeIntro = $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/lessons/{$lessonId}", [
+                'title' => $lesson['title'],
+                'description' => $lesson['description'] ?? '',
+                'video_source_type' => $lesson['video_source_type'] ?? 'placeholder',
+                'onboarding_texts' => json_encode(['', '', '', '', '']),
+                'remove_onboarding_audios' => json_encode([0]),
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $this->assertNull($removeIntro->json('lesson.onboarding_voiceovers'));
+        $this->assertSame($outroPath1, $removeIntro->json('lesson.outro_voiceovers.1.audio_path'));
+        Storage::disk('public')->assertMissing($introPath0);
+
+        // 4) Cloudinary upload failure returns clean 422 message instead of opaque 500
+        config([
+            'services.cloudinary.driver' => 'cloudinary',
+            'services.cloudinary.cloud_name' => 'demo-cloud',
+            'services.cloudinary.api_key' => 'test-key',
+            'services.cloudinary.api_secret' => 'test-secret',
+        ]);
+
+        Http::fake([
+            'https://api.cloudinary.com/v1_1/demo-cloud/video/upload' => Http::response([
+                'error' => ['message' => 'Unsupported audio codec'],
+            ], 400),
+        ]);
+
+        $this->withToken($teacherToken)
+            ->post("/api/v1/teacher/cms/lessons/{$lessonId}", [
+                'title' => $lesson['title'],
+                'video_source_type' => $lesson['video_source_type'] ?? 'placeholder',
+                'onboarding_audios' => [
+                    0 => UploadedFile::fake()->create('broken.mp3', 100, 'audio/mpeg'),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonStructure(['message']);
+    }
 }

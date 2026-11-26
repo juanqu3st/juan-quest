@@ -60,7 +60,7 @@ This guide deploys JuanQuest for free with zero video bandwidth hitting Render F
 | `CLOUDINARY_CLOUD_NAME` | `<your cloud name>` |
 | `CLOUDINARY_API_KEY` | `<your api key>` |
 | `CLOUDINARY_API_SECRET` | `<your api secret>` |
-| `AUTO_MIGRATE` | `true` *(on first deploy; can set `false` afterwards)* |
+| `SKIP_MIGRATIONS` | *(optional)* Leave unset (or `false`) so pending migrations run automatically on every deploy; set `true` only to skip boot migrations. |
 
 4. **One-time Seed + Sync Built-in Videos & Images to Cloudinary**:
    Once TiDB + Cloudinary keys are configured, run these 2 commands **once** (either in Render Shell or from your local PC with TiDB + Cloudinary values temporarily set in `backend/.env`):

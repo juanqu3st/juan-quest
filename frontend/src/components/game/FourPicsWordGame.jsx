@@ -88,7 +88,7 @@ export default function FourPicsWordGame({
 
     const current = challenges[currentIndex];
     const payload = current?.payload || {};
-    const { clue = '', images = [], visual_hints = [], word_length = 5, scrambled_letters = [] } = payload;
+    const { clue = '', images = [], word_length = 5, scrambled_letters = [] } = payload;
     const pickedIndices = (current && pickedByChallenge[current.id]) || [];
     const currentWord = pickedIndices.map((idx) => scrambled_letters[idx]).join('');
     const isWordComplete = currentWord.length === word_length;
@@ -182,30 +182,21 @@ export default function FourPicsWordGame({
                 <div className="grid grid-cols-2 gap-2.5 sm:gap-3 w-full max-w-[348px] sm:max-w-[400px] mx-auto">
                     {[0, 1, 2, 3].map((slot) => {
                         const imgUrl = resolveStorageUrl(images[slot]);
-                        const hint = visual_hints[slot] || `Larawan ${slot + 1}`;
                         return (
                             <div
                                 key={slot}
                                 className="relative aspect-square rounded-xl border border-stone-200 bg-white overflow-hidden flex flex-col items-center justify-center"
                             >
                                 {imgUrl ? (
-                                    <>
-                                        <img
-                                            src={imgUrl}
-                                            alt={hint}
-                                            className="w-full h-full object-cover"
-                                            loading="eager"
-                                        />
-                                        <span className="absolute inset-x-1.5 bottom-1.5 px-2 py-0.5 rounded-md bg-stone-900/75 text-white text-[10px] sm:text-[11px] font-medium text-center leading-tight truncate">
-                                            {hint}
-                                        </span>
-                                    </>
+                                    <img
+                                        src={imgUrl}
+                                        alt={`Larawan ${slot + 1}`}
+                                        className="w-full h-full object-cover"
+                                        loading="eager"
+                                    />
                                 ) : (
-                                    <div className="p-2 text-center flex flex-col items-center gap-1.5">
+                                    <div className="p-2 text-center flex flex-col items-center justify-center">
                                         <LineArtIllustration orderIndex={current.order_index} slot={slot} />
-                                        <span className="text-[11px] font-semibold text-stone-700 leading-tight">
-                                            {hint}
-                                        </span>
                                     </div>
                                 )}
                             </div>

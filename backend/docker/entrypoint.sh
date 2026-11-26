@@ -18,8 +18,8 @@ php artisan config:clear >/dev/null 2>&1 || true
 php artisan config:cache
 php artisan route:cache
 
-# Optional automatic DB migrations when AUTO_MIGRATE=true
-if [ "${AUTO_MIGRATE:-false}" = "true" ]; then
+# Run any pending idempotent DB migrations automatically on startup unless explicitly skipped
+if [ "${SKIP_MIGRATIONS:-false}" != "true" ]; then
     php artisan migrate --force
 fi
 
