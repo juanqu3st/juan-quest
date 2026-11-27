@@ -338,6 +338,7 @@ export default function PlayerCharacter({
                                 dustMeshRefs.current[idx] = el;
                             }}
                             geometry={DUST_SHARED_GEO}
+                            dispose={null}
                             visible={false}
                             frustumCulled={false}
                         >
@@ -629,7 +630,7 @@ function GlbCharacter({ url, isWalking, isResting = false }) {
         );
     });
 
-    return <primitive object={model} scale={CHAR_SCALE} />;
+    return <primitive object={model} scale={CHAR_SCALE} dispose={null} />;
 }
 
 /** Shown only while the GLB loads (or if it cannot load). */

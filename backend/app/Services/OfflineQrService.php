@@ -179,13 +179,14 @@ class OfflineQrService
         $submissionId = trim((string) ($data['id'] ?? ''));
         $attempt = max(1, min(20, (int) ($data['att'] ?? 1)));
 
-        if (mb_strlen($leaderName) < 2) {
+        $effectiveUserName = $leaderName !== '' ? $leaderName : ($playMode === 'group' ? $groupName : '');
+        if (mb_strlen($effectiveUserName) < 2) {
             throw ValidationException::withMessages([
-                'qr' => 'Kulang ang pangalan ng kinatawan o mag-aaral sa Result QR.',
+                'qr' => 'Kulang ang pangalan ng pangkat o mag-aaral sa Result QR.',
             ]);
         }
 
-        $entryName = $playMode === 'group' && $groupName !== '' ? $groupName : $leaderName;
+        $entryName = $playMode === 'group' && $groupName !== '' ? $groupName : $effectiveUserName;
 
         $alreadyImported = DB::transaction(function () use (
             $session,
@@ -195,7 +196,7 @@ class OfflineQrService
             $times,
             $reasons,
             $playMode,
-            $leaderName,
+            $effectiveUserName,
             $groupName,
             $memberNames,
             $submissionId,
@@ -214,13 +215,25 @@ class OfflineQrService
                 }
             }
 
-            $existingParticipant = SessionParticipant::with(['user', 'sessionGroup'])
-                ->where('game_session_id', $lockedSession->id)
-                ->whereHas('user', function ($q) use ($leaderName) {
-                    $q->where('role', 'student')
-                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($leaderName)]);
-                })
-                ->first();
+            $existingParticipant = null;
+            if ($playMode === 'group' && $groupName !== '') {
+                $existingParticipant = SessionParticipant::with(['user', 'sessionGroup'])
+                    ->where('game_session_id', $lockedSession->id)
+                    ->whereHas('sessionGroup', function ($q) use ($groupName) {
+                        $q->whereRaw('LOWER(group_name) = ?', [mb_strtolower($groupName)]);
+                    })
+                    ->first();
+            }
+
+            if (! $existingParticipant) {
+                $existingParticipant = SessionParticipant::with(['user', 'sessionGroup'])
+                    ->where('game_session_id', $lockedSession->id)
+                    ->whereHas('user', function ($q) use ($effectiveUserName) {
+                        $q->where('role', 'student')
+                            ->whereRaw('LOWER(name) = ?', [mb_strtolower($effectiveUserName)]);
+                    })
+                    ->first();
+            }
 
             if ($existingParticipant && $existingParticipant->user) {
                 $existingCompletedCount = StudentProgress::where('user_id', $existingParticipant->user->id)
@@ -291,7 +304,7 @@ class OfflineQrService
             }
 
             $student = User::create([
-                'name' => mb_substr($leaderName, 0, 80),
+                'name' => mb_substr($effectiveUserName, 0, 80),
                 'email' => null,
                 'password' => null,
                 'role' => 'student',

@@ -128,19 +128,28 @@ export function hasOfflinePack() {
     return Boolean(pack && Array.isArray(pack.maps) && pack.maps.length > 0);
 }
 
+function getRequiredMediaUrls(pack, { includeVideos = true } = {}) {
+    const audioUrls = (pack?.media_manifest?.audio || []).map((p) => resolveMediaUrl(p)).filter(Boolean);
+    const videoUrls = includeVideos
+        ? (pack?.media_manifest?.videos || []).map((p) => resolveMediaUrl(p)).filter(Boolean)
+        : [];
+    return { audioUrls, videoUrls, allUrls: [...videoUrls, ...audioUrls] };
+}
+
 /**
- * Fast check (~5ms) to verify whether the quiz pack AND all media assets are already saved locally.
+ * Fast check (~5ms) to verify whether the quiz pack AND all video + audio media assets
+ * (including Intro/Outro VO, per-scene dubbing, praise/wrong SFX, BGM) are already saved locally.
  */
 export async function isFullOfflineBundleReady() {
     const pack = loadOfflinePack();
     if (!pack || !Array.isArray(pack.maps) || pack.maps.length === 0) return false;
-    const videoUrls = (pack.media_manifest?.videos || []).map((p) => resolveMediaUrl(p)).filter(Boolean);
-    return areAllVideosCached(videoUrls);
+    const { allUrls } = getRequiredMediaUrls(pack, { includeVideos: true });
+    return areAllVideosCached(allUrls);
 }
 
 /**
  * Lightweight version & completeness check used when an installed app opens online
- * to detect CMS edits or missing assets and prompt a clean Force Update.
+ * to detect CMS edits or any missing video/audio assets and prompt a clean Force Update.
  */
 export async function checkRemoteContentUpdate() {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -155,10 +164,8 @@ export async function checkRemoteContentUpdate() {
         }
         const localPack = loadOfflinePack();
         const versionChanged = !localPack || localPack.version !== remotePack.version;
-        const remoteVideoUrls = (remotePack.media_manifest?.videos || [])
-            .map((p) => resolveMediaUrl(p))
-            .filter(Boolean);
-        const allMediaPresent = await areAllVideosCached(remoteVideoUrls);
+        const { allUrls } = getRequiredMediaUrls(remotePack, { includeVideos: true });
+        const allMediaPresent = await areAllVideosCached(allUrls);
 
         return {
             hasUpdate: versionChanged || !allMediaPresent,
@@ -174,7 +181,15 @@ async function runSharedSync({ includeVideos = true } = {}) {
         const existing = loadOfflinePack();
         if (existing) {
             emitProgress({ percent: 100, label: 'Handa na', completed: 1, total: 1 });
-            return { pack: existing, videosOk: 0, videosTotal: 0, allVideosSaved: true };
+            return {
+                pack: existing,
+                videosOk: 0,
+                videosTotal: 0,
+                audioOk: 0,
+                audioTotal: 0,
+                allMediaSaved: true,
+                allVideosSaved: true,
+            };
         }
         throw new Error('Walang koneksyon sa internet.');
     }
@@ -191,16 +206,11 @@ async function runSharedSync({ includeVideos = true } = {}) {
     const imageUrls = (pack.media_manifest?.images || [])
         .map((p) => resolveMediaUrl(p))
         .filter(Boolean);
-    const audioUrls = (pack.media_manifest?.audio || [])
-        .map((p) => resolveMediaUrl(p))
-        .filter(Boolean);
-    const videoUrls = includeVideos
-        ? (pack.media_manifest?.videos || []).map((p) => resolveMediaUrl(p)).filter(Boolean)
-        : [];
+    const { audioUrls, videoUrls, allUrls: requiredMediaUrls } = getRequiredMediaUrls(pack, { includeVideos });
 
     const lightTasks = [
-        ...imageUrls.map((url) => ({ cache: IMAGE_CACHE_NAME, url, minBytes: 512 })),
-        ...audioUrls.map((url) => ({ cache: VIDEO_CACHE_NAME, url, minBytes: 1024 })),
+        ...imageUrls.map((url) => ({ kind: 'image', cache: IMAGE_CACHE_NAME, url, minBytes: 512, retries: 2 })),
+        ...audioUrls.map((url) => ({ kind: 'audio', cache: VIDEO_CACHE_NAME, url, minBytes: 512, retries: 3 })),
     ];
     const videoTasks = videoUrls.map((url) => ({
         cache: VIDEO_CACHE_NAME,
@@ -210,17 +220,19 @@ async function runSharedSync({ includeVideos = true } = {}) {
 
     const totalWeight = lightTasks.length + videoTasks.length * 4;
     let doneWeight = 0;
+    let audioOk = 0;
 
-    // 1. Download lightweight assets in batches of 4
+    // 1. Download lightweight assets (images + all VO/SFX/BGM audio) in batches of 4
     for (let i = 0; i < lightTasks.length; i += 4) {
         const batch = lightTasks.slice(i, i + 4);
         await Promise.all(
             batch.map(async (item) => {
-                await cacheMediaWithRetry(item.url, {
+                const ok = await cacheMediaWithRetry(item.url, {
                     cacheName: item.cache,
-                    retries: 2,
+                    retries: item.retries,
                     minBytes: item.minBytes,
                 });
+                if (ok && item.kind === 'audio') audioOk += 1;
                 doneWeight += 1;
                 const percent = Math.min(35, 8 + Math.round((doneWeight / Math.max(1, totalWeight)) * 88));
                 emitProgress({
@@ -264,7 +276,7 @@ async function runSharedSync({ includeVideos = true } = {}) {
         // Ignore localStorage quota error
     }
 
-    const allSaved = videoUrls.length === 0 || (await areAllVideosCached(videoUrls));
+    const allSaved = requiredMediaUrls.length === 0 || (await areAllVideosCached(requiredMediaUrls));
     if (allSaved) {
         emitProgress({
             percent: 100,
@@ -274,11 +286,19 @@ async function runSharedSync({ includeVideos = true } = {}) {
         });
     }
 
-    return { pack, videosOk, videosTotal: videoUrls.length, allVideosSaved: allSaved };
+    return {
+        pack,
+        videosOk,
+        videosTotal: videoUrls.length,
+        audioOk,
+        audioTotal: audioUrls.length,
+        allMediaSaved: allSaved,
+        allVideosSaved: allSaved,
+    };
 }
 
 /**
- * Download & verify 100% of JuanQuest offline assets with shared deduplication.
+ * Download & verify 100% of JuanQuest offline assets (videos + VO/SFX audio + images) with shared deduplication.
  */
 export async function syncAllOfflineResources({ onProgress, includeVideos = true, strictVideos = false } = {}) {
     if (onProgress) {
@@ -296,9 +316,9 @@ export async function syncAllOfflineResources({ onProgress, includeVideos = true
         }
         const result = await activeSyncPromise;
 
-        if (strictVideos && includeVideos && result.videosTotal > 0 && !result.allVideosSaved) {
+        if (strictVideos && (result.videosTotal > 0 || result.audioTotal > 0) && !result.allMediaSaved) {
             throw new Error(
-                'Hindi natapos ang pag-download ng app. Pakisuri ang iyong internet at subukan muli.'
+                'Hindi natapos ang pag-download ng mga video at boses ng app. Pakisuri ang iyong internet at subukan muli.'
             );
         }
 

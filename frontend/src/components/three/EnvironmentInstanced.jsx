@@ -519,6 +519,7 @@ function OccludableTreeSpecies({
                             opaqueRefs.current[idx] = el;
                         }}
                         args={[m.geometry, m.material, items.length]}
+                        dispose={null}
                         frustumCulled={false}
                         castShadow={castShadow}
                         receiveShadow

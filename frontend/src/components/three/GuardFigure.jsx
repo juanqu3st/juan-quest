@@ -144,7 +144,7 @@ function PixarGuardGlb({ url, lantern, seed, lowQuality }) {
     // Adult stature matching Munisipyo/Kuwartel doorways cleanly (~1.14 * 1.09 * 1.92 = ~2.39 world scale)
     return (
         <group>
-            <primitive object={model} scale={1.14} position={[0, 0.02, 0]} />
+            <primitive object={model} scale={1.14} position={[0, 0.02, 0]} dispose={null} />
             {lantern && (
                 <group position={[0.22, 0.48, 0.25]} scale={1.08}>
                     <mesh position={[0, 0.065, 0]}>

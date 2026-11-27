@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft,
@@ -13,10 +13,13 @@ import {
     History,
     KeyRound,
     Keyboard,
+    Loader2,
     Lock,
     Play,
     QrCode,
     ShieldCheck,
+    User,
+    Users,
     WifiOff,
     X,
 } from 'lucide-react';
@@ -43,6 +46,11 @@ export default function LoginPage() {
     const [tab, setTab] = useState('student');
     const [joinCode, setJoinCode] = useState('');
     const [fullName, setFullName] = useState('');
+    const [onlineGroupName, setOnlineGroupName] = useState('');
+    const [onlineMemberNames, setOnlineMemberNames] = useState('');
+    const [sessionPreview, setSessionPreview] = useState(null);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const previewReqRef = useRef(0);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -70,6 +78,45 @@ export default function LoginPage() {
     const savedQrHistory = loadSavedQrHistory();
     const activeSavedQr = savedQrHistory[selectedSavedQrIdx] || savedQrHistory[0] || null;
 
+    // Auto-detect Per Grupo vs Indibidwal as soon as student types the Class PIN online
+    useEffect(() => {
+        if (!isOnline || tab !== 'student') return undefined;
+        const cleanCode = joinCode.trim().toUpperCase();
+        if (cleanCode.length < 3) {
+            previewReqRef.current += 1;
+            setSessionPreview(null);
+            setPreviewLoading(false);
+            return undefined;
+        }
+        if (sessionPreview?.found && sessionPreview.join_code === cleanCode) {
+            return undefined;
+        }
+
+        const reqId = ++previewReqRef.current;
+        setPreviewLoading(true);
+        const timer = setTimeout(async () => {
+            try {
+                const data = await authApi.previewSession(cleanCode);
+                if (previewReqRef.current !== reqId) return;
+                if (data?.found) {
+                    setSessionPreview(data);
+                    setError('');
+                } else {
+                    setSessionPreview({ found: false, checkedCode: cleanCode });
+                }
+            } catch {
+                if (previewReqRef.current !== reqId) return;
+                setSessionPreview(null);
+            } finally {
+                if (previewReqRef.current === reqId) {
+                    setPreviewLoading(false);
+                }
+            }
+        }, 280);
+
+        return () => clearTimeout(timer);
+    }, [isOnline, tab, joinCode, sessionPreview?.found, sessionPreview?.join_code]);
+
     if (!loading && user) {
         return <Navigate to={user.role === 'teacher' ? '/teacher/monitor' : '/student/world'} replace />;
     }
@@ -77,17 +124,71 @@ export default function LoginPage() {
     const handleStudentJoin = async (e) => {
         e.preventDefault();
         setError('');
+        const cleanCode = joinCode.trim().toUpperCase();
+        if (cleanCode.length < 3) {
+            setError('Ilagay muna ang Code ng Klase mula sa iyong guro.');
+            return;
+        }
+
+        // If user pressed Enter before debounce resolved, look up session mode immediately first
+        let activePreview = sessionPreview?.found && sessionPreview.join_code === cleanCode ? sessionPreview : null;
+        if (!activePreview) {
+            setPreviewLoading(true);
+            try {
+                const data = await authApi.previewSession(cleanCode);
+                if (!data?.found) {
+                    setSessionPreview({ found: false, checkedCode: cleanCode });
+                    setError('Hindi mahanap ang Code ng Klase na ito o tapos na ang sesyon.');
+                    return;
+                }
+                setSessionPreview(data);
+                return;
+            } catch {
+                setError('Hindi masuri ang Code ng Klase. Suriin ang iyong internet at subukan muli.');
+                return;
+            } finally {
+                setPreviewLoading(false);
+            }
+        }
+
+        const isGroupMode = activePreview.play_mode === 'group';
+        if (isGroupMode) {
+            if (onlineGroupName.trim().length < 2) {
+                setError('Ilagay ang pangalan ng inyong pangkat (kahit 2 letra).');
+                return;
+            }
+            if (onlineMemberNames.trim().length < 2) {
+                setError('Ilagay ang mga miyembro ng pangkat (kasama ang humahawak ng device).');
+                return;
+            }
+        } else if (fullName.trim().length < 2) {
+            setError('Ilagay ang iyong pangalan (kahit 2 letra).');
+            return;
+        }
+
         setBusy(true);
         try {
-            const res = await authApi.joinByCode({ join_code: joinCode, full_name: fullName });
+            const payload = isGroupMode
+                ? {
+                      join_code: cleanCode,
+                      group_name: onlineGroupName.trim(),
+                      member_names: onlineMemberNames.trim(),
+                  }
+                : {
+                      join_code: cleanCode,
+                      full_name: fullName.trim(),
+                  };
+            const res = await authApi.joinByCode(payload);
             saveAuth(res.token, res.user);
             navigate('/student/world');
         } catch (err) {
             const msg =
                 err.response?.data?.errors?.join_code?.[0] ||
+                err.response?.data?.errors?.group_name?.[0] ||
+                err.response?.data?.errors?.member_names?.[0] ||
                 err.response?.data?.errors?.full_name?.[0] ||
                 err.response?.data?.message ||
-                'Hindi makapasok. Suriin ang Code ng Klase at iyong pangalan.';
+                'Hindi makapasok. Suriin ang Code ng Klase at mga detalye ng manlalaro.';
             setError(msg);
         } finally {
             setBusy(false);
@@ -162,11 +263,16 @@ export default function LoginPage() {
             setUnblockError('');
             return;
         }
-        if (target.playMode === 'group' && offlineGroupName.trim().length < 2) {
-            setError('Ilagay ang pangalan ng inyong pangkat (kahit 2 letra).');
-            return;
-        }
-        if (offlineLeaderName.trim().length < 2) {
+        if (target.playMode === 'group') {
+            if (offlineGroupName.trim().length < 2) {
+                setError('Ilagay ang pangalan ng inyong pangkat (kahit 2 letra).');
+                return;
+            }
+            if (offlineMemberNames.trim().length < 2) {
+                setError('Ilagay ang mga miyembro ng pangkat (kasama ang humahawak ng device).');
+                return;
+            }
+        } else if (offlineLeaderName.trim().length < 2) {
             setError('Ilagay ang iyong pangalan.');
             return;
         }
@@ -177,9 +283,9 @@ export default function LoginPage() {
                 className: target.className,
                 playMode: target.playMode,
                 qrKey: target.qrKey,
-                groupName: offlineGroupName,
-                leaderName: offlineLeaderName,
-                memberNames: offlineMemberNames,
+                groupName: target.playMode === 'group' ? offlineGroupName : '',
+                leaderName: target.playMode === 'group' ? offlineGroupName : offlineLeaderName,
+                memberNames: target.playMode === 'group' ? offlineMemberNames : '',
                 manualEntry: target.manualEntry,
             });
             saveAuth(token, offlineUser);
@@ -522,52 +628,54 @@ export default function LoginPage() {
                                     </div>
                                 )}
 
-                                {(scannedSession?.playMode ?? offlinePlayMode) === 'group' && (
+                                {(scannedSession?.playMode ?? offlinePlayMode) === 'group' ? (
+                                    <>
+                                        <div>
+                                            <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                                Pangalan ng Pangkat
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={offlineGroupName}
+                                                onChange={(e) => setOfflineGroupName(e.target.value)}
+                                                placeholder="Hal. Pangkat Agila"
+                                                maxLength={35}
+                                                className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 focus:border-[#C2410C] outline-none"
+                                                required
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                                Mga Miyembro
+                                            </label>
+                                            <textarea
+                                                rows={2}
+                                                value={offlineMemberNames}
+                                                onChange={(e) => setOfflineMemberNames(e.target.value)}
+                                                placeholder="Hal. Ana, Ben, Carl, Dan"
+                                                maxLength={400}
+                                                className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 focus:border-[#C2410C] outline-none resize-none"
+                                                required
+                                            />
+                                            <p className="mt-1 text-[11px] text-stone-500">
+                                                Isama ang lahat ng miyembro, pati ang humahawak ng device.
+                                            </p>
+                                        </div>
+                                    </>
+                                ) : (
                                     <div>
                                         <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-                                            Pangalan ng Pangkat
+                                            Iyong Pangalan
                                         </label>
                                         <input
                                             type="text"
-                                            value={offlineGroupName}
-                                            onChange={(e) => setOfflineGroupName(e.target.value)}
-                                            placeholder="Hal. Pangkat Agila"
-                                            maxLength={30}
+                                            value={offlineLeaderName}
+                                            onChange={(e) => setOfflineLeaderName(e.target.value)}
+                                            placeholder="Ilagay ang iyong pangalan"
+                                            maxLength={60}
                                             className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 focus:border-[#C2410C] outline-none"
                                             required
-                                        />
-                                    </div>
-                                )}
-
-                                <div>
-                                    <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-                                        {(scannedSession?.playMode ?? offlinePlayMode) === 'group'
-                                            ? 'Pangalan ng Kinatawan'
-                                            : 'Iyong Pangalan'}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={offlineLeaderName}
-                                        onChange={(e) => setOfflineLeaderName(e.target.value)}
-                                        placeholder="Ilagay ang iyong pangalan"
-                                        maxLength={60}
-                                        className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 focus:border-[#C2410C] outline-none"
-                                        required
-                                    />
-                                </div>
-
-                                {(scannedSession?.playMode ?? offlinePlayMode) === 'group' && (
-                                    <div>
-                                        <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-                                            Mga Miyembro <span className="font-normal text-stone-400">(opsyonal)</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={offlineMemberNames}
-                                            onChange={(e) => setOfflineMemberNames(e.target.value)}
-                                            placeholder="Hal. Ana, Ben, Carl, Dan"
-                                            maxLength={250}
-                                            className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 focus:border-[#C2410C] outline-none"
                                         />
                                     </div>
                                 )}
@@ -652,36 +760,154 @@ export default function LoginPage() {
                                         <input
                                             type="text"
                                             value={joinCode}
-                                            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                                            onChange={(e) => {
+                                                setJoinCode(e.target.value.toUpperCase());
+                                                setError('');
+                                            }}
                                             placeholder="Ilagay ang code"
                                             autoComplete="off"
+                                            maxLength={16}
                                             className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-base font-bold tracking-widest uppercase text-stone-900 placeholder:font-normal placeholder:tracking-normal placeholder:normal-case placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
                                             required
                                         />
+
+                                        {previewLoading && (
+                                            <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-stone-500">
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#C2410C]" />
+                                                <span>Sinusuri ang code ng klase...</span>
+                                            </div>
+                                        )}
+
+                                        {!previewLoading && sessionPreview?.found && (
+                                            <div
+                                                className={`mt-2.5 rounded-xl border px-3 py-2 flex items-center justify-between gap-2 ${
+                                                    sessionPreview.groups_locked
+                                                        ? 'bg-amber-50 border-amber-200'
+                                                        : 'bg-emerald-50 border-emerald-200'
+                                                }`}
+                                            >
+                                                <div className="min-w-0 flex items-center gap-2">
+                                                    {sessionPreview.groups_locked ? (
+                                                        <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                                                    ) : (
+                                                        <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
+                                                    )}
+                                                    <div className="min-w-0">
+                                                        <p
+                                                            className={`text-xs font-bold truncate ${
+                                                                sessionPreview.groups_locked
+                                                                    ? 'text-amber-900'
+                                                                    : 'text-emerald-900'
+                                                            }`}
+                                                        >
+                                                            {sessionPreview.class_name}
+                                                        </p>
+                                                        {sessionPreview.groups_locked && (
+                                                            <p className="text-[10px] text-amber-800 leading-snug">
+                                                                Sarado sa bagong sali (pwede bumalik ang nakasali na)
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <span
+                                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
+                                                        sessionPreview.play_mode === 'group'
+                                                            ? 'bg-white/90 text-[#C2410C] border border-orange-200/80'
+                                                            : 'bg-white/90 text-stone-700 border border-stone-200'
+                                                    }`}
+                                                >
+                                                    {sessionPreview.play_mode === 'group' ? (
+                                                        <>
+                                                            <Users className="w-3 h-3" />
+                                                            <span>Per Grupo</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <User className="w-3 h-3" />
+                                                            <span>Indibidwal</span>
+                                                        </>
+                                                    )}
+                                                </span>
+                                            </div>
+                                        )}
+
+                                        {!previewLoading && sessionPreview && !sessionPreview.found && (
+                                            <p className="mt-2 text-[11px] font-semibold text-rose-600">
+                                                Hindi mahanap ang code na ito o tapos na ang sesyon.
+                                            </p>
+                                        )}
                                     </div>
 
-                                    <div>
-                                        <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-                                            Pangalan
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={fullName}
-                                            onChange={(e) => setFullName(e.target.value)}
-                                            placeholder="Ilagay ang iyong pangalan"
-                                            autoComplete="name"
-                                            className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
-                                            required
-                                        />
-                                    </div>
+                                    {sessionPreview?.found && sessionPreview.play_mode === 'group' ? (
+                                        <>
+                                            <div>
+                                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                                    Pangalan ng Pangkat
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={onlineGroupName}
+                                                    onChange={(e) => setOnlineGroupName(e.target.value)}
+                                                    placeholder="Hal. Pangkat Agila"
+                                                    maxLength={35}
+                                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
+                                                    required
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                                    Mga Miyembro
+                                                </label>
+                                                <textarea
+                                                    rows={2}
+                                                    value={onlineMemberNames}
+                                                    onChange={(e) => setOnlineMemberNames(e.target.value)}
+                                                    placeholder="Hal. Ana, Ben, Carl, Dan"
+                                                    maxLength={400}
+                                                    className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition resize-none"
+                                                    required
+                                                />
+                                                <p className="mt-1 text-[11px] text-stone-500">
+                                                    Isama ang lahat ng miyembro, pati ang humahawak ng device.
+                                                </p>
+                                            </div>
+                                        </>
+                                    ) : sessionPreview?.found && sessionPreview.play_mode === 'individual' ? (
+                                        <div>
+                                            <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                                                Iyong Pangalan
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={fullName}
+                                                onChange={(e) => setFullName(e.target.value)}
+                                                placeholder="Ilagay ang iyong pangalan"
+                                                autoComplete="name"
+                                                maxLength={100}
+                                                className="w-full rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#C2410C] outline-none transition"
+                                                required
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl bg-[#FAF8F5] border border-stone-200/80 px-3.5 py-2.5 text-xs text-stone-500 leading-relaxed">
+                                            Ilagay ang <strong>Code ng Klase</strong> mula sa iyong guro upang awtomatikong lumabas ang form (Per Grupo o Indibidwal).
+                                        </div>
+                                    )}
 
                                     <button
                                         type="submit"
-                                        disabled={busy}
+                                        disabled={busy || previewLoading}
                                         className="w-full min-h-[46px] py-3 px-4 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-60 text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                                     >
                                         <Play className="w-4 h-4 fill-current" />
-                                        <span>{busy ? 'Pumapasok...' : 'Simulan ang Laro'}</span>
+                                        <span>
+                                            {busy
+                                                ? 'Pumapasok...'
+                                                : sessionPreview?.found
+                                                  ? 'Simulan ang Laro'
+                                                  : 'Suriin ang Code'}
+                                        </span>
                                     </button>
                                 </form>
                             ) : (
@@ -794,9 +1020,12 @@ export default function LoginPage() {
                                     Backup na Result QR
                                 </h3>
                                 <p className="text-[11px] text-stone-500 truncate">
-                                    {activeSavedQr.group_name
+                                    {activeSavedQr.group_name &&
+                                    activeSavedQr.leader_name &&
+                                    activeSavedQr.group_name.trim().toLowerCase() !==
+                                        activeSavedQr.leader_name.trim().toLowerCase()
                                         ? `${activeSavedQr.group_name} (${activeSavedQr.leader_name})`
-                                        : activeSavedQr.leader_name}{' '}
+                                        : activeSavedQr.group_name || activeSavedQr.leader_name}{' '}
                                     · <span className="font-mono font-bold">{activeSavedQr.join_code}</span>
                                 </p>
                             </div>

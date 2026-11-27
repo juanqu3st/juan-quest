@@ -40,7 +40,7 @@ function ClonedModel({ url, position, yaw = 0, scale = 1, castShadow = true }) {
 
     return (
         <group position={position} rotation={[0, yaw, 0]} scale={scale}>
-            <primitive object={cloned} />
+            <primitive object={cloned} dispose={null} />
         </group>
     );
 }

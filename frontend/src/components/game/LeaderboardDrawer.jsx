@@ -122,9 +122,9 @@ export default function LeaderboardDrawer({
                                                                         </span>
                                                                     )}
                                                                 </p>
-                                                                {g.leader_name && (
+                                                                {g.member_names && (
                                                                     <p className="text-[11px] text-stone-500 truncate">
-                                                                        {g.leader_name}
+                                                                        {g.member_names}
                                                                     </p>
                                                                 )}
                                                             </div>

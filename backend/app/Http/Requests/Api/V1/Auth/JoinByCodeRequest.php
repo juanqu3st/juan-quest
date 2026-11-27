@@ -18,7 +18,9 @@ class JoinByCodeRequest extends FormRequest
     {
         return [
             'join_code' => ['required', 'string', 'max:16'],
-            'full_name' => ['required', 'string', 'min:2', 'max:100'],
+            'full_name' => ['nullable', 'string', 'min:2', 'max:100'],
+            'group_name' => ['nullable', 'string', 'min:2', 'max:35'],
+            'member_names' => ['nullable', 'string', 'max:400'],
         ];
     }
 }

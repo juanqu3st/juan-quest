@@ -357,6 +357,7 @@ export default function MapLandmarkNode({
                     ref={starRef}
                     geometry={starAssets.geometry}
                     material={starAssets.material}
+                    dispose={null}
                     position={[layout.offset[0], 6.45, layout.offset[1]]}
                     castShadow={!lowQuality}
                 />
@@ -368,11 +369,12 @@ export default function MapLandmarkNode({
                     <mesh
                         geometry={padlockAssets.bodyGeo}
                         material={padlockAssets.bodyMat}
+                        dispose={null}
                         castShadow={!lowQuality}
                     />
-                    <mesh geometry={padlockAssets.trimGeo} material={padlockAssets.trimMat} />
-                    <mesh geometry={padlockAssets.keyholeGeo} material={padlockAssets.keyholeMat} />
-                    <mesh geometry={padlockAssets.shackleGeo} material={padlockAssets.shackleMat} />
+                    <mesh geometry={padlockAssets.trimGeo} material={padlockAssets.trimMat} dispose={null} />
+                    <mesh geometry={padlockAssets.keyholeGeo} material={padlockAssets.keyholeMat} dispose={null} />
+                    <mesh geometry={padlockAssets.shackleGeo} material={padlockAssets.shackleMat} dispose={null} />
                 </group>
             )}
 
@@ -472,7 +474,7 @@ function ArchitecturalLandmarkGlb({ mapNumber, isUnlocked, lowQuality }) {
         };
     }, [clonedScene, isUnlocked]);
 
-    return <primitive object={clonedScene} />;
+    return <primitive object={clonedScene} dispose={null} />;
 }
 
 function createPhilippineFlagTexture() {

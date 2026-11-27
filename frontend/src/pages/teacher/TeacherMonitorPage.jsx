@@ -94,8 +94,15 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
     const merged = [...baseRows];
     const indexByName = new Map();
     merged.forEach((r, i) => {
-        const key = String(isGroupMode ? r.leader_name : r.name || '').trim().toLowerCase();
-        if (key) indexByName.set(key, i);
+        if (isGroupMode) {
+            const gKey = String(r.group_name || '').trim().toLowerCase();
+            const lKey = String(r.leader_name || '').trim().toLowerCase();
+            if (gKey) indexByName.set(gKey, i);
+            if (lKey && !indexByName.has(lKey)) indexByName.set(lKey, i);
+        } else {
+            const key = String(r.name || '').trim().toLowerCase();
+            if (key) indexByName.set(key, i);
+        }
     });
 
     let changed = false;
@@ -103,9 +110,12 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
     pendingQueue.forEach((item, idx) => {
         const d = item.qr_payload || {};
         const leader = String(d.l || '').trim();
-        if (!leader) return;
+        const rawGroup = String(d.g || '').trim();
+        const groupName = rawGroup || leader;
+        const effectiveName = isGroupMode ? groupName : leader;
+        if (!effectiveName) return;
+        const groupKey = groupName.toLowerCase();
         const leaderKey = leader.toLowerCase();
-        const groupName = String(d.g || '').trim() || leader;
 
         const scores = Array.isArray(d.s) ? d.s.map((v) => Number(v || 0)) : [0, 0, 0, 0, 0];
         const hearts = Array.isArray(d.h) ? d.h.map((v) => Number(v || 0)) : [0, 0, 0, 0, 0];
@@ -121,7 +131,9 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
         const totalHearts = hearts.reduce((a, b) => a + b, 0);
         const totalTime = times.reduce((a, b) => a + b, 0);
 
-        const existingIdx = indexByName.get(leaderKey);
+        const existingIdx = isGroupMode
+            ? (indexByName.get(groupKey) ?? indexByName.get(leaderKey))
+            : indexByName.get(leaderKey);
         if (existingIdx !== undefined) {
             // Update existing cached row cleanly so Online->Offline failover & teacher-unblocked retakes reflect immediately!
             const prev = merged[existingIdx];
@@ -176,7 +188,7 @@ function mergePendingIntoRows(baseRows, pendingQueue, isGroupMode, maxTotalHeart
                   pending_sync: true,
               };
 
-        indexByName.set(leaderKey, merged.length);
+        indexByName.set(isGroupMode ? groupKey : leaderKey, merged.length);
         merged.push(newRow);
         changed = true;
     });
@@ -194,7 +206,7 @@ function buildLocalCsv(rows, isGroupMode, maxTotalScore = 50, maxTotalHearts = 1
         return `"${s.replace(/"/g, '""')}"`;
     };
     const headers = isGroupMode
-        ? ['Rank', 'Pangkat', 'Kinatawan', 'Mga Miyembro', 'Pinagmulan', 'M1', 'M2', 'M3', 'M4', 'M5', `Hearts (/${maxTotalHearts})`, 'Oras (s)', `Kabuuan (/${maxTotalScore})`]
+        ? ['Rank', 'Pangkat', 'Mga Miyembro', 'Pinagmulan', 'M1', 'M2', 'M3', 'M4', 'M5', `Hearts (/${maxTotalHearts})`, 'Oras (s)', `Kabuuan (/${maxTotalScore})`]
         : ['Rank', 'Mag-aaral', 'Pinagmulan', 'M1', 'M2', 'M3', 'M4', 'M5', `Hearts (/${maxTotalHearts})`, 'Oras (s)', `Kabuuan (/${maxTotalScore})`];
 
     const lines = [headers.map(esc).join(',')];
@@ -204,7 +216,6 @@ function buildLocalCsv(rows, isGroupMode, maxTotalScore = 50, maxTotalHearts = 1
             ? [
                   r.rank,
                   r.group_name,
-                  r.leader_name,
                   r.member_names || '',
                   src,
                   r.map_scores?.[1] ?? '-',
@@ -1156,17 +1167,10 @@ export default function TeacherMonitorPage() {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        {isGroupMode && (
-                                                            <>
-                                                                <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                                                    Kinatawan: {row.leader_name}
-                                                                </p>
-                                                                {row.member_names && (
-                                                                    <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-2">
-                                                                        {row.member_names}
-                                                                    </p>
-                                                                )}
-                                                            </>
+                                                        {isGroupMode && row.member_names && (
+                                                            <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">
+                                                                {row.member_names}
+                                                            </p>
                                                         )}
                                                     </div>
                                                 </div>
@@ -1305,18 +1309,12 @@ export default function TeacherMonitorPage() {
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <p className="text-[11px] text-slate-500 mt-0.5">
-                                                                    Kinatawan:{' '}
-                                                                    <span className="font-medium text-slate-700">
-                                                                        {row.leader_name}
-                                                                    </span>
-                                                                </p>
                                                                 {row.member_names && (
                                                                     <p
-                                                                        className="text-[11px] text-slate-400 mt-0.5 max-w-md truncate"
+                                                                        className="text-[11px] text-slate-500 mt-0.5 max-w-md truncate"
                                                                         title={row.member_names}
                                                                     >
-                                                                        Miyembro: {row.member_names}
+                                                                        {row.member_names}
                                                                     </p>
                                                                 )}
                                                             </div>
@@ -1622,7 +1620,6 @@ export default function TeacherMonitorPage() {
                                 </div>
                                 <p className="text-xs text-slate-500 truncate mt-0.5">
                                     {isGroupMode ? retakeRow.group_name : retakeRow.name}
-                                    {isGroupMode && retakeRow.leader_name ? ` · ${retakeRow.leader_name}` : ''}
                                 </p>
                             </div>
                             <button

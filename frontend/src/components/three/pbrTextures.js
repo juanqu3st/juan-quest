@@ -1,6 +1,31 @@
 import * as THREE from 'three';
 
 const cache = {};
+let pbrGeneration = 0;
+
+/**
+ * Dispose & clear all cached procedural 2D CanvasTextures so the next mount or WebGL context
+ * recovery paints brand-new 2D canvases (preventing pitch-black terrain/roads/mountains on mobile
+ * after Android Chrome evicts backgrounded 2D canvas GPU surfaces).
+ */
+export function resetPbrTextures() {
+    for (const key of Object.keys(cache)) {
+        const val = cache[key];
+        if (val && typeof val.dispose === 'function') {
+            try {
+                val.dispose();
+            } catch {
+                // ignore already-disposed textures
+            }
+        }
+        delete cache[key];
+    }
+    pbrGeneration += 1;
+}
+
+export function getPbrTexturesGeneration() {
+    return pbrGeneration;
+}
 
 function makeCanvas(size = 256) {
     const canvas = document.createElement('canvas');
@@ -206,8 +231,24 @@ export function getPbrTextures() {
     waterBump.wrapT = THREE.RepeatWrapping;
     waterBump.repeat.set(16, 2);
 
+    const allTex = [
+        grassMap,
+        grassBump,
+        dirtMap,
+        dirtBump,
+        stoneMap,
+        stoneBump,
+        woodMap,
+        waterFlowMap,
+        waterBump,
+    ];
+    for (const tex of allTex) {
+        tex.needsUpdate = true;
+    }
+
     Object.assign(cache, {
         initialized: true,
+        generation: pbrGeneration,
         grassMap,
         grassBump,
         dirtMap,

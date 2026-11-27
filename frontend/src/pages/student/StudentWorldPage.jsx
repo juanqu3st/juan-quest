@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, CheckCircle2, ChevronDown, HelpCircle, Home, LogOut, Pencil, QrCode, Sparkles, Star, Trophy, Users, WifiOff } from 'lucide-react';
+import { Award, CheckCircle2, ChevronDown, HelpCircle, Home, LogOut, QrCode, Sparkles, Star, Trophy, Users, WifiOff } from 'lucide-react';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
@@ -187,14 +187,17 @@ export default function StudentWorldPage() {
 
     useEffect(() => {
         loadWorld();
-        const onFocus = () => {
+        const refreshOnResume = () => {
+            if (document.visibilityState === 'hidden') return;
             if (Date.now() - lastWorldFetchRef.current > 5000) {
                 loadWorld().catch(() => {});
             }
         };
-        window.addEventListener('focus', onFocus);
+        window.addEventListener('focus', refreshOnResume);
+        document.addEventListener('visibilitychange', refreshOnResume);
         return () => {
-            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('focus', refreshOnResume);
+            document.removeEventListener('visibilitychange', refreshOnResume);
         };
     }, [loadWorld]);
 
@@ -537,16 +540,16 @@ export default function StudentWorldPage() {
             {/* Single-Row Responsive Top HUD (Hidden during tour, intro & outro for clean framing) */}
             {!guideOpen && !outroOpen && !tourActive && (
             <div className="pointer-events-none fixed top-0 inset-x-0 z-20 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-4 flex items-start justify-between gap-2">
-                {/* Left Dock: Identity + ONLY ONE Clickable Group Chip + Score */}
+                {/* Left Dock: Identity + View-Only Group Pill + Score */}
                 <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-stone-200/90 shadow-sm rounded-2xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2 sm:gap-3 min-w-0 max-w-[calc(100%-148px)] sm:max-w-none">
                     <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-orange-50 border border-orange-200/80 text-[#C2410C] text-[10px] sm:text-[11px] font-extrabold flex items-center justify-center shrink-0">
-                        {getInitials(user.name)}
+                        {getInitials(isGroupMode ? world.session?.group_name || user.name : user.name)}
                     </div>
 
                     <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                             <p className="text-[11px] sm:text-xs font-bold text-stone-900 leading-tight truncate max-w-[105px] sm:max-w-[180px]">
-                                {user.name}
+                                {isGroupMode ? world.session?.group_name || user.name : user.name}
                             </p>
                             {isOfflineMode && (
                                 <span
@@ -574,35 +577,23 @@ export default function StudentWorldPage() {
                         </div>
 
                         {isGroupMode ? (
-                            isOfflineMode ? (
-                                <span className="mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold bg-stone-100 text-stone-700 max-w-full">
-                                    <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
-                                    <span className="max-w-[90px] sm:max-w-[135px] truncate">
-                                        {world.session.group_name || 'Aking Pangkat'}
-                                    </span>
-                                </span>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => {
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!isOfflineMode) {
                                         loadWorld().catch(() => {});
-                                        setGroupModalOpen(true);
-                                    }}
-                                    className={`mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold transition cursor-pointer max-w-full ${
-                                        world.session.can_rename_group
-                                            ? 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
-                                            : 'bg-stone-100 hover:bg-stone-200/80 text-stone-700'
-                                    }`}
-                                >
-                                    <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
-                                    <span className="max-w-[90px] sm:max-w-[135px] truncate">
-                                        {world.session.group_name || 'Aking Pangkat'}
-                                    </span>
-                                    {world.session.can_rename_group && (
-                                        <Pencil className="w-2.5 h-2.5 text-amber-700 ml-0.5 shrink-0" />
-                                    )}
-                                </button>
-                            )
+                                    }
+                                    setGroupModalOpen(true);
+                                }}
+                                className="mt-0.5 inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-semibold bg-stone-100 hover:bg-stone-200/80 text-stone-700 transition cursor-pointer max-w-full"
+                            >
+                                <Users className="w-3 h-3 text-[#C2410C] shrink-0" />
+                                <span className="max-w-[95px] sm:max-w-[145px] truncate">
+                                    {world.session.group_number
+                                        ? `Pangkat #${world.session.group_number} · Miyembro`
+                                        : 'Mga Miyembro'}
+                                </span>
+                            </button>
                         ) : world.session ? (
                             <p className="text-[10px] sm:text-[11px] font-medium text-stone-500 mt-0.5 truncate max-w-[115px] sm:max-w-[160px]">
                                 {world.session.class_name}
@@ -823,17 +814,11 @@ export default function StudentWorldPage() {
                 onClose={() => setCharacterPickerOpen(false)}
             />
 
-            {!isOfflineMode && isGroupMode && (
+            {isGroupMode && (
                 <MyGroupModal
                     open={groupModalOpen}
                     onClose={() => setGroupModalOpen(false)}
                     session={world.session}
-                    onRenamed={async (newName) => {
-                        await loadWorld().catch(() => {});
-                        if (newName) {
-                            showToast('success', `Na-save ang pangkat "${newName}".`, 'Na-save.');
-                        }
-                    }}
                 />
             )}
 

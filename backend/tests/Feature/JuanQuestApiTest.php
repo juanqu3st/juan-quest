@@ -1311,4 +1311,138 @@ class JuanQuestApiTest extends TestCase
             ->assertStatus(422)
             ->assertJsonStructure(['message']);
     }
+
+    public function test_session_preview_and_direct_group_join_with_backward_compatible_reconnect(): void
+    {
+        $asToken = function (string $token) {
+            $this->app['auth']->forgetGuards();
+
+            return $this->withToken($token);
+        };
+
+        $teacherToken = $this->postJson('/api/v1/auth/login', [
+            'email' => 'teacher@juanquest.ph',
+            'password' => 'password',
+        ])->assertOk()->json('token');
+
+        $lessonId = \App\Models\Lesson::firstOrFail()->id;
+
+        $groupSession = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'lesson_id' => $lessonId,
+                'class_name' => 'Grade 7 - Sampaguita',
+                'play_mode' => 'group',
+                'join_code' => 'SMP7',
+            ])
+            ->assertCreated()
+            ->json('session');
+
+        $soloSession = $asToken($teacherToken)
+            ->postJson('/api/v1/teacher/sessions', [
+                'lesson_id' => $lessonId,
+                'class_name' => 'Grade 7 - Rizal Solo',
+                'play_mode' => 'individual',
+                'join_code' => 'RZL7',
+            ])
+            ->assertCreated()
+            ->json('session');
+
+        // 1) Session preview auto-detects group vs individual and returns found=false for invalid codes
+        $this->getJson('/api/v1/auth/session-preview?join_code=smp7')
+            ->assertOk()
+            ->assertJson([
+                'found' => true,
+                'join_code' => 'SMP7',
+                'class_name' => 'Grade 7 - Sampaguita',
+                'play_mode' => 'group',
+                'status' => 'waiting',
+                'groups_locked' => false,
+            ]);
+
+        $this->getJson('/api/v1/auth/session-preview?join_code=RZL7')
+            ->assertOk()
+            ->assertJson([
+                'found' => true,
+                'join_code' => 'RZL7',
+                'play_mode' => 'individual',
+            ]);
+
+        $this->getJson('/api/v1/auth/session-preview?join_code=NOPE99')
+            ->assertOk()
+            ->assertJson(['found' => false]);
+
+        // 2) Direct Group Join requires member_names for brand-new groups
+        $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'SMP7',
+            'group_name' => 'Pangkat Agila',
+            'member_names' => '',
+        ])->assertStatus(422)->assertJsonValidationErrors(['member_names']);
+
+        $agilaJoin = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'SMP7',
+            'group_name' => '  Pangkat Agila  ',
+            'member_names' => 'Ana, Ben, Carl, Dan',
+        ])->assertOk();
+
+        $agilaUserId = $agilaJoin->json('user.id');
+        $agilaToken = $agilaJoin->json('token');
+
+        $asToken($agilaToken)
+            ->getJson('/api/v1/student/world')
+            ->assertOk()
+            ->assertJsonPath('session.group_name', 'Pangkat Agila')
+            ->assertJsonPath('session.member_names', 'Ana, Ben, Carl, Dan');
+
+        // 3) Legacy group joined previously via old full_name-only flow reconnects cleanly by group_name OR legacy user name
+        $legacyJoin = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'SMP7',
+            'full_name' => 'group2',
+        ])->assertOk();
+        $legacyUserId = $legacyJoin->json('user.id');
+
+        // Reconnect by legacy user name using new group_name + member_names form (backfills member_names!)
+        $legacyReconnect = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'SMP7',
+            'group_name' => 'GROUP2',
+            'member_names' => 'Juan, Maria, Jose',
+        ])->assertOk();
+        $this->assertSame($legacyUserId, $legacyReconnect->json('user.id'));
+
+        $asToken($legacyReconnect->json('token'))
+            ->getJson('/api/v1/student/world')
+            ->assertOk()
+            ->assertJsonPath('session.group_name', 'Pangkat 2')
+            ->assertJsonPath('session.member_names', 'Juan, Maria, Jose');
+
+        // Reconnect by group_name directly (matches existing Pangkat Agila without duplicating)
+        $agilaReconnect = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'SMP7',
+            'group_name' => 'pangkat agila',
+            'member_names' => 'Attempted Overwrite',
+        ])->assertOk();
+        $this->assertSame($agilaUserId, $agilaReconnect->json('user.id'));
+
+        // Teacher-curated / existing member_names stays preserved on reconnect
+        $asToken($agilaReconnect->json('token'))
+            ->getJson('/api/v1/student/world')
+            ->assertOk()
+            ->assertJsonPath('session.member_names', 'Ana, Ben, Carl, Dan');
+
+        // 4) Individual mode join works cleanly with full_name only
+        $soloJoin = $this->postJson('/api/v1/auth/join', [
+            'join_code' => 'RZL7',
+            'full_name' => 'Maria Clara',
+        ])->assertOk();
+        $this->assertSame('Maria Clara', $soloJoin->json('user.name'));
+
+        // 5) Group CSV export omits Kinatawan column and keeps Pangkat + Mga Miyembro
+        $csvRes = $asToken($teacherToken)
+            ->get("/api/v1/teacher/sessions/{$groupSession['id']}/export")
+            ->assertOk();
+        $csvText = $csvRes->streamedContent();
+        $this->assertStringContainsString('Pangkat,"Mga Miyembro"', $csvText);
+        $this->assertStringNotContainsString('Kinatawan', $csvText);
+        $this->assertStringContainsString('Pangkat Agila', $csvText);
+        $this->assertStringContainsString('Ana, Ben, Carl, Dan', $csvText);
+    }
 }

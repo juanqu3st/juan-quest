@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { PerformanceMonitor, Sky } from '@react-three/drei';
 import { RotateCcw } from 'lucide-react';
 import * as THREE from 'three';
 import { getDeviceProfile } from '../../utils/deviceTier';
 import { createWorldCurve, WORLD_SCALE } from './worldConfig';
+import { resetPbrTextures } from './pbrTextures';
 import TerrainAndWater from './TerrainAndWater';
 import SteppingStonePath from './SteppingStonePath';
 import CameraRig from './CameraRig';
@@ -129,6 +130,56 @@ function DreamCloudOverlay({ elRef, active }) {
     );
 }
 
+const TEXTURE_SLOTS = [
+    'map',
+    'bumpMap',
+    'normalMap',
+    'roughnessMap',
+    'metalnessMap',
+    'emissiveMap',
+    'aoMap',
+    'alphaMap',
+];
+
+/**
+ * Ensures every material texture in a freshly mounted/recovered WebGL2 context (including cached
+ * useGLTF textures and regenerated 2D CanvasTextures) is flagged for GPU upload cleanly.
+ */
+function SceneTextureReuploadGuard({ generation }) {
+    const { scene, gl } = useThree();
+
+    useEffect(() => {
+        const markTextures = () => {
+            if (gl?.getContext?.()?.isContextLost?.()) return;
+            const seen = new Set();
+            scene.traverse((obj) => {
+                if (!obj.isMesh && !obj.isSprite) return;
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const mat of mats) {
+                    if (!mat) continue;
+                    for (const slot of TEXTURE_SLOTS) {
+                        const tex = mat[slot];
+                        if (tex && tex.isTexture && tex.image && !seen.has(tex)) {
+                            seen.add(tex);
+                            tex.needsUpdate = true;
+                        }
+                    }
+                }
+            });
+        };
+
+        markTextures();
+        const t1 = setTimeout(markTextures, 350);
+        const t2 = setTimeout(markTextures, 1100);
+        return () => {
+            clearTimeout(t1);
+            clearTimeout(t2);
+        };
+    }, [scene, gl, generation]);
+
+    return null;
+}
+
 export default function WorldMapCanvas({
     maps = [],
     characterKey,
@@ -158,11 +209,19 @@ export default function WorldMapCanvas({
 
     const [quality, setQuality] = useState(() => (isLowEndDevice ? 'low' : 'balanced'));
     const [contextLost, setContextLost] = useState(false);
+    const [autoRecovering, setAutoRecovering] = useState(false);
+    const [isTabVisible, setIsTabVisible] = useState(() =>
+        typeof document === 'undefined' ? true : document.visibilityState !== 'hidden'
+    );
     const [canvasKey, setCanvasKey] = useState(0);
     const controlsRef = useRef();
     const playerPosRef = useRef(new THREE.Vector3());
     const dreamBubbleElRef = useRef(null);
     const glCleanupRef = useRef(null);
+    const glRef = useRef(null);
+    const pendingRecoveryRef = useRef(false);
+    const autoRecoverTimesRef = useRef([]);
+    const recoverTimerRef = useRef(null);
     const curve = useMemo(() => createWorldCurve(), []);
     const lowQuality = quality === 'low';
     const S = WORLD_SCALE;
@@ -176,47 +235,123 @@ export default function WorldMapCanvas({
           ? [1, 1.25]
           : [1, 1.5];
 
-    useEffect(() => {
-        return () => {
-            glCleanupRef.current?.();
-            glCleanupRef.current = null;
-        };
-    }, []);
-
-    const handleCanvasCreated = useCallback(({ gl }) => {
-        glCleanupRef.current?.();
-        const dom = gl.domElement;
-        if (!dom) return;
-
-        const onLost = (e) => {
-            e.preventDefault();
-            setContextLost(true);
-        };
-        const onRestored = () => {
-            setContextLost(false);
-        };
-
-        dom.addEventListener('webglcontextlost', onLost, false);
-        dom.addEventListener('webglcontextrestored', onRestored, false);
-        glCleanupRef.current = () => {
-            dom.removeEventListener('webglcontextlost', onLost, false);
-            dom.removeEventListener('webglcontextrestored', onRestored, false);
-        };
-    }, []);
-
-    const handleReload3D = () => {
+    const triggerCleanRemount = useCallback(() => {
+        clearTimeout(recoverTimerRef.current);
         glCleanupRef.current?.();
         glCleanupRef.current = null;
+        glRef.current = null;
+        pendingRecoveryRef.current = false;
+        // Rebuild all procedural 2D CanvasTextures fresh so Android-evicted black canvases NEVER survive reload!
+        resetPbrTextures();
         setContextLost(false);
+        setAutoRecovering(false);
         setCanvasKey((k) => k + 1);
+    }, []);
+
+    const scheduleAutoRecoverIfNeeded = useCallback(() => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        const ctxLostNow =
+            pendingRecoveryRef.current || Boolean(glRef.current?.getContext?.()?.isContextLost?.());
+        if (!ctxLostNow) return;
+
+        const now = Date.now();
+        autoRecoverTimesRef.current = autoRecoverTimesRef.current.filter((ts) => now - ts < 30000);
+        if (autoRecoverTimesRef.current.length >= 3) {
+            setAutoRecovering(false);
+            setContextLost(true);
+            return;
+        }
+
+        autoRecoverTimesRef.current.push(now);
+        setAutoRecovering(true);
+        clearTimeout(recoverTimerRef.current);
+        recoverTimerRef.current = setTimeout(() => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            triggerCleanRemount();
+        }, 180);
+    }, [triggerCleanRemount]);
+
+    useEffect(() => {
+        if (typeof document === 'undefined') return undefined;
+
+        const onVisibilityOrFocus = () => {
+            const visible = document.visibilityState !== 'hidden';
+            setIsTabVisible(visible);
+            if (visible) {
+                // Brief settle for mobile GPU surface wakeup after returning from Messenger / another app
+                clearTimeout(recoverTimerRef.current);
+                recoverTimerRef.current = setTimeout(() => {
+                    scheduleAutoRecoverIfNeeded();
+                }, 160);
+            }
+        };
+
+        document.addEventListener('visibilitychange', onVisibilityOrFocus);
+        window.addEventListener('pageshow', onVisibilityOrFocus);
+        window.addEventListener('focus', onVisibilityOrFocus);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+            window.removeEventListener('pageshow', onVisibilityOrFocus);
+            window.removeEventListener('focus', onVisibilityOrFocus);
+        };
+    }, [scheduleAutoRecoverIfNeeded]);
+
+    useEffect(() => {
+        return () => {
+            clearTimeout(recoverTimerRef.current);
+            glCleanupRef.current?.();
+            glCleanupRef.current = null;
+            glRef.current = null;
+            resetPbrTextures();
+        };
+    }, []);
+
+    const handleCanvasCreated = useCallback(
+        ({ gl }) => {
+            glCleanupRef.current?.();
+            glRef.current = gl;
+            const dom = gl.domElement;
+            if (!dom) return;
+
+            const onLost = (e) => {
+                e.preventDefault();
+                pendingRecoveryRef.current = true;
+                setContextLost(true);
+                if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
+                    scheduleAutoRecoverIfNeeded();
+                }
+            };
+            const onRestored = () => {
+                // Always rebuild 2D canvas textures & remount cleanly because Android Chrome evicts 2D canvas pixels too
+                pendingRecoveryRef.current = true;
+                if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
+                    scheduleAutoRecoverIfNeeded();
+                }
+            };
+
+            dom.addEventListener('webglcontextlost', onLost, false);
+            dom.addEventListener('webglcontextrestored', onRestored, false);
+            glCleanupRef.current = () => {
+                dom.removeEventListener('webglcontextlost', onLost, false);
+                dom.removeEventListener('webglcontextrestored', onRestored, false);
+            };
+        },
+        [scheduleAutoRecoverIfNeeded]
+    );
+
+    const handleReload3D = () => {
+        autoRecoverTimesRef.current = [];
+        triggerCleanRemount();
     };
+
+    const effectivePaused = paused || !isTabVisible || contextLost;
 
     return (
         <div className="relative w-full h-full">
             <Canvas
                 key={canvasKey}
                 onCreated={handleCanvasCreated}
-                frameloop={paused ? 'never' : 'always'}
+                frameloop={effectivePaused ? 'never' : 'always'}
                 shadows={!lowQuality}
                 dpr={activeDpr}
                 gl={{
@@ -228,6 +363,7 @@ export default function WorldMapCanvas({
                 camera={{ position: [-28 * S, 16, 26 * S], fov: 44, near: 0.5, far: 560 }}
                 className="w-full h-full"
             >
+            <SceneTextureReuploadGuard generation={canvasKey} />
             <color attach="background" args={['#8CD0F2']} />
             <fog attach="fog" args={['#CDEAF7', 74 * S, 200 * S]} />
 
@@ -348,18 +484,32 @@ export default function WorldMapCanvas({
         {contextLost && (
             <div className="absolute inset-0 z-30 bg-[#FAF8F5]/95 flex items-center justify-center p-6">
                 <div className="max-w-xs w-full bg-white border border-stone-200 rounded-2xl p-6 text-center space-y-3.5 shadow-sm">
-                    <h3 className="text-base font-bold text-stone-900">Napahinga ang 3D Mapa</h3>
-                    <p className="text-xs text-stone-600 leading-relaxed">
-                        Pansamantalang huminto ang 3D display ng device. Pindutin sa ibaba upang ibalik agad ang mapa.
-                    </p>
-                    <button
-                        type="button"
-                        onClick={handleReload3D}
-                        className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition cursor-pointer active:scale-[0.99]"
-                    >
-                        <RotateCcw className="w-4 h-4" />
-                        <span>I-reload ang 3D Mapa</span>
-                    </button>
+                    {autoRecovering ? (
+                        <>
+                            <div className="w-10 h-10 mx-auto rounded-xl bg-orange-50 border border-orange-200 text-[#C2410C] flex items-center justify-center">
+                                <RotateCcw className="w-5 h-5 animate-spin" />
+                            </div>
+                            <h3 className="text-base font-bold text-stone-900">Ibinabalik ang 3D Mapa...</h3>
+                            <p className="text-xs text-stone-600 leading-relaxed">
+                                Sandali lang habang muling inihahanda ang 3D display ng device.
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <h3 className="text-base font-bold text-stone-900">Napahinga ang 3D Mapa</h3>
+                            <p className="text-xs text-stone-600 leading-relaxed">
+                                Pansamantalang huminto ang 3D display ng device. Pindutin sa ibaba upang ibalik agad ang mapa.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={handleReload3D}
+                                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-[#C2410C] hover:bg-[#9A3412] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition cursor-pointer active:scale-[0.99]"
+                            >
+                                <RotateCcw className="w-4 h-4" />
+                                <span>I-reload ang 3D Mapa</span>
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
         )}

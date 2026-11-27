@@ -32,6 +32,7 @@ Route::prefix('v1')->group(function () {
 
 Route::prefix('v1')->middleware('throttle:api')->group(function () {
     // Public Auth Routes
+    Route::get('/auth/session-preview', [AuthController::class, 'previewSession']);
     Route::post('/auth/join', [AuthController::class, 'joinByCode']);
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 

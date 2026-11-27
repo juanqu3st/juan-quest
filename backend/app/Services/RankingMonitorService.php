@@ -226,7 +226,6 @@ class RankingMonitorService
                 fputcsv($handle, [
                     'Rank',
                     'Pangkat',
-                    'Kinatawan (Leader)',
                     'Mga Miyembro',
                     'Current Map',
                     'Activity Status',
@@ -245,7 +244,6 @@ class RankingMonitorService
                     fputcsv($handle, [
                         $row['rank'],
                         $safe($row['group_name']),
-                        $safe($row['leader_name']),
                         $safe($row['member_names'] ?? '-'),
                         "Mapa {$row['current_map_number']}",
                         $row['activity_status'],

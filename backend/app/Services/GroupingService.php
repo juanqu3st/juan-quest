@@ -94,11 +94,16 @@ class GroupingService
     }
 
     /**
-     * Group mode (1 device = 1 Pangkat): automatically creates Pangkat 1, 2, 3... for each joining device.
+     * Group mode (1 device = 1 Pangkat): creates a SessionGroup with the custom group_name
+     * and member_names provided on join (falling back to Pangkat 1, 2, 3... if omitted).
      * Individual mode: leaves session_group_id null (pure solo gameplay).
      */
-    public function assignOnJoin(GameSession $session, SessionParticipant $participant): void
-    {
+    public function assignOnJoin(
+        GameSession $session,
+        SessionParticipant $participant,
+        ?string $customGroupName = null,
+        ?string $memberNames = null
+    ): void {
         Cache::forget("juanquest:user:{$participant->user_id}:sid");
 
         if (! $session->isGroupMode()) {
@@ -113,15 +118,20 @@ class GroupingService
             return;
         }
 
-        DB::transaction(function () use ($session, $participant) {
+        $cleanGroupName = is_string($customGroupName)
+            ? (string) preg_replace('/\s+/', ' ', trim($customGroupName))
+            : '';
+        $cleanMembers = is_string($memberNames) ? trim($memberNames) : '';
+
+        DB::transaction(function () use ($session, $participant, $cleanGroupName, $cleanMembers) {
             $lockedSession = GameSession::where('id', $session->id)->lockForUpdate()->firstOrFail();
             $nextNumber = ((int) $lockedSession->groups()->max('group_number')) + 1;
 
             $group = SessionGroup::create([
                 'game_session_id' => $lockedSession->id,
                 'group_number' => $nextNumber,
-                'group_name' => "Pangkat {$nextNumber}",
-                'member_names' => null,
+                'group_name' => $cleanGroupName !== '' ? mb_substr($cleanGroupName, 0, 35) : "Pangkat {$nextNumber}",
+                'member_names' => $cleanMembers !== '' ? mb_substr($cleanMembers, 0, 400) : null,
             ]);
 
             $participant->update(['session_group_id' => $group->id]);

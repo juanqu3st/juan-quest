@@ -30,7 +30,7 @@ class RenameGroupRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'group_name' => ['required', 'string', 'min:2', 'max:25'],
+            'group_name' => ['required', 'string', 'min:2', 'max:35'],
             'member_names' => ['nullable', 'string', 'max:400'],
         ];
     }
@@ -43,7 +43,7 @@ class RenameGroupRequest extends FormRequest
         return [
             'group_name.required' => 'Ilagay ang bagong pangalan ng pangkat.',
             'group_name.min' => 'Ang pangalan ng pangkat ay dapat may hindi bababa sa 2 letra.',
-            'group_name.max' => 'Ang pangalan ng pangkat ay hanggang 25 karakter lamang.',
+            'group_name.max' => 'Ang pangalan ng pangkat ay hanggang 35 karakter lamang.',
             'member_names.max' => 'Ang listahan ng mga miyembro ay hanggang 400 karakter lamang.',
         ];
     }

@@ -23,7 +23,10 @@ export async function buildDownloadableQrPng(payload, { userName, groupName, cla
     ctx.textAlign = 'center';
     ctx.fillText('JUANQUEST · RESULT QR', width / 2, 76);
 
-    const displayTitle = groupName ? `${groupName} (${userName})` : userName;
+    const displayTitle =
+        groupName && userName && groupName.trim().toLowerCase() !== userName.trim().toLowerCase()
+            ? `${groupName} (${userName})`
+            : groupName || userName;
     ctx.fillStyle = '#C2410C';
     ctx.font = '700 24px system-ui, -apple-system, sans-serif';
     ctx.fillText(String(displayTitle || '').slice(0, 42), width / 2, 118);

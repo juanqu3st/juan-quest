@@ -477,10 +477,11 @@ export function startOfflineSession({
     }
 
     const cleanCode = String(joinCode || '').trim().toUpperCase();
-    const cleanLeader = String(leaderName || '').replace(/\s+/g, ' ').trim();
-    const cleanGroup = String(groupName || '').replace(/\s+/g, ' ').trim();
-    const cleanMembers = String(memberNames || '').trim();
     const mode = playMode === 'individual' ? 'individual' : 'group';
+    const cleanGroup = String(groupName || '').replace(/\s+/g, ' ').trim();
+    const rawLeader = String(leaderName || '').replace(/\s+/g, ' ').trim();
+    const cleanLeader = mode === 'group' ? cleanGroup || rawLeader : rawLeader;
+    const cleanMembers = String(memberNames || '').trim();
 
     const attempt = getNextAttemptForPin(cleanCode);
 
@@ -511,7 +512,7 @@ export function startOfflineSession({
 
     const user = {
         id: 'offline-player',
-        name: cleanLeader,
+        name: mode === 'group' ? cleanGroup || cleanLeader : cleanLeader,
         email: null,
         role: 'student',
         section: state.session.class_name,

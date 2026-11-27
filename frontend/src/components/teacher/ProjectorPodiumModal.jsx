@@ -153,13 +153,8 @@ export default function ProjectorPodiumModal({
                                             <h3 className="text-lg sm:text-xl font-extrabold text-stone-900 leading-tight break-words">
                                                 {primaryName}
                                             </h3>
-                                            {isGroupMode && row.leader_name && (
-                                                <p className="text-xs font-semibold text-stone-500">
-                                                    Kinatawan: {row.leader_name}
-                                                </p>
-                                            )}
                                             {isGroupMode && row.member_names && (
-                                                <p className="text-[11px] text-stone-400 line-clamp-2">
+                                                <p className="text-xs text-stone-500 line-clamp-2">
                                                     {row.member_names}
                                                 </p>
                                             )}
@@ -222,9 +217,9 @@ export default function ProjectorPodiumModal({
                                                 <p className="text-sm font-bold text-stone-900 truncate">
                                                     {isGroupMode ? row.group_name : row.name}
                                                 </p>
-                                                {isGroupMode && row.leader_name && (
+                                                {isGroupMode && row.member_names && (
                                                     <p className="text-[11px] text-stone-500 truncate">
-                                                        {row.leader_name}
+                                                        {row.member_names}
                                                     </p>
                                                 )}
                                             </div>

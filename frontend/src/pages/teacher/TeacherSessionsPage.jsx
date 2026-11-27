@@ -31,7 +31,7 @@ const STATUS_META = {
         dotClass: 'bg-amber-500',
         activePill: 'bg-white text-amber-800 shadow-xs',
         hintGroup:
-            'Naka-hold ang mapa — maaaring palitan ng bawat pangkat ang kanilang pangalan at ilista ang mga miyembro.',
+            'Naka-hold ang mapa — hintayin munang makapasok ang lahat ng pangkat bago pindutin ang Simulan ang Laro.',
         hintIndividual:
             'Naka-hold ang mapa — naghihintay ang mga mag-aaral sa iyong go-signal bago makapasok sa Mapa 1.',
     },
@@ -40,7 +40,7 @@ const STATUS_META = {
         dotClass: 'bg-emerald-500',
         activePill: 'bg-white text-emerald-800 shadow-xs',
         hintGroup:
-            'Bukas na ang laro — naka-lock na ang pangalan ng pangkat upang makapag-pokus sila sa mga mapa.',
+            'Bukas na ang laro — maaari nang sagutan ng bawat pangkat ang Mapa 1 hanggang Mapa 5.',
         hintIndividual:
             'Bukas na ang laro — maaari nang sagutan ng bawat mag-aaral ang Mapa 1 hanggang Mapa 5.',
     },
@@ -781,7 +781,7 @@ export default function TeacherSessionsPage() {
 
                             <p className="text-xs text-slate-500 leading-relaxed pt-3 border-t border-slate-100">
                                 {isGroupMode
-                                    ? 'Awtomatikong nagkakaroon ng Pangkat 1, 2, 3... ang bawat device na sasali. Pindutin ang lapis sa card upang i-edit ang pangalan o miyembro ng grupo.'
+                                    ? 'Ilalagay ng bawat pangkat ang kanilang pangalan at mga miyembro bago pumasok. Pindutin ang lapis sa card kung kailangang i-edit.'
                                     : 'Walang pangkat sa Indibidwal mode — bawat mag-aaral ay sasagot nang solo at direktang iraranggo sa Live Monitor.'}
                             </p>
                         </section>
@@ -808,7 +808,7 @@ export default function TeacherSessionsPage() {
                                         </span>
                                         <p className="text-xs font-bold text-slate-900 mt-2">Ibahagi ang PIN ({lobby.join_code})</p>
                                         <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                                            Papasukin ang 1 device bawat pangkat. Awtomatiko silang magiging <strong>Pangkat 1, 2, 3...</strong> at maaari nilang palitan ang pangalan + ilista ang miyembro habang Waiting.
+                                            Papasukin ang 1 device bawat pangkat. Ilalagay nila agad ang pangalan ng pangkat at lahat ng miyembro bago pumasok sa mapa.
                                         </p>
                                     </div>
                                     <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4">
@@ -817,7 +817,7 @@ export default function TeacherSessionsPage() {
                                         </span>
                                         <p className="text-xs font-bold text-slate-900 mt-2">Simulan ang Laro</p>
                                         <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                                            Kapag kumpleto na ang mga grupo, pindutin ang <strong>Simulan ang Laro</strong> — magla-lock ang pangalan ng pangkat at magbubukas ang Mapa 1.
+                                            Kapag kumpleto na ang mga grupo, pindutin ang <strong>Simulan ang Laro</strong> upang magbukas ang Mapa 1 para sa lahat.
                                         </p>
                                     </div>
                                 </div>
@@ -842,7 +842,7 @@ export default function TeacherSessionsPage() {
                                                             </label>
                                                             <input
                                                                 type="text"
-                                                                maxLength={25}
+                                                                maxLength={35}
                                                                 autoFocus
                                                                 value={editingGroupName}
                                                                 onChange={(e) => {
@@ -918,49 +918,34 @@ export default function TeacherSessionsPage() {
                                                 )}
                                             </div>
 
-                                            <div className="p-4 space-y-3 flex-1">
-                                                <div className="flex items-center justify-between gap-2 text-xs">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <span className="w-6 h-6 rounded-full bg-orange-50 border border-orange-200/70 text-[#C2410C] text-[10px] font-bold flex items-center justify-center shrink-0">
-                                                            {getInitials(group.leader_name || group.group_name)}
-                                                        </span>
-                                                        <div className="min-w-0">
-                                                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 leading-none">
-                                                                Kinatawan / Device
-                                                            </p>
-                                                            <p className="font-semibold text-slate-800 truncate mt-0.5">
-                                                                {group.leader_name || 'Naka-konekta'}
-                                                            </p>
-                                                        </div>
-                                                    </div>
+                                            <div className="p-4 flex-1">
+                                                <div className="flex items-center justify-between gap-2 mb-2">
+                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                                        Mga Miyembro
+                                                        {memberList.length > 0 ? ` (${memberList.length})` : ''}
+                                                    </p>
                                                     {group.joined_at && (
                                                         <span className="text-[11px] text-slate-400 shrink-0">
                                                             {group.joined_at}
                                                         </span>
                                                     )}
                                                 </div>
-
-                                                <div className="pt-2.5 border-t border-slate-100">
-                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                                                        Mga Miyembro
+                                                {memberList.length > 0 ? (
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {memberList.map((name, i) => (
+                                                            <span
+                                                                key={`${group.id}-m-${i}`}
+                                                                className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium"
+                                                            >
+                                                                {name}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[11px] text-slate-400 italic">
+                                                        Wala pang nailistang miyembro.
                                                     </p>
-                                                    {memberList.length > 0 ? (
-                                                        <div className="flex flex-wrap gap-1.5">
-                                                            {memberList.map((name, i) => (
-                                                                <span
-                                                                    key={`${group.id}-m-${i}`}
-                                                                    className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium"
-                                                                >
-                                                                    {name}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <p className="text-[11px] text-slate-400 italic">
-                                                            Wala pang nailistang karagdagang miyembro.
-                                                        </p>
-                                                    )}
-                                                </div>
+                                                )}
                                             </div>
                                         </div>
                                     );

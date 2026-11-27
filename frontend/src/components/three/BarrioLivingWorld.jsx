@@ -73,38 +73,38 @@ function PinoyFigure({
 
     return (
         <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
-            <mesh geometry={GEO.shadow} material={MAT_SHADOW} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} />
+            <mesh geometry={GEO.shadow} material={MAT_SHADOW} dispose={null} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} />
             <group ref={torsoRef} position={[0, bodyY, 0]}>
                 {/* Left & Right Articulated Legs */}
                 <group ref={legLRef} position={[-0.085, 0.44, 0]} rotation={[seated ? -1.35 : kneeling ? 1.2 : 0, 0, 0]}>
-                    <mesh geometry={GEO.limb} material={pantsMat} position={[0, -0.18, 0]} castShadow={castShadow} />
+                    <mesh geometry={GEO.limb} material={pantsMat} dispose={null} position={[0, -0.18, 0]} castShadow={castShadow} />
                 </group>
                 <group ref={legRRef} position={[0.085, 0.44, 0]} rotation={[seated ? -1.35 : kneeling ? 1.2 : 0, 0, 0]}>
-                    <mesh geometry={GEO.limb} material={pantsMat} position={[0, -0.18, 0]} castShadow={castShadow} />
+                    <mesh geometry={GEO.limb} material={pantsMat} dispose={null} position={[0, -0.18, 0]} castShadow={castShadow} />
                 </group>
 
                 {/* Torso */}
-                <mesh geometry={GEO.torso} material={shirtMat} position={[0, 0.74, 0]} castShadow={castShadow} />
+                <mesh geometry={GEO.torso} material={shirtMat} dispose={null} position={[0, 0.74, 0]} castShadow={castShadow} />
 
                 {/* Left & Right Articulated Arms */}
                 <group ref={armLRef} position={[-0.21, 0.90, 0]}>
-                    <mesh geometry={GEO.limb} material={shirtMat} position={[0, -0.16, 0]} castShadow={castShadow} />
+                    <mesh geometry={GEO.limb} material={shirtMat} dispose={null} position={[0, -0.16, 0]} castShadow={castShadow} />
                 </group>
                 <group ref={armRRef} position={[0.21, 0.90, 0]}>
-                    <mesh geometry={GEO.limb} material={shirtMat} position={[0, -0.16, 0]} castShadow={castShadow} />
+                    <mesh geometry={GEO.limb} material={shirtMat} dispose={null} position={[0, -0.16, 0]} castShadow={castShadow} />
                 </group>
 
                 {/* Head + Hair + Eyes */}
                 <group position={[0, 1.14, 0]}>
-                    <mesh geometry={GEO.head} material={MAT_SKIN} castShadow={castShadow} />
-                    <mesh geometry={GEO.head} material={MAT_HAIR} position={[0, 0.045, -0.025]} scale={[1.02, 0.82, 1.02]} />
-                    <mesh geometry={GEO.eye} material={MAT_EYE} position={[-0.055, 0.01, 0.145]} />
-                    <mesh geometry={GEO.eye} material={MAT_EYE} position={[0.055, 0.01, 0.145]} />
+                    <mesh geometry={GEO.head} material={MAT_SKIN} dispose={null} castShadow={castShadow} />
+                    <mesh geometry={GEO.head} material={MAT_HAIR} dispose={null} position={[0, 0.045, -0.025]} scale={[1.02, 0.82, 1.02]} />
+                    <mesh geometry={GEO.eye} material={MAT_EYE} dispose={null} position={[-0.055, 0.01, 0.145]} />
+                    <mesh geometry={GEO.eye} material={MAT_EYE} dispose={null} position={[0.055, 0.01, 0.145]} />
                     {hasSalakot && (
-                        <mesh geometry={GEO.salakot} material={MAT_SALAKOT} position={[0, 0.15, 0]} castShadow={castShadow} />
+                        <mesh geometry={GEO.salakot} material={MAT_SALAKOT} dispose={null} position={[0, 0.15, 0]} castShadow={castShadow} />
                     )}
                     {hasBilao && (
-                        <mesh geometry={GEO.bilao} material={MAT_SALAKOT} position={[0, 0.22, 0]} castShadow={castShadow} />
+                        <mesh geometry={GEO.bilao} material={MAT_SALAKOT} dispose={null} position={[0, 0.22, 0]} castShadow={castShadow} />
                     )}
                 </group>
             </group>
@@ -628,24 +628,24 @@ function RunningAskals({ lowQuality }) {
         <group>
             {dogLoops.map((d, i) => (
                 <group key={i} ref={(el) => (dogRefs.current[i] = el)} scale={1.48}>
-                    <mesh geometry={GEO.shadow} material={MAT_SHADOW} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} scale={[1.1, 1.4, 1]} />
+                    <mesh geometry={GEO.shadow} material={MAT_SHADOW} dispose={null} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} scale={[1.1, 1.4, 1]} />
                     {/* Barrel Torso + Cream Chest (facing +Z) */}
-                    <mesh geometry={GEO.dogBody} material={d.coat} position={[0, 0.44, 0]} scale={[0.78, 0.84, 1.38]} castShadow={!lowQuality} />
-                    <mesh geometry={GEO.dogBody} material={furCream} position={[0, 0.37, 0.16]} scale={[0.62, 0.65, 0.72]} />
+                    <mesh geometry={GEO.dogBody} material={d.coat} dispose={null} position={[0, 0.44, 0]} scale={[0.78, 0.84, 1.38]} castShadow={!lowQuality} />
+                    <mesh geometry={GEO.dogBody} material={furCream} dispose={null} position={[0, 0.37, 0.16]} scale={[0.62, 0.65, 0.72]} />
 
                     {/* Neck Collar + Perked Head + Snout + Ears */}
                     <mesh position={[0, 0.56, 0.30]} rotation={[0.45, 0, 0]}>
                         <cylinderGeometry args={[0.11, 0.12, 0.06, 10]} />
-                        <primitive object={collarRed} attach="material" />
+                        <primitive object={collarRed} attach="material" dispose={null} />
                     </mesh>
                     <group position={[0, 0.68, 0.42]}>
-                        <mesh geometry={GEO.dogHead} material={d.coat} castShadow={!lowQuality} />
-                        <mesh geometry={GEO.dogSnout} material={furCream} position={[0, -0.04, 0.13]} scale={[0.85, 0.75, 1.15]} />
-                        <mesh geometry={GEO.eye} material={noseMat} position={[0, -0.015, 0.22]} scale={1.3} />
-                        <mesh geometry={GEO.eye} material={MAT_EYE} position={[-0.065, 0.035, 0.12]} />
-                        <mesh geometry={GEO.eye} material={MAT_EYE} position={[0.065, 0.035, 0.12]} />
-                        <mesh geometry={GEO.dogEar} material={d.coat} position={[-0.11, 0.11, -0.02]} rotation={[0.15, 0, 0.35]} />
-                        <mesh geometry={GEO.dogEar} material={d.coat} position={[0.11, 0.11, -0.02]} rotation={[0.15, 0, -0.35]} />
+                        <mesh geometry={GEO.dogHead} material={d.coat} dispose={null} castShadow={!lowQuality} />
+                        <mesh geometry={GEO.dogSnout} material={furCream} dispose={null} position={[0, -0.04, 0.13]} scale={[0.85, 0.75, 1.15]} />
+                        <mesh geometry={GEO.eye} material={noseMat} dispose={null} position={[0, -0.015, 0.22]} scale={1.3} />
+                        <mesh geometry={GEO.eye} material={MAT_EYE} dispose={null} position={[-0.065, 0.035, 0.12]} />
+                        <mesh geometry={GEO.eye} material={MAT_EYE} dispose={null} position={[0.065, 0.035, 0.12]} />
+                        <mesh geometry={GEO.dogEar} material={d.coat} dispose={null} position={[-0.11, 0.11, -0.02]} rotation={[0.15, 0, 0.35]} />
+                        <mesh geometry={GEO.dogEar} material={d.coat} dispose={null} position={[0.11, 0.11, -0.02]} rotation={[0.15, 0, -0.35]} />
                     </group>
 
                     {/* 4 Articulated Legs (FL, FR, BL, BR) */}
@@ -656,13 +656,13 @@ function RunningAskals({ lowQuality }) {
                         [0.10, -0.22],
                     ].map(([lx, lz], lIdx) => (
                         <group key={lIdx} ref={(el) => (legRefs.current[i * 4 + lIdx] = el)} position={[lx, 0.36, lz]}>
-                            <mesh geometry={GEO.dogLeg} material={lIdx < 2 ? d.coat : furCream} position={[0, -0.17, 0]} castShadow={!lowQuality} />
+                            <mesh geometry={GEO.dogLeg} material={lIdx < 2 ? d.coat : furCream} dispose={null} position={[0, -0.17, 0]} castShadow={!lowQuality} />
                         </group>
                     ))}
 
                     {/* Happy Wagging Tail */}
                     <group ref={(el) => (tailRefs.current[i] = el)} position={[0, 0.50, -0.32]} rotation={[-0.65, 0, 0]}>
-                        <mesh geometry={GEO.dogTail} material={d.coat} position={[0, 0.12, -0.06]} />
+                        <mesh geometry={GEO.dogTail} material={d.coat} dispose={null} position={[0, 0.12, -0.06]} />
                     </group>
                 </group>
             ))}
@@ -730,12 +730,12 @@ function FlyingBirds({ lowQuality }) {
                 const sc = b.white ? 1.35 : 1.05;
                 return (
                     <group key={i} ref={(el) => (birdRefs.current[i] = el)} scale={sc}>
-                        <mesh geometry={GEO.birdBody} material={mat} rotation={[Math.PI / 2, 0, 0]} />
+                        <mesh geometry={GEO.birdBody} material={mat} dispose={null} rotation={[Math.PI / 2, 0, 0]} />
                         <group ref={(el) => (wingLRefs.current[i] = el)} position={[-0.08, 0.02, 0]}>
-                            <mesh geometry={GEO.birdWing} material={mat} position={[-0.22, 0, 0]} />
+                            <mesh geometry={GEO.birdWing} material={mat} dispose={null} position={[-0.22, 0, 0]} />
                         </group>
                         <group ref={(el) => (wingRRefs.current[i] = el)} position={[0.08, 0.02, 0]}>
-                            <mesh geometry={GEO.birdWing} material={mat} position={[0.22, 0, 0]} />
+                            <mesh geometry={GEO.birdWing} material={mat} dispose={null} position={[0.22, 0, 0]} />
                         </group>
                     </group>
                 );
