@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const APP_VERSION = '1.6.6';
+const APP_VERSION = '1.6.7';
 const APP_BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
 
 function emitVersionJsonPlugin(version, buildId) {
@@ -38,6 +38,7 @@ export default defineConfig({
                 'draco/*.js',
                 'draco/*.wasm',
                 'models/*.glb',
+                'audio/*.mp3',
                 'audio/tutorial/*.mp3',
                 'images/tutorial/*.png',
                 'images/characters/*.png',

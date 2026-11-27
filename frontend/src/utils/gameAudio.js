@@ -4,6 +4,8 @@ import { resolveCachedAudioUrl } from './videoCache';
 
 const MUTE_KEY = 'juanquest_audio_muted';
 const VOLUME_KEY = 'juanquest_audio_volume';
+export const DEFAULT_WORLD_BGM_URL = '/audio/world-bgm.mp3';
+const BGM_VOLUME_SCALE = 0.28;
 
 let audioCtx = null;
 let activeFeedbackEl = null;
@@ -11,6 +13,23 @@ let activeFeedbackBlobUrl = null;
 let activeFeedbackResolve = null;
 let activePromptEl = null;
 let activePromptBlobUrl = null;
+
+// Zero-latency Web Audio World Map BGM state (decoded AudioBuffer cached in RAM -> < 1ms resume!)
+const bgmBufferCache = new Map();
+const bgmLoadingMap = new Map();
+let bgmDesiredPlaying = false;
+let bgmDesiredUrl = DEFAULT_WORLD_BGM_URL;
+let bgmActiveSource = null;
+let bgmActiveGain = null;
+let bgmActiveUrl = null;
+let bgmStartedCtxTime = 0;
+let bgmOffsetSec = 0;
+let bgmGestureHooked = false;
+let bgmVisibilityHooked = false;
+
+// Pre-built warm pink-noise buffer for organic dirt-road walking footsteps (0ms latency, zero GC)
+let footstepNoiseBuffer = null;
+let footstepSide = 0;
 
 // In-memory preloaded Blob URL cache for instant 0ms praise/wrong audio playback (especially over production Cloudinary!)
 const preloadedFeedbackMap = new Map();
@@ -133,9 +152,18 @@ export function setAudioVolume(nextVolume) {
     }
     if (clamped <= 0) {
         stopAllFeedbackAudio();
+        stopBgmNodeImmediate(0.08);
     } else {
         if (activeFeedbackEl) activeFeedbackEl.volume = clamped * 0.95;
         if (activePromptEl) activePromptEl.volume = clamped * 0.95;
+        if (bgmActiveGain && audioCtx) {
+            const now = audioCtx.currentTime;
+            bgmActiveGain.gain.cancelScheduledValues(now);
+            bgmActiveGain.gain.setValueAtTime(Math.max(0.0001, bgmActiveGain.gain.value), now);
+            bgmActiveGain.gain.linearRampToValueAtTime(Math.max(0.0001, clamped * BGM_VOLUME_SCALE), now + 0.08);
+        } else if (bgmDesiredPlaying && !(typeof document !== 'undefined' && document.hidden)) {
+            startBgmPlaybackNow();
+        }
     }
     if (typeof window !== 'undefined') {
         try {
@@ -550,4 +578,349 @@ export function togglePromptAudio(url, onEnd) {
     } catch {
         return false;
     }
+}
+
+function getFootstepNoiseBuffer(ctx) {
+    if (footstepNoiseBuffer && footstepNoiseBuffer.sampleRate === ctx.sampleRate) {
+        return footstepNoiseBuffer;
+    }
+    const len = Math.floor(ctx.sampleRate * 0.16);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    // Warm pink-tinted noise (Paul Kellet filter) so soil steps sound earthy, never harsh
+    let b0 = 0;
+    let b1 = 0;
+    let b2 = 0;
+    for (let i = 0; i < len; i += 1) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.997 * b0 + white * 0.029;
+        b1 = 0.985 * b1 + white * 0.032;
+        b2 = 0.95 * b2 + white * 0.048;
+        data[i] = Math.max(-1, Math.min(1, (b0 + b1 + b2 + white * 0.12) * 1.9));
+    }
+    footstepNoiseBuffer = buf;
+    return buf;
+}
+
+/**
+ * Soft, warm barrio dirt-road footstep synced to each character stride (0ms latency, online & offline).
+ */
+export function playFootstepSfx() {
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state !== 'running') return;
+
+    const side = footstepSide;
+    footstepSide = (footstepSide + 1) % 2;
+    const now = ctx.currentTime;
+    const jitter = (Math.random() - 0.5) * 7;
+
+    // Optional subtle left/right panner
+    const outNode = typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+    if (outNode) {
+        outNode.pan.setValueAtTime(side === 0 ? -0.14 : 0.14, now);
+        outNode.connect(ctx.destination);
+    }
+    const dest = outNode || ctx.destination;
+
+    // 1) Muffled earthen heel-plant thump
+    const thumpOsc = ctx.createOscillator();
+    const thumpGain = ctx.createGain();
+    const baseFreq = (side === 0 ? 95 : 85) + jitter;
+    thumpOsc.type = 'sine';
+    thumpOsc.frequency.setValueAtTime(baseFreq, now);
+    thumpOsc.frequency.exponentialRampToValueAtTime(Math.max(44, baseFreq * 0.54), now + 0.075);
+    thumpGain.gain.setValueAtTime(0.0001, now);
+    thumpGain.gain.linearRampToValueAtTime(Math.max(0.0002, 0.28 * vol), now + 0.009);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.095);
+    thumpOsc.connect(thumpGain);
+    thumpGain.connect(dest);
+    thumpOsc.start(now);
+    thumpOsc.stop(now + 0.11);
+
+    // 2) Soft soil/sand brush (band-passed warm pink noise — heel plant + gentle toe lift)
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = getFootstepNoiseBuffer(ctx);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime((side === 0 ? 920 : 840) + jitter * 14, now);
+    bp.Q.setValueAtTime(1.05, now);
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1750, now);
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.linearRampToValueAtTime(Math.max(0.0002, 0.22 * vol), now + 0.018);
+    noiseGain.gain.linearRampToValueAtTime(Math.max(0.0002, 0.09 * vol), now + 0.048);
+    noiseGain.gain.linearRampToValueAtTime(Math.max(0.0002, 0.14 * vol), now + 0.068);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.125);
+
+    noiseSrc.connect(bp);
+    bp.connect(lp);
+    lp.connect(noiseGain);
+    noiseGain.connect(dest);
+    noiseSrc.start(now);
+    noiseSrc.stop(now + 0.14);
+}
+
+function stopBgmNodeImmediate(fadeSec = 0.09) {
+    if (!bgmActiveSource) return;
+    const src = bgmActiveSource;
+    const gain = bgmActiveGain;
+    const prevUrl = bgmActiveUrl;
+    const prevBuf = prevUrl ? bgmBufferCache.get(prevUrl) : null;
+
+    if (audioCtx && prevBuf && prevBuf.duration > 0) {
+        const elapsed = Math.max(0, audioCtx.currentTime - bgmStartedCtxTime);
+        bgmOffsetSec = (bgmOffsetSec + elapsed) % prevBuf.duration;
+    }
+
+    bgmActiveSource = null;
+    bgmActiveGain = null;
+    bgmActiveUrl = null;
+
+    try {
+        if (gain && audioCtx) {
+            const now = audioCtx.currentTime;
+            gain.gain.cancelScheduledValues(now);
+            gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+            gain.gain.linearRampToValueAtTime(0.0001, now + fadeSec);
+        }
+    } catch {
+        // ignore
+    }
+
+    setTimeout(() => {
+        try {
+            src.stop();
+        } catch {
+            // already stopped
+        }
+        try {
+            src.disconnect();
+            gain?.disconnect();
+        } catch {
+            // ignore
+        }
+    }, Math.round(fadeSec * 1000) + 25);
+}
+
+function ensureBgmLifecycleHooks() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (!bgmVisibilityHooked) {
+        bgmVisibilityHooked = true;
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopBgmNodeImmediate(0.06);
+            } else if (bgmDesiredPlaying && getAudioVolume() > 0) {
+                const ctx = getAudioContext();
+                if (ctx && ctx.state === 'suspended') {
+                    ctx.resume().then(() => {
+                        if (bgmDesiredPlaying && !document.hidden) startBgmPlaybackNow();
+                    }).catch(() => {});
+                } else {
+                    startBgmPlaybackNow();
+                }
+            }
+        });
+    }
+    if (!bgmGestureHooked) {
+        bgmGestureHooked = true;
+        const onGesture = () => {
+            const ctx = getAudioContext();
+            if (!ctx) return;
+            const resumeAndPlay = () => {
+                if (bgmDesiredPlaying && !document.hidden && !bgmActiveSource && getAudioVolume() > 0) {
+                    startBgmPlaybackNow();
+                }
+            };
+            if (ctx.state === 'suspended') {
+                ctx.resume().then(resumeAndPlay).catch(() => {});
+            } else {
+                resumeAndPlay();
+            }
+        };
+        window.addEventListener('pointerdown', onGesture, { passive: true, capture: true });
+        window.addEventListener('touchstart', onGesture, { passive: true, capture: true });
+        window.addEventListener('keydown', onGesture, { passive: true, capture: true });
+    }
+}
+
+async function fetchAndDecodeBgmBuffer(targetUrl) {
+    if (bgmBufferCache.has(targetUrl)) return bgmBufferCache.get(targetUrl);
+    if (bgmLoadingMap.has(targetUrl)) return bgmLoadingMap.get(targetUrl);
+
+    const job = (async () => {
+        const ctx = getAudioContext();
+        if (!ctx) return null;
+
+        let fetchUrl = targetUrl;
+        let tempObjectUrl = null;
+        const isLocalPublicAsset = targetUrl.startsWith('/') && !targetUrl.startsWith('//');
+
+        try {
+            if (!isLocalPublicAsset) {
+                const resolved = await resolveCachedAudioUrl(targetUrl);
+                if (resolved?.url) {
+                    fetchUrl = resolved.url;
+                    if (resolved.isObjectUrl) tempObjectUrl = resolved.url;
+                }
+            }
+
+            const res = await fetch(fetchUrl, isLocalPublicAsset ? undefined : { mode: 'cors' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const arrayBuf = await res.arrayBuffer();
+            if (!arrayBuf || arrayBuf.byteLength < 256) throw new Error('Empty audio payload');
+            const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+            bgmBufferCache.set(targetUrl, decoded);
+            return decoded;
+        } catch {
+            return null;
+        } finally {
+            if (tempObjectUrl) {
+                try {
+                    URL.revokeObjectURL(tempObjectUrl);
+                } catch {
+                    // ignore
+                }
+            }
+            bgmLoadingMap.delete(targetUrl);
+        }
+    })();
+
+    bgmLoadingMap.set(targetUrl, job);
+    return job;
+}
+
+/**
+ * Preload & decode the World Map BGM into a RAM AudioBuffer ahead of time (call on LoginPage
+ * and StudentWorldPage mount) so entering or returning to the 3D map plays at literal 0ms delay!
+ */
+export function preloadWorldBgm(customUrl = null) {
+    if (typeof window === 'undefined') return Promise.resolve(null);
+    ensureBgmLifecycleHooks();
+    const targetUrl = customUrl || DEFAULT_WORLD_BGM_URL;
+    if (customUrl && customUrl !== DEFAULT_WORLD_BGM_URL) {
+        // Also warm built-in fallback silently so offline/broken custom URL never goes silent
+        fetchAndDecodeBgmBuffer(DEFAULT_WORLD_BGM_URL).catch(() => {});
+    }
+    return fetchAndDecodeBgmBuffer(targetUrl);
+}
+
+function startBgmPlaybackNow() {
+    if (!bgmDesiredPlaying) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const vol = getAudioVolume();
+    if (vol <= 0) return;
+
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const targetUrl = bgmDesiredUrl || DEFAULT_WORLD_BGM_URL;
+    const buffer = bgmBufferCache.get(targetUrl) || bgmBufferCache.get(DEFAULT_WORLD_BGM_URL);
+    if (!buffer) {
+        fetchAndDecodeBgmBuffer(targetUrl).then((decoded) => {
+            if (!decoded && targetUrl !== DEFAULT_WORLD_BGM_URL) {
+                return fetchAndDecodeBgmBuffer(DEFAULT_WORLD_BGM_URL);
+            }
+            return decoded;
+        }).then((readyBuf) => {
+            if (readyBuf && bgmDesiredPlaying && !bgmActiveSource) {
+                startBgmPlaybackNow();
+            }
+        }).catch(() => {});
+        return;
+    }
+
+    const resolvedUrl = bgmBufferCache.has(targetUrl) ? targetUrl : DEFAULT_WORLD_BGM_URL;
+
+    // Already playing this exact track — just ensure volume is accurate
+    if (bgmActiveSource && bgmActiveUrl === resolvedUrl) {
+        if (bgmActiveGain) {
+            const now = ctx.currentTime;
+            bgmActiveGain.gain.cancelScheduledValues(now);
+            bgmActiveGain.gain.setValueAtTime(Math.max(0.0001, bgmActiveGain.gain.value), now);
+            bgmActiveGain.gain.linearRampToValueAtTime(Math.max(0.0001, vol * BGM_VOLUME_SCALE), now + 0.08);
+        }
+        return;
+    }
+
+    // Switching track (e.g., default -> teacher custom BGM once decoded)
+    if (bgmActiveSource && bgmActiveUrl !== resolvedUrl) {
+        stopBgmNodeImmediate(0.08);
+        bgmOffsetSec = 0;
+    }
+
+    if (ctx.state === 'suspended') {
+        ctx.resume().then(() => {
+            if (bgmDesiredPlaying && !bgmActiveSource && !document.hidden) {
+                startBgmPlaybackNow();
+            }
+        }).catch(() => {});
+        return;
+    }
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    const targetGain = Math.max(0.0001, vol * BGM_VOLUME_SCALE);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(targetGain, now + 0.12);
+
+    src.connect(gain);
+    gain.connect(ctx.destination);
+
+    const offset = buffer.duration > 0 ? bgmOffsetSec % buffer.duration : 0;
+    bgmActiveSource = src;
+    bgmActiveGain = gain;
+    bgmActiveUrl = resolvedUrl;
+    bgmStartedCtxTime = now;
+
+    try {
+        src.start(0, offset);
+    } catch {
+        bgmActiveSource = null;
+        bgmActiveGain = null;
+        bgmActiveUrl = null;
+    }
+}
+
+/**
+ * Synchronize World Map BGM state.
+ * Plays at 0ms from decoded RAM AudioBuffer during the 5-map fly-over and while idle on the 3D map,
+ * and stops immediately when walking, playing inside a stage, or during Juan's voice-overs.
+ */
+export function syncWorldBgm({ playing, customUrl = null, resetOffset = false }) {
+    if (typeof window === 'undefined') return;
+    ensureBgmLifecycleHooks();
+    const nextUrl = customUrl || DEFAULT_WORLD_BGM_URL;
+    if (nextUrl !== bgmDesiredUrl) {
+        bgmDesiredUrl = nextUrl;
+        bgmOffsetSec = 0;
+        preloadWorldBgm(nextUrl);
+    }
+    if (resetOffset) {
+        bgmOffsetSec = 0;
+    }
+    bgmDesiredPlaying = Boolean(playing);
+
+    if (!bgmDesiredPlaying) {
+        stopBgmNodeImmediate(0.09);
+        return;
+    }
+
+    startBgmPlaybackNow();
+}
+
+export function stopWorldBgm(resetOffset = false) {
+    bgmDesiredPlaying = false;
+    if (resetOffset) bgmOffsetSec = 0;
+    stopBgmNodeImmediate(0.09);
 }

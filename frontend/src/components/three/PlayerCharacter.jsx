@@ -15,6 +15,7 @@ import {
     WALK_SPEED,
 } from './worldConfig';
 import { getCharacterMeta } from '../../utils/characters';
+import { playFootstepSfx } from '../../utils/gameAudio';
 
 const FEET_LIFT = 0.14; // stands on top of the sandy road / plaza
 const DUST_POOL_SIZE = 6;
@@ -158,7 +159,8 @@ export default function PlayerCharacter({
     useEffect(() => {
         if (isWalking) {
             arrivedRef.current = false;
-            stepAccumRef.current = 0;
+            // Prime stride accumulator so first earthen footstep plays right as the character steps off
+            stepAccumRef.current = 0.72;
             if (pendulumRef.current) pendulumRef.current.rotation.set(0, 0, 0);
             if (groupRef.current) {
                 place(progressTRef.current);
@@ -223,11 +225,12 @@ export default function PlayerCharacter({
                 yawRef.current += shortestAngle(yawRef.current, desired) * Math.min(1, dt * 10);
                 faceCameraRef.current = false;
 
-                // Subtle earthen footstep dust puff along the dirt road every stride
-                if (!lowQuality) {
-                    stepAccumRef.current += WALK_SPEED * dt;
-                    if (stepAccumRef.current >= 1.05) {
-                        stepAccumRef.current = 0;
+                // Subtle earthen footstep sound + dust puff along the dirt road every stride
+                stepAccumRef.current += WALK_SPEED * dt;
+                if (stepAccumRef.current >= 1.05) {
+                    stepAccumRef.current = 0;
+                    playFootstepSfx();
+                    if (!lowQuality) {
                         spawnFootDust(g.position.x, g.position.y, g.position.z, tmp.tan.x * dir, tmp.tan.z * dir);
                     }
                 }

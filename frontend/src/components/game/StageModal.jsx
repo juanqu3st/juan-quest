@@ -4,7 +4,6 @@ import { ArrowLeft, ArrowRight, Award, CheckCircle2, Heart, KeyRound, Keyboard, 
 import { resolveStorageUrl } from '../../api/axiosClient';
 import { studentApi } from '../../api/studentApi';
 import { resetOfflineMapWithTeacherAuth } from '../../utils/offlineEngine';
-import { resolveCachedAudioUrl } from '../../utils/videoCache';
 import QrScannerBox from '../qr/QrScannerBox';
 import {
     getAudioVolume,
@@ -146,7 +145,6 @@ export default function StageModal({
     const feedbackLockRef = useRef(false);
     const feedbackSeqRef = useRef(0);
     const lifelineDelayTimerRef = useRef(null);
-    const bgmRef = useRef(null);
     const secondsLeftRef = useRef(secondsLeft);
     const timeLimitRef = useRef(timeLimitUsed);
     const totalElapsedRef = useRef(map?.progress?.time_taken_seconds || 0);
@@ -170,7 +168,6 @@ export default function StageModal({
 
     const praiseAudioUrl = resolveStorageUrl(map?.praise_audio_path || lesson?.praise_audio_path);
     const wrongAudioUrl = resolveStorageUrl(map?.wrong_audio_path || lesson?.wrong_audio_path);
-    const bgmAudioUrl = resolveStorageUrl(lesson?.bgm_audio_path);
 
     // Preload teacher praise/wrong audio into memory Blob URLs as soon as the map opens (0ms production playback!)
     useEffect(() => {
@@ -181,10 +178,6 @@ export default function StageModal({
         const clamped = Math.max(0, Math.min(100, Math.round(Number(nextPct) || 0)));
         setVolumePct(clamped);
         setAudioVolume(clamped / 100);
-        if (bgmRef.current) {
-            bgmRef.current.volume = (clamped / 100) * 0.22;
-            bgmRef.current.muted = clamped <= 0;
-        }
     };
 
     const openSettingsSheet = () => {
@@ -250,63 +243,13 @@ export default function StageModal({
         }
     }, [map?.id]);
 
-    // Cleanup timers & audio on unmount
+    // Cleanup timers & audio on unmount (no BGM inside StageModal so students stay focused!)
     useEffect(() => {
         return () => {
             dismissToast();
             stopAllFeedbackAudio();
-            if (bgmRef.current) {
-                bgmRef.current.pause();
-                bgmRef.current = null;
-            }
         };
     }, [dismissToast]);
-
-    // Optional teacher-uploaded BGM during active gameplay (supports offline CacheStorage!)
-    useEffect(() => {
-        if (step !== 'active_gameplay' || !bgmAudioUrl) {
-            if (bgmRef.current) {
-                bgmRef.current.pause();
-                bgmRef.current = null;
-            }
-            return undefined;
-        }
-        let cancelled = false;
-        let bgmBlobUrl = null;
-        let audio = null;
-
-        resolveCachedAudioUrl(bgmAudioUrl)
-            .then(({ url, isObjectUrl }) => {
-                if (cancelled) {
-                    if (isObjectUrl && url) URL.revokeObjectURL(url);
-                    return;
-                }
-                if (isObjectUrl && url) bgmBlobUrl = url;
-                const initialVol = getAudioVolume();
-                audio = new Audio(url || bgmAudioUrl);
-                audio.loop = true;
-                audio.volume = initialVol * 0.22;
-                audio.muted = initialVol <= 0;
-                bgmRef.current = audio;
-                audio.play().catch(() => {});
-            })
-            .catch(() => {});
-
-        return () => {
-            cancelled = true;
-            if (audio) {
-                audio.pause();
-                if (bgmRef.current === audio) bgmRef.current = null;
-            }
-            if (bgmBlobUrl) {
-                try {
-                    URL.revokeObjectURL(bgmBlobUrl);
-                } catch {
-                    // ignore
-                }
-            }
-        };
-    }, [step, bgmAudioUrl]);
 
     // Countdown timer + keepalive sync on tab close/reload (pure state updater — timeout runs cleanly in effect below!)
     useEffect(() => {

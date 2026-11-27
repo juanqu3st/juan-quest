@@ -179,8 +179,8 @@ export default function TeacherLessonPage() {
                                 }
                             />
                             <AudioRecorderField
-                                label="Background Music / BGM (Optional)"
-                                hint="Banayad na tugtog habang naglalaro ang mga mag-aaral."
+                                label="Background Music sa 3D Mapa / BGM (Optional)"
+                                hint="Tumutugtog lamang sa 3D World Map (fly-over at habang nakatambay). Awtomatikong hihinto kapag naglalakad o naglalaro na — may built-in default kung walang naka-upload."
                                 existingPath={form.remove_bgm_audio ? null : lesson.bgm_audio_path}
                                 selectedFile={form.bgm_audio}
                                 onSelect={(file) =>

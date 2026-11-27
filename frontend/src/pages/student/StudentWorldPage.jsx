@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Award, CheckCircle2, ChevronDown, HelpCircle, Home, LogOut, QrCode, Sparkles, Star, Trophy, Users, WifiOff } from 'lucide-react';
+import { resolveStorageUrl } from '../../api/axiosClient';
 import { studentApi } from '../../api/studentApi';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
@@ -7,7 +8,7 @@ import { useToast } from '../../context/ToastContext';
 import { useSmartPoll } from '../../hooks/useSmartPoll';
 import { clearStageResume, loadStageResume } from '../../utils/stageResume';
 import { activateMidGameOfflineFailover } from '../../utils/offlineEngine';
-import { unlockAudio } from '../../utils/gameAudio';
+import { preloadWorldBgm, stopWorldBgm, syncWorldBgm, unlockAudio } from '../../utils/gameAudio';
 import { getCharacterMeta, normalizeCharacterKey } from '../../utils/characters';
 import { PAHINGAHAN_STOP } from '../../components/three/worldConfig';
 import WorldMapCanvas from '../../components/three/WorldMapCanvas';
@@ -64,6 +65,8 @@ export default function StudentWorldPage() {
     const [targetMapNumber, setTargetMapNumber] = useState(user?.current_map_number || 1);
     const [isWalking, setIsWalking] = useState(false);
     const [activeStageMapId, setActiveStageMapId] = useState(null);
+    const [pendingStageOpen, setPendingStageOpen] = useState(false);
+    const [stageFinishing, setStageFinishing] = useState(false);
     const [unlockingStage, setUnlockingStage] = useState(null);
     const [canvasPausedForUnlock, setCanvasPausedForUnlock] = useState(false);
     const [openedMapIds, setOpenedMapIds] = useState(() => new Set());
@@ -328,6 +331,8 @@ export default function StudentWorldPage() {
     };
 
     const walkTo = (mapNumber, openWhenThere) => {
+        unlockAudio();
+        setPendingStageOpen(false);
         openOnArrivalRef.current = openWhenThere;
         setTargetMapNumber(mapNumber);
         setIsWalking(true);
@@ -426,35 +431,75 @@ export default function StudentWorldPage() {
         openOnArrivalRef.current = false;
         const dest = world?.maps?.find((m) => m.map_number === arrived);
         if (dest) {
-            setTimeout(() => openMapWithUnlockOrDirect(dest), 220);
+            setPendingStageOpen(true);
+            setTimeout(() => {
+                setPendingStageOpen(false);
+                openMapWithUnlockOrDirect(dest);
+            }, 220);
         }
     };
 
     const handleStageFinished = async (_nextMapNum, finishedMapNumber) => {
+        setStageFinishing(true);
         setActiveStageMapId(null);
         setResumePayload(null);
         clearStageResume(user?.id);
-        const data = await loadWorld().catch(() => null);
-        if (!data) return;
+        try {
+            const data = await loadWorld().catch(() => null);
+            if (!data) return;
 
-        const totalMapsCount = (data.maps || []).length;
-        const allDone = totalMapsCount > 0 && (data.completed_count || 0) >= totalMapsCount;
-        if (allDone || (totalMapsCount > 0 && finishedMapNumber >= totalMapsCount)) {
-            setOutroReplayMode(false);
-            setOutroOpen(true);
-            return;
+            const totalMapsCount = (data.maps || []).length;
+            const allDone = totalMapsCount > 0 && (data.completed_count || 0) >= totalMapsCount;
+            if (allDone || (totalMapsCount > 0 && finishedMapNumber >= totalMapsCount)) {
+                setOutroReplayMode(false);
+                setOutroOpen(true);
+                return;
+            }
+
+            const next = unlockedMax(data.maps);
+            if (next > charMapNumber) walkTo(next, false);
+        } finally {
+            setStageFinishing(false);
         }
-
-        const next = unlockedMax(data.maps);
-        if (next > charMapNumber) walkTo(next, false);
     };
 
     const handleCloseStage = () => {
+        setPendingStageOpen(false);
+        setStageFinishing(false);
         setActiveStageMapId(null);
         setResumePayload(null);
         clearStageResume(user?.id);
         loadWorld().catch(() => {});
     };
+
+    // World Map BGM: plays ONLY during the 5-map fly-over and while idle on the 3D map.
+    // Stops immediately while walking (footsteps only), playing inside a map, or during Juan's voice-overs.
+    const customWorldBgmUrl = resolveStorageUrl(world?.lesson?.bgm_audio_path);
+    const shouldPlayWorldBgm = Boolean(
+        world &&
+            !activeStageMapId &&
+            !isWalking &&
+            !pendingStageOpen &&
+            !stageFinishing &&
+            !unlockingStage &&
+            !guideOpen &&
+            !outroOpen &&
+            !completionOpen
+    );
+
+    useEffect(() => {
+        preloadWorldBgm(customWorldBgmUrl);
+    }, [customWorldBgmUrl]);
+
+    useEffect(() => {
+        syncWorldBgm({ playing: shouldPlayWorldBgm, customUrl: customWorldBgmUrl });
+    }, [shouldPlayWorldBgm, customWorldBgmUrl]);
+
+    useEffect(() => {
+        return () => {
+            stopWorldBgm(true);
+        };
+    }, []);
 
     const handleToggleLeaderboard = async () => {
         const next = !leaderboardOpen;

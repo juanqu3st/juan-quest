@@ -34,6 +34,7 @@ import {
     unlockPinWithTeacherCode,
 } from '../../utils/offlineEngine';
 import { downloadResultQrImage } from '../../utils/qrExport';
+import { preloadWorldBgm, unlockAudio } from '../../utils/gameAudio';
 import QrCodeImage from '../../components/qr/QrCodeImage';
 import QrScannerBox from '../../components/qr/QrScannerBox';
 
@@ -77,6 +78,11 @@ export default function LoginPage() {
 
     const savedQrHistory = loadSavedQrHistory();
     const activeSavedQr = savedQrHistory[selectedSavedQrIdx] || savedQrHistory[0] || null;
+
+    // Warm & decode World Map BGM into RAM while student is still on the login screen (0ms playback on entry!)
+    useEffect(() => {
+        preloadWorldBgm();
+    }, []);
 
     // Auto-detect Per Grupo vs Indibidwal as soon as student types the Class PIN online
     useEffect(() => {
@@ -123,6 +129,8 @@ export default function LoginPage() {
 
     const handleStudentJoin = async (e) => {
         e.preventDefault();
+        unlockAudio();
+        preloadWorldBgm();
         setError('');
         const cleanCode = joinCode.trim().toUpperCase();
         if (cleanCode.length < 3) {
@@ -242,6 +250,8 @@ export default function LoginPage() {
 
     const handleStartOffline = (e) => {
         e.preventDefault();
+        unlockAudio();
+        preloadWorldBgm();
         setError('');
         const target = scannedSession || {
             joinCode: offlineCode.trim().toUpperCase(),

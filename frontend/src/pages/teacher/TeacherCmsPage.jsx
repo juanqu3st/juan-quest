@@ -194,7 +194,7 @@ export default function TeacherCmsPage() {
                                     }
                                 />
                                 <AudioSlotField
-                                    label="Background Music (Optional)"
+                                    label="3D Map Background Music (Optional)"
                                     existingPath={lessonForm.remove_bgm_audio ? null : lesson.bgm_audio_path}
                                     selectedFile={lessonForm.bgm_audio}
                                     onSelect={(file) =>
