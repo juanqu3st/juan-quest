@@ -588,13 +588,13 @@ export default function LoginPage() {
                         ) : (
                             <form onSubmit={handleStartOffline} className="space-y-3.5">
                                 {scannedSession ? (
-                                    <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 flex items-center gap-2.5">
-                                        <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
+                                    <div className="rounded-xl bg-[#FAF8F5] border border-stone-200/90 px-3.5 py-2.5 flex items-center gap-2.5">
+                                        <CheckCircle2 className="w-4 h-4 text-[#C2410C] shrink-0" />
                                         <div className="min-w-0 text-xs">
-                                            <p className="font-bold text-emerald-900 truncate">
+                                            <p className="font-bold text-stone-900 truncate">
                                                 {scannedSession.className} ({scannedSession.joinCode})
                                             </p>
-                                            <p className="text-[11px] text-emerald-700">
+                                            <p className="text-[11px] font-semibold text-[#C2410C]">
                                                 {scannedSession.playMode === 'group'
                                                     ? 'Per Grupo (1 Device)'
                                                     : 'Indibidwal (Solo)'}
@@ -623,7 +623,7 @@ export default function LoginPage() {
                                                 value={offlineCode}
                                                 onChange={(e) => setOfflineCode(e.target.value.toUpperCase())}
                                                 placeholder="Code ng Klase"
-                                                className="rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-3.5 py-2.5 text-sm font-bold tracking-widest uppercase text-stone-900 focus:border-[#C2410C] outline-none"
+                                                className="rounded-xl border border-stone-200 bg-[#FAF8F5]/60 focus:bg-white px-3.5 py-2.5 text-sm font-bold tracking-widest uppercase text-stone-900 placeholder:font-normal placeholder:tracking-normal placeholder:normal-case placeholder:text-stone-400 focus:border-[#C2410C] outline-none"
                                                 required
                                             />
                                             <select
@@ -793,21 +793,21 @@ export default function LoginPage() {
                                                 className={`mt-2.5 rounded-xl border px-3 py-2 flex items-center justify-between gap-2 ${
                                                     sessionPreview.groups_locked
                                                         ? 'bg-amber-50 border-amber-200'
-                                                        : 'bg-emerald-50 border-emerald-200'
+                                                        : 'bg-[#FAF8F5] border-stone-200/90'
                                                 }`}
                                             >
                                                 <div className="min-w-0 flex items-center gap-2">
                                                     {sessionPreview.groups_locked ? (
                                                         <Lock className="w-4 h-4 text-amber-700 shrink-0" />
                                                     ) : (
-                                                        <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
+                                                        <CheckCircle2 className="w-4 h-4 text-[#C2410C] shrink-0" />
                                                     )}
                                                     <div className="min-w-0">
                                                         <p
                                                             className={`text-xs font-bold truncate ${
                                                                 sessionPreview.groups_locked
                                                                     ? 'text-amber-900'
-                                                                    : 'text-emerald-900'
+                                                                    : 'text-stone-900'
                                                             }`}
                                                         >
                                                             {sessionPreview.class_name}
@@ -822,8 +822,8 @@ export default function LoginPage() {
                                                 <span
                                                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
                                                         sessionPreview.play_mode === 'group'
-                                                            ? 'bg-white/90 text-[#C2410C] border border-orange-200/80'
-                                                            : 'bg-white/90 text-stone-700 border border-stone-200'
+                                                            ? 'bg-white text-[#C2410C] border border-orange-200/80'
+                                                            : 'bg-white text-stone-700 border border-stone-200/90'
                                                     }`}
                                                 >
                                                     {sessionPreview.play_mode === 'group' ? (
